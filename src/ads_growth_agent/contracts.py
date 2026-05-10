@@ -245,3 +245,4 @@ class GrowthStrategyRequest(BaseModel):
 class GrowthStrategyResponse(BaseModel):
     strategy: FinalGrowthStrategy
     tool_results: list[ToolResult] = Field(default_factory=list)
+    node_path: list[str] = Field(default_factory=list)

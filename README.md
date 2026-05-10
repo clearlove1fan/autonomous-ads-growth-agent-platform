@@ -100,6 +100,12 @@ curl -X POST http://localhost:8000/growth-strategies \
   -d '{"brief":{"advertiser_id":"adv_fitness_001","product_name":"FitTrack Pro","product_category":"fitness app","objective":"registrations","budget":"2000.00","currency":"USD","duration_days":14,"target_market":"United States","primary_kpi":"trial registrations","target_cpa":"20.00"}}'
 ```
 
+The current deterministic workflow runs through explicit LangGraph nodes:
+
+```text
+planner -> tool_executor -> critic -> finalizer
+```
+
 Check the repository-defined services:
 
 ```bash

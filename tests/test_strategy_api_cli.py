@@ -17,6 +17,7 @@ def test_generate_mock_growth_strategy_returns_valid_budget_plan() -> None:
     assert response.strategy.budget_plan.allocated_budget <= Decimal("2000.00")
     assert response.strategy.actions
     assert len(response.tool_results) == 5
+    assert response.node_path == ["planner", "tool_executor", "critic", "finalizer"]
     assert all(result.success for result in response.tool_results)
 
 
@@ -33,6 +34,7 @@ def test_growth_strategy_api_returns_structured_strategy() -> None:
     assert strategy["advertiser_id"] == "adv_fitness_001"
     assert allocated_budget <= Decimal(str(strategy["budget_plan"]["total_budget"]))
     assert strategy["critique"]["passed"] is True
+    assert payload["node_path"] == ["planner", "tool_executor", "critic", "finalizer"]
     assert payload["tool_results"][0]["success"] is True
 
 
