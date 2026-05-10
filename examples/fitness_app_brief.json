@@ -1,0 +1,23 @@
+{
+  "advertiser_id": "adv_fitness_001",
+  "product_name": "FitTrack Pro",
+  "product_category": "fitness app",
+  "objective": "registrations",
+  "budget": "2000.00",
+  "currency": "USD",
+  "duration_days": 14,
+  "target_market": "United States",
+  "primary_kpi": "trial registrations",
+  "target_cpa": "20.00",
+  "landing_page_url": "https://example.com/fittrack",
+  "brand_voice": "motivational and practical",
+  "constraints": [
+    "Avoid unrealistic body transformation claims",
+    "Do not imply medical outcomes"
+  ],
+  "known_audiences": [
+    "Home workout beginners",
+    "Wearable fitness tracker users"
+  ],
+  "historical_context": "Previous organic posts performed best when showing short workout streaks and beginner-friendly progress tracking."
+}

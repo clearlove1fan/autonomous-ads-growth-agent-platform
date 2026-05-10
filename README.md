@@ -55,6 +55,7 @@ Run the CLI:
 
 ```bash
 ads-growth-agent health
+ads-growth-agent plan examples/fitness_app_brief.json
 ```
 
 Run tests:
@@ -89,6 +90,14 @@ Check the API:
 
 ```bash
 curl http://localhost:8000/health
+```
+
+Generate a draft growth strategy:
+
+```bash
+curl -X POST http://localhost:8000/growth-strategies \
+  -H "Content-Type: application/json" \
+  -d '{"brief":{"advertiser_id":"adv_fitness_001","product_name":"FitTrack Pro","product_category":"fitness app","objective":"registrations","budget":"2000.00","currency":"USD","duration_days":14,"target_market":"United States","primary_kpi":"trial registrations","target_cpa":"20.00"}}'
 ```
 
 Check the repository-defined services:
