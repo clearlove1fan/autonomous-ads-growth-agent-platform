@@ -35,11 +35,14 @@ Create the initial local repository foundation for the Autonomous Ads Growth Age
 
 ## Discoveries
 
-- Discovery: GitHub CLI is not available in the environment.
-  Evidence: `command -v gh` returned no path.
+- Discovery: GitHub CLI was not available during initial bootstrap, but is now installed.
+  Evidence: Initial `command -v gh` returned no path; a later check returned `/opt/homebrew/bin/gh`.
 
-- Discovery: No GitHub token is available through `GH_TOKEN` or `GITHUB_TOKEN`.
-  Evidence: The token presence check returned `token_missing`.
+- Discovery: No GitHub token is available through `GH_TOKEN` or `GITHUB_TOKEN`, and the saved GitHub CLI token is invalid.
+  Evidence: The token presence check returned `token_missing`; `gh auth status` reported that the token for `clearlove1fan` is invalid.
+
+- Discovery: GitHub CLI web authentication did not complete inside the Codex terminal session.
+  Evidence: `gh auth login --hostname github.com --git-protocol https --web` stalled after the credential prompt and had to be stopped with `killall gh`.
 
 - Discovery: System `python3` is version 3.9.6, below the project requirement of Python 3.11+.
   Evidence: `python3 --version` returned `Python 3.9.6`.
@@ -69,4 +72,4 @@ Create the initial local repository foundation for the Autonomous Ads Growth Age
 
 ## Final Status
 
-Completed for local bootstrap. The project now has an initial local git repository on `main` with commit `8884729`. Remote GitHub creation is blocked until GitHub CLI is installed/authenticated or a GitHub repository URL/token is provided.
+Completed for local bootstrap. The project now has an initial local git repository on `main` with commits `8884729` and `3f12f53`. Remote GitHub creation is blocked until GitHub CLI is authenticated manually or a GitHub repository URL/token is provided.
