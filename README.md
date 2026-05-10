@@ -63,6 +63,52 @@ Run tests:
 pytest
 ```
 
+## Local Runtime Stack
+
+The local product-like stack uses Docker Compose:
+
+- `api`: FastAPI service on port `8000`
+- `postgres`: PostgreSQL 16 with pgvector on port `5432`
+- `litellm`: LiteLLM Proxy on port `4000`
+
+Create a local environment file:
+
+```bash
+cp .env.example .env
+```
+
+Set `OPENAI_API_KEY` in `.env` before calling LiteLLM-backed model endpoints. The current API health endpoint does not require a model key.
+
+Start the stack:
+
+```bash
+docker compose up --build
+```
+
+Check the API:
+
+```bash
+curl http://localhost:8000/health
+```
+
+Check the repository-defined services:
+
+```bash
+docker compose ps
+```
+
+Stop the stack:
+
+```bash
+docker compose down
+```
+
+Remove local Postgres data when you want a clean database:
+
+```bash
+docker compose down -v
+```
+
 ## Repository Principles
 
 - The model proposes structured intent; the platform validates and executes.
