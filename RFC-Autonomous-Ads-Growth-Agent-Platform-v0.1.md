@@ -1,0 +1,576 @@
+# RFC v0.1: Autonomous Ads Growth Agent Platform
+
+## 1. Document Status
+
+| Field | Value |
+|---|---|
+| Product | Autonomous Ads Growth Agent Platform |
+| Chinese Name | 广告增长智能 Agent 平台 |
+| Document Type | Product RFC / High-Level Design |
+| Status | Draft for architecture review |
+| Decision Needed | Approve v0.1 product scope, system architecture, and launch gates |
+| DRI | TBD |
+| Reviewers | Product, Ads Engineering, ML Platform, Data Engineering, Privacy/Safety, LLMOps |
+| Audience | Product, Engineering, ML/LLMOps, Data, Ads Platform, Leadership |
+| Last Updated | 2026-05-10 |
+
+### 1.1 Review Protocol
+
+| Item | Standard |
+|---|---|
+| Review Type | High-level product and architecture review |
+| Expected Outcome | Approve, approve with changes, or reject with required follow-up |
+| Required Approvers | Product DRI, Engineering DRI, ML/LLMOps DRI |
+| Required Consulted Teams | Ads Platform, Data, Privacy/Safety |
+| Decision Artifacts | RFC, architecture diagram, requirement tables, evaluation plan, launch checklist |
+| Change Control | Any P0 scope, data boundary, or agent autonomy change requires RFC update |
+
+### 1.2 RACI
+
+| Area | Responsible | Accountable | Consulted | Informed |
+|---|---|---|---|---|
+| Product scope | Product DRI | Product Lead | Engineering, Ads Platform | Leadership |
+| Agent architecture | Engineering DRI | Engineering Lead | ML Platform, LLMOps | Product |
+| Evaluation framework | LLMOps DRI | ML Platform Lead | Data, Product | Engineering |
+| Data and RAG sources | Data DRI | Data Lead | Ads Platform, Privacy/Safety | Engineering |
+| Safety and policy review | Safety DRI | Safety Lead | Product, Legal/Policy | Leadership |
+| Launch readiness | Engineering DRI | Engineering Lead | Product, LLMOps | Leadership |
+
+## 2. Executive Summary
+
+This product is an AI Agent-powered growth platform for advertisers. It helps advertisers convert a high-level business goal, such as increasing app registrations within a fixed budget, into an executable campaign strategy across audience, creative, bidding, budget, measurement, and optimization.
+
+The platform uses multi-agent orchestration, tool calling, RAG, advertiser memory, structured outputs, self-reflection, and LLMOps observability to produce reliable and traceable campaign recommendations.
+
+The v0.1 decision is to build a controlled agentic campaign planning system that creates drafts and recommendations only. It will not execute live ad spend or modify production campaigns without human approval.
+
+## 3. Problem Statement
+
+Advertisers often know their business goal but struggle to translate it into a complete and optimized advertising strategy. Campaign setup requires expertise across audience selection, creative direction, budget allocation, bidding, measurement, and post-launch optimization. These steps are fragmented, manual, and hard to continuously improve.
+
+The product aims to create an autonomous agent workflow that can reason over advertiser goals, retrieve relevant campaign knowledge, use platform tools, generate structured actions, evaluate its own output, and improve recommendations based on feedback.
+
+## 4. Goals
+
+| Goal ID | Goal | Success Signal |
+|---|---|---|
+| G1 | Convert natural language advertiser goals into structured campaign briefs | The system extracts objective, budget, product, KPI, target market, constraints, and missing information |
+| G2 | Generate actionable growth strategies | The output includes audience, creative, budget, bidding, measurement, and risk sections |
+| G3 | Support agentic planning and tool execution | The system can decompose tasks, route work to specialist agents, and call mock advertising tools |
+| G4 | Ground recommendations in knowledge and data | The system retrieves campaign best practices, platform policy, and historical cases |
+| G5 | Improve output quality through critique loops | A critic agent scores strategy quality and triggers revision when needed |
+| G6 | Provide production-style observability | LangSmith traces, evaluation datasets, and run metadata are available for debugging and monitoring |
+
+### 4.1 Decision Drivers
+
+| Driver | Why It Matters |
+|---|---|
+| Agent reliability | The system must produce consistent, inspectable plans instead of opaque one-shot answers |
+| Grounding | Campaign recommendations must be tied to retrieved knowledge, tool outputs, or clearly marked assumptions |
+| Safety | The system must avoid unsafe creative claims, policy violations, and unapproved campaign execution |
+| Extensibility | The architecture should allow new agents, tools, data sources, and evals without rewriting the core workflow |
+| Portfolio credibility | The project should demonstrate real product engineering depth, not just a chatbot wrapper |
+
+## 5. Non-Goals
+
+| Non-Goal ID | Non-Goal |
+|---|---|
+| NG1 | Direct integration with a real TikTok Ads API in v0.1 |
+| NG2 | Real-time campaign spending or live bidding changes in v0.1 |
+| NG3 | Full UI dashboard in the first iteration |
+| NG4 | Training or fine-tuning a custom foundation model |
+| NG5 | Guaranteeing real advertising performance lift from simulated data |
+
+## 6. Target Users
+
+| User Type | Need |
+|---|---|
+| Small and mid-market advertiser | Wants a clear campaign plan without deep ads expertise |
+| Growth marketer | Wants faster strategy generation and optimization ideas |
+| Ads platform operator | Wants safer, more consistent AI-generated campaign recommendations |
+| Internal ML/LLMOps engineer | Wants traceable, evaluable, and monitorable agent behavior |
+
+## 7. Primary User Journey
+
+1. Advertiser enters a goal, budget, product description, and KPI.
+2. Intake Agent extracts a structured advertiser brief and identifies missing fields.
+3. Planner Agent decomposes the goal into specialist tasks.
+4. Supervisor routes tasks to Audience, Creative, Budget, and Performance agents.
+5. Agents retrieve relevant knowledge and call advertising tools.
+6. System assembles an initial campaign strategy.
+7. Critic Agent evaluates completeness, feasibility, policy risk, budget consistency, and actionability.
+8. If the quality score is below threshold, the system revises the plan.
+9. Final output is returned as structured strategy, recommended actions, assumptions, and risks.
+10. LangSmith records traces, tool calls, state transitions, evaluation scores, and errors.
+
+## 8. Functional Requirements
+
+### 8.0 Priority Definitions
+
+| Priority | Definition |
+|---|---|
+| P0 | Required for v0.1 architecture review and first end-to-end demo |
+| P1 | Required before a credible beta-style demo |
+| P2 | Future enhancement that should not block v0.1 |
+
+### 8.1 Advertiser Intake
+
+| ID | Requirement | Priority | Acceptance Criteria |
+|---|---|---|---|
+| FR-1 | Parse advertiser free-text input into a structured brief | P0 | Extracts product, objective, budget, KPI, target geography, timeline, and constraints |
+| FR-2 | Detect missing or ambiguous campaign information | P0 | Produces a list of missing fields and safe assumptions |
+| FR-3 | Normalize business goals into supported campaign objectives | P0 | Maps goals to objectives such as app install, registration, purchase, traffic, or lead generation |
+
+### 8.2 Planning and Orchestration
+
+| ID | Requirement | Priority | Acceptance Criteria |
+|---|---|---|---|
+| FR-4 | Generate a task plan using Plan-and-Execute workflow | P0 | Produces ordered tasks with owners, inputs, expected outputs, and dependencies |
+| FR-5 | Route tasks to role-specific agents | P0 | Supervisor can route audience, creative, budget, and performance tasks to the correct agent |
+| FR-6 | Maintain shared workflow state | P0 | State includes brief, retrieved context, intermediate outputs, tool results, critique report, and final strategy |
+| FR-7 | Support event-driven re-analysis | P1 | A campaign performance event can trigger analysis and revised recommendations |
+
+### 8.3 Specialist Agents
+
+| ID | Requirement | Priority | Acceptance Criteria |
+|---|---|---|---|
+| FR-8 | Audience Strategist recommends target segments | P0 | Output includes audience rationale, exclusions, and confidence |
+| FR-9 | Creative Strategist generates creative brief | P0 | Output includes messaging angles, format suggestions, hooks, and policy risks |
+| FR-10 | Budget Optimizer recommends budget and bidding strategy | P0 | Output respects total budget and includes allocation rationale |
+| FR-11 | Performance Analyst interprets historical or simulated performance data | P0 | Output identifies performance drivers, risks, and optimization opportunities |
+| FR-12 | Critic Agent evaluates and revises strategy quality | P0 | Produces scores, issues, recommendations, and pass/fail decision |
+
+### 8.4 Tool Use
+
+| ID | Requirement | Priority | Acceptance Criteria |
+|---|---|---|---|
+| FR-13 | Provide mock campaign draft tool | P0 | Creates a structured campaign draft object |
+| FR-14 | Provide audience recommendation tool | P0 | Returns recommended segments and estimated fit |
+| FR-15 | Provide creative brief generation tool | P0 | Returns structured creative concepts and constraints |
+| FR-16 | Provide budget allocation tool | P0 | Returns budget split by campaign phase or audience |
+| FR-17 | Provide performance analytics tool | P0 | Returns metrics such as CPA, CVR, CTR, spend, and conversion trend |
+| FR-18 | Handle tool errors and retries | P1 | Failed tool calls are captured with retry or fallback behavior |
+
+### 8.5 RAG and Knowledge Retrieval
+
+| ID | Requirement | Priority | Acceptance Criteria |
+|---|---|---|---|
+| FR-19 | Retrieve campaign strategy documents | P0 | Agents can cite retrieved best practices or campaign cases |
+| FR-20 | Retrieve policy and creative safety guidance | P0 | Creative output includes policy-aware risks and constraints |
+| FR-21 | Retrieve historical campaign cases | P1 | Recommendations can reference similar campaign examples |
+| FR-22 | Track retrieved sources in final output | P1 | Final strategy includes source IDs or document references |
+
+### 8.6 Memory
+
+| ID | Requirement | Priority | Acceptance Criteria |
+|---|---|---|---|
+| FR-23 | Maintain short-term workflow memory | P0 | Current run state is available across agents |
+| FR-24 | Maintain advertiser profile memory | P1 | Repeated advertiser sessions can reuse product, audience, and brand context |
+| FR-25 | Summarize campaign history | P1 | Prior campaign results are compressed into reusable summaries |
+
+### 8.7 Structured Output
+
+| ID | Requirement | Priority | Acceptance Criteria |
+|---|---|---|---|
+| FR-26 | Return final strategy using a strict schema | P0 | Output validates against Pydantic schema |
+| FR-27 | Include recommended actions | P0 | Actions include type, owner, parameters, expected impact, and risk |
+| FR-28 | Include assumptions and risks | P0 | Final output clearly separates facts, assumptions, and risks |
+
+### 8.8 Observability and Evaluation
+
+| ID | Requirement | Priority | Acceptance Criteria |
+|---|---|---|---|
+| FR-29 | Trace agent runs in LangSmith | P0 | Each run includes graph state, tool calls, prompts, outputs, and errors |
+| FR-30 | Evaluate plan quality | P1 | Evaluation covers completeness, actionability, budget consistency, and grounding |
+| FR-31 | Monitor run-level failures | P1 | Tool failures, schema failures, and low critic scores are logged |
+
+## 9. Non-Functional Requirements
+
+### 9.1 Reliability and Fault Tolerance
+
+| ID | Requirement | Priority | Target |
+|---|---|---|---|
+| NFR-1 | Workflow state must be recoverable | P0 | Use checkpointing for graph execution |
+| NFR-2 | Tool failures must not crash the full run | P0 | Return structured errors and fallback recommendations |
+| NFR-3 | Structured output must be validated | P0 | Invalid outputs trigger repair or retry |
+| NFR-4 | The system must avoid infinite revision loops | P0 | Set max revision count and expose failure reason |
+
+### 9.2 Quality and Correctness
+
+| ID | Requirement | Priority | Target |
+|---|---|---|---|
+| NFR-5 | Recommendations must be grounded in retrieved context or tool results | P0 | Final output marks source-backed claims and assumptions |
+| NFR-6 | Budget allocation must be internally consistent | P0 | Sum of allocated budget cannot exceed advertiser budget |
+| NFR-7 | Critique scoring must be transparent | P1 | Each score includes rationale and improvement suggestion |
+
+### 9.3 Performance
+
+| ID | Requirement | Priority | Target |
+|---|---|---|---|
+| NFR-8 | v0.1 demo run should complete in acceptable time | P1 | Target under 60 seconds for one full workflow |
+| NFR-9 | Retrieval latency should be bounded | P1 | Target under 3 seconds for PostgreSQL hybrid retrieval |
+| NFR-10 | Tool simulation should be deterministic when seeded | P1 | Same input and seed should produce reproducible mock analytics |
+
+### 9.4 Scalability
+
+| ID | Requirement | Priority | Target |
+|---|---|---|---|
+| NFR-11 | Architecture should support adding new specialist agents | P1 | Add agent without rewriting core graph |
+| NFR-12 | Tool layer should support real API adapters later | P1 | Mock tools use interfaces that can be replaced by API clients |
+| NFR-13 | Knowledge layer should support more document types | P2 | Markdown and JSON in v0.1, extensible to warehouse or feature store |
+
+### 9.5 Security, Privacy, and Safety
+
+| ID | Requirement | Priority | Target |
+|---|---|---|---|
+| NFR-14 | Advertiser data should be separated by advertiser ID | P0 | Memory and traces include advertiser/session boundaries |
+| NFR-15 | Sensitive input should not be exposed unnecessarily | P1 | Logs avoid raw secrets or credentials |
+| NFR-16 | Creative recommendations should include policy risk checks | P0 | Policy-sensitive claims are flagged |
+| NFR-17 | Autonomous actions should require confirmation in v0.1 | P0 | System creates drafts and recommendations, not live campaigns |
+
+### 9.6 Observability and Operability
+
+| ID | Requirement | Priority | Target |
+|---|---|---|---|
+| NFR-18 | Each agent decision should be traceable | P0 | LangSmith trace includes agent, input, output, and tool calls |
+| NFR-19 | Run quality should be measurable over time | P1 | Evaluation scores can be compared across test cases |
+| NFR-20 | Failures should be diagnosable | P1 | Errors include node name, tool name, state snapshot, and retry count |
+
+### 9.7 Maintainability
+
+| ID | Requirement | Priority | Target |
+|---|---|---|---|
+| NFR-21 | Schemas should be centralized | P0 | Pydantic models live in a shared schema module |
+| NFR-22 | Prompts should be versioned | P1 | Agent prompts include version metadata |
+| NFR-23 | Tests should cover high-risk logic | P1 | Unit tests for schemas, budget math, routing, and tool error handling |
+
+### 9.8 SLIs and SLOs
+
+| ID | Service Level Indicator | v0.1 Target | Measurement |
+|---|---|---|---|
+| SLO-1 | End-to-end valid run rate | >= 90% on curated eval set | LangSmith run result plus schema validation |
+| SLO-2 | Structured output validation rate | >= 95% | Pydantic validation pass rate |
+| SLO-3 | Tool failure containment rate | >= 95% | Failed tool calls that do not crash full workflow |
+| SLO-4 | Budget consistency rate | 100% | Deterministic budget validator |
+| SLO-5 | Grounded recommendation rate | >= 80% | Claims linked to RAG source, tool output, or explicit assumption |
+| SLO-6 | Median demo workflow latency | <= 60 seconds | End-to-end wall-clock timing |
+| SLO-7 | Trace coverage | 100% | Every workflow run has LangSmith trace ID |
+
+### 9.9 Privacy, Safety, and Autonomy Guardrails
+
+| Guardrail | v0.1 Policy |
+|---|---|
+| Human approval | The system may create campaign drafts and recommendations, but must not launch or modify live campaigns |
+| Data boundary | Memory, traces, and retrieved context must be scoped by advertiser/session ID |
+| Claims safety | Creative claims related to health, finance, employment, or sensitive categories must be flagged |
+| Tool permissioning | Tools are divided into read, draft, and execute categories; v0.1 only allows read and draft tools |
+| Trace hygiene | Logs should not contain credentials, API keys, or unnecessary raw sensitive data |
+| Failure behavior | On low confidence, missing data, or policy risk, the system should ask for confirmation or return a safe fallback |
+
+## 10. Proposed High-Level Architecture
+
+```mermaid
+flowchart TD
+    A["Advertiser Goal"] --> B["Intake Agent"]
+    B --> C["Planner Agent"]
+    C --> D["Supervisor Router"]
+    D --> E["Audience Strategist"]
+    D --> F["Creative Strategist"]
+    D --> G["Budget Optimizer"]
+    D --> H["Performance Analyst"]
+    E --> I["Tool Layer"]
+    F --> I
+    G --> I
+    H --> I
+    I --> J["Mock Ads Platform Tools"]
+    I --> K["RAG Knowledge Layer"]
+    I --> L["Memory Layer"]
+    E --> M["Draft Strategy"]
+    F --> M
+    G --> M
+    H --> M
+    M --> N["Critic Agent"]
+    N --> O{"Quality Gate"}
+    O -- "Revise" --> C
+    O -- "Pass" --> P["Final Structured Strategy"]
+    P --> Q["LangSmith Tracing and Evals"]
+    R["Campaign Performance Event"] --> H
+```
+
+### 10.1 Logical Components
+
+| Component | Responsibility | v0.1 Implementation |
+|---|---|---|
+| Experience/API Layer | Accept advertiser requests and return strategy output | FastAPI product API plus CLI for demo, eval, and debugging |
+| Orchestration Layer | Manage graph state, routing, retries, checkpointing, and revision loop | LangGraph StateGraph |
+| Agent Layer | Perform role-specific reasoning | Intake, Planner, Supervisor, Audience, Creative, Budget, Performance, Critic |
+| LLM Gateway Layer | Provide multi-provider model access, retry, fallback, and future cost tracking | LiteLLM Proxy |
+| Tool Layer | Encapsulate advertising actions and analytics | Internal typed tool registry with Pydantic validation |
+| Knowledge Layer | Retrieve policy, strategy, and historical campaign context | PostgreSQL documents, pgvector, and Postgres full-text search |
+| Memory Layer | Store in-run and advertiser-level context | LangGraph state plus PostgreSQL-backed memory and checkpoints |
+| Evaluation Layer | Score output quality and workflow health | LangSmith datasets and evaluators |
+| Observability Layer | Trace decisions, tool calls, errors, and state transitions | LangSmith tracing plus structured JSON logs |
+
+### 10.2 Interface Contracts
+
+| Interface | Producer | Consumer | Contract |
+|---|---|---|---|
+| AdvertiserBrief | Intake Agent | Planner Agent | Structured objective, budget, KPI, product, constraints, missing fields |
+| AgentTask | Planner Agent | Supervisor Router | Task type, owner, input payload, dependencies, expected output |
+| ToolResult | Tool Layer | Specialist Agents | Success flag, payload, error, latency, source metadata |
+| RetrievedContext | RAG Layer | Specialist Agents, Critic | Source ID, document type, snippet summary, relevance score |
+| CritiqueReport | Critic Agent | Planner Agent, Finalizer | Quality score, issue list, required revisions, pass/fail |
+| FinalGrowthStrategy | Finalizer | User/API, LangSmith | Validated strategy, actions, assumptions, risks, sources |
+
+## 11. Technology Choices
+
+### 11.1 Selected v0.1 Stack
+
+| Layer | Selected Technology | Decision |
+|---|---|---|
+| Product API | FastAPI | Use FastAPI as the external API boundary for campaign strategy requests and responses |
+| Local Demo | CLI | Provide a CLI for local end-to-end runs, eval execution, and debugging |
+| Agent Runtime | LangGraph StateGraph | Use explicit graph nodes and state transitions instead of high-level agent loops |
+| LLM Gateway | LiteLLM Proxy | Route model and embedding calls through an OpenAI-compatible multi-provider gateway |
+| Tool Execution | Internal typed tool registry | Execute tools only after Pydantic validation and permission checks |
+| Schema Layer | Pydantic v2 | Validate API payloads, tool input/output, critic reports, and final strategy objects |
+| Graph State | TypedDict plus Pydantic boundaries | Keep LangGraph state lightweight while validating all external and durable boundaries |
+| Database | PostgreSQL + pgvector | Use one data platform for business data, RAG documents, vectors, memory, and checkpoints |
+| Data Access | SQLAlchemy 2 + Alembic | Use SQLAlchemy for database access and Alembic for schema migrations |
+| Retrieval | pgvector + Postgres full-text search | Support hybrid search with metadata filtering and source attribution |
+| Embeddings | LiteLLM-routed embedding provider | Use the same gateway strategy for embeddings and chat models |
+| Observability | LangSmith + structured JSON logs | Use LangSmith for agent traces/evals and JSON logs for API, DB, and tool diagnostics |
+| Local Packaging | Docker Compose | Start FastAPI, PostgreSQL with pgvector, and LiteLLM Proxy as a reproducible local stack |
+
+### 11.2 Runtime Boundary
+
+The product runtime separates the API boundary, orchestration runtime, model gateway, and tool execution layer.
+
+```mermaid
+flowchart LR
+    A["FastAPI / CLI"] --> B["LangGraph StateGraph"]
+    B --> C["ModelGateway Client"]
+    C --> D["LiteLLM Proxy"]
+    D --> E["LLM Providers"]
+    B --> F["Typed Tool Registry"]
+    F --> G["Mock Ads Platform Tools"]
+    B --> H["PostgreSQL + pgvector"]
+    B --> I["LangSmith"]
+```
+
+The model is treated as a reasoning engine, not as the system authority. The LLM may propose structured intents, but the platform validates, authorizes, executes, and records all actions.
+
+### 11.3 Structured Output and Tool Intent Fallback
+
+| Step | Behavior |
+|---|---|
+| 1 | Prefer provider-native structured output when available through the gateway |
+| 2 | Fall back to a JSON-schema prompt when the selected provider lacks native structured output |
+| 3 | Validate every output with Pydantic before using it in graph state or tool execution |
+| 4 | On invalid JSON or schema mismatch, trigger a repair prompt and retry within a bounded retry policy |
+| 5 | If repair fails, return a safe failure and do not execute tool actions |
+
+### 11.4 PostgreSQL Data Boundaries
+
+| Data Domain | Storage Responsibility | Isolation Rule |
+|---|---|---|
+| Business data | Advertisers, campaign drafts, budget plans, creative briefs, and tool results | Scoped by advertiser ID and session ID |
+| RAG documents | Strategy docs, policy docs, historical campaign cases, chunks, embeddings, and source metadata | Retrieved with metadata filters and source attribution |
+| Memory | Advertiser profile memory, campaign history summaries, and reusable preferences | Scoped by advertiser ID |
+| Checkpoints | LangGraph thread checkpoints and pending writes | Scoped by graph thread ID |
+| Observability metadata | Trace IDs, run IDs, tool latency, and error summaries | Linked to LangSmith trace IDs without storing secrets |
+
+### 11.5 State and Schema Strategy
+
+| Object | Type Strategy | Rationale |
+|---|---|---|
+| LangGraph internal state | TypedDict | Fast node-to-node updates and clear state keys |
+| API request/response | Pydantic models | Strong validation and OpenAPI schema generation |
+| Tool input/output | Pydantic models | Prevent invalid or unsafe tool execution |
+| Structured LLM output | Pydantic models | Enable validation, repair, retry, and deterministic failure behavior |
+| Final strategy | Pydantic model | Make portfolio/demo output stable, testable, and machine-readable |
+
+## 12. Alternatives Considered
+
+| Decision Area | Alternative | Why Not Selected |
+|---|---|---|
+| Agent runtime | LangChain AgentExecutor | Too black-box for explicit planning, routing, critic loops, checkpointing, and resumability |
+| Agent runtime | Custom workflow engine | More control, but high implementation cost and weaker alignment with the AI Agent JD |
+| Vector storage | Pinecone, Milvus, or another dedicated vector database | Adds infrastructure and synchronization overhead before retrieval scale requires it |
+| Vector storage | FAISS only | Strong similarity search, but business metadata, joins, persistence, and migrations must be built around it |
+| Vector storage | Chroma | Fast for demos, but weaker product-level story for relational joins, migration, and operational ownership |
+| Tool execution | Direct model tool execution | Unsafe for budget/action workflows because model-generated parameters need validation and authorization |
+| Model access | Direct provider SDK calls | Couples application code to provider-specific behavior and makes fallback/cost routing harder |
+| Model gateway | Self-built provider adapters | Maximum control, but duplicates gateway concerns such as retries, fallback, and provider normalization |
+| Interface | CLI only | Good for local demos, but weak as a product API boundary and lacks OpenAPI contract |
+| Observability | OpenTelemetry-only full stack | More production-complete but too heavy for v0.1 and less focused on agent trajectory evaluation |
+
+## 13. v0.1 Scope
+
+| Area | Included in v0.1 |
+|---|---|
+| Interface | FastAPI endpoint plus CLI |
+| Workflow | One complete LangGraph run from brief to final strategy |
+| Agents | Intake, Planner, Supervisor, Audience, Creative, Budget, Performance, Critic |
+| Tools | Mock campaign, audience, creative, budget, and analytics tools |
+| RAG | PostgreSQL-backed document chunks, pgvector embeddings, full-text search, and source attribution |
+| Memory | LangGraph state, PostgreSQL-backed advertiser memory, and Postgres checkpoints |
+| Observability | LangSmith tracing/evals plus structured JSON logs |
+| Output | Validated JSON strategy plus human-readable summary |
+| Local Packaging | Docker Compose for FastAPI, PostgreSQL with pgvector, and LiteLLM Proxy |
+
+### 13.1 Out-of-Scope Until Later Versions
+
+| Area | Reason |
+|---|---|
+| Live campaign launch | Requires stricter permissions, policy review, and real platform integration |
+| Automated spend changes | Requires production-grade safety, rollback, and advertiser approval workflow |
+| Full analytics warehouse integration | Not needed to prove agent orchestration and LLMOps behavior in v0.1 |
+| Custom model training | The project is about agent platform architecture, not model training |
+| Enterprise admin console | Useful later, but not required for first technical evaluation |
+
+## 14. Key Product Metrics
+
+| Metric | Definition |
+|---|---|
+| Brief Extraction Completeness | Percentage of required fields extracted or marked missing |
+| Strategy Actionability Score | Evaluator score for whether actions can be executed |
+| Grounding Score | Percentage of claims supported by RAG or tool data |
+| Budget Consistency Rate | Percentage of outputs with valid budget math |
+| Revision Success Rate | Percentage of failed critiques that pass after revision |
+| Tool Failure Recovery Rate | Percentage of tool failures handled without full run failure |
+| End-to-End Run Success Rate | Percentage of complete workflows that return valid final output |
+
+### 14.1 Evaluation Plan
+
+| Eval Area | Method | Pass Criteria |
+|---|---|---|
+| Brief extraction | Golden examples with expected fields | Required fields extracted or marked missing |
+| Plan quality | LLM-as-judge plus rubric | Score >= configured threshold |
+| Tool use correctness | Deterministic unit tests and trace inspection | Correct tool selected for each task type |
+| Grounding | Source coverage check | Key recommendations linked to retrieval or tool data |
+| Budget correctness | Programmatic validator | Allocations sum to budget and respect constraints |
+| Safety | Policy-risk test cases | Sensitive claims flagged and unsafe actions blocked |
+| Regression | LangSmith dataset replay | New changes do not reduce core eval scores beyond threshold |
+
+### 14.2 Technical Test Plan
+
+| Test Area | Required Scenarios |
+|---|---|
+| Schema validation | Validate AdvertiserBrief, AgentTask, ToolIntent, ToolResult, CritiqueReport, and FinalGrowthStrategy |
+| Budget correctness | Ensure budget allocations do not exceed advertiser budget and remain internally consistent |
+| Tool registry | Cover unknown tool, invalid parameters, permission denied, tool timeout, and structured tool failure |
+| Structured output fallback | Simulate unsupported native structured output, invalid JSON, schema-invalid JSON, repair success, and repair failure |
+| RAG | Validate pgvector retrieval, metadata filtering, Postgres full-text fallback, hybrid ranking, and source attribution |
+| LangGraph workflow | Verify planner to router to specialist agents to critic to finalizer state flow |
+| Observability | Verify every workflow run produces a LangSmith trace ID and structured JSON log entries |
+
+## 15. Risks and Mitigations
+
+| Risk | Impact | Mitigation |
+|---|---|---|
+| Hallucinated strategy claims | Unsafe or low-trust recommendations | Require source references and mark assumptions |
+| Poor budget math | Invalid campaign plan | Validate with schema and deterministic budget checks |
+| Over-complex multi-agent workflow | Hard to debug | Start with one linear graph and add branches gradually |
+| Critic loop becomes unstable | Slow or repetitive runs | Add max revisions and quality thresholds |
+| Mock tools feel unrealistic | Weak product credibility | Use realistic sample data and deterministic simulations |
+| Policy-sensitive creative advice | Safety and compliance risk | Add policy retrieval and risk scoring |
+| Structured output degrades across providers | Invalid tool intents or final outputs | Use Validate + Repair and safe failure after bounded retries |
+| PostgreSQL checkpoint contention under high concurrency | Slower workflow execution | Accept for v0.1, monitor query latency, and revisit partitioning or dedicated checkpoint storage if needed |
+| LiteLLM Proxy adds another service | More local setup and runtime failure modes | Use Docker Compose health checks and clear fallback/error handling |
+
+## 16. Launch Readiness Checklist
+
+| Gate | Requirement | Status |
+|---|---|---|
+| Product scope sign-off | Goals, non-goals, and v0.1 scope approved | Pending |
+| Architecture sign-off | Graph architecture, agent boundaries, and tool interfaces approved | Pending |
+| Technology decision sign-off | Technology choices and ADR appendix reviewed | Pending |
+| Data sign-off | RAG documents and mock datasets reviewed | Pending |
+| Safety sign-off | Guardrails for policy risk and autonomous actions approved | Pending |
+| Eval sign-off | Minimum eval dataset and pass thresholds defined | Pending |
+| Observability sign-off | LangSmith traces and error metadata verified | Pending |
+| Local stack readiness | Docker Compose starts FastAPI, PostgreSQL with pgvector, and LiteLLM Proxy | Pending |
+| Demo readiness | End-to-end workflow runs with seeded sample advertiser cases | Pending |
+
+## 17. Open Questions
+
+| ID | Question | Owner | Status |
+|---|---|---|---|
+| OQ-1 | Should v0.1 expose a CLI, FastAPI endpoint, or lightweight web UI? | TBD | Closed: FastAPI plus CLI selected |
+| OQ-2 | What campaign vertical should the demo optimize for first: fitness app, ecommerce, SaaS, or local service? | TBD | Open |
+| OQ-3 | Should memory be stored in JSON, SQLite, or vector store for v0.1? | TBD | Closed: PostgreSQL-backed memory and checkpoints selected |
+| OQ-4 | What minimum evaluation dataset size is enough for the portfolio demo? | TBD | Open |
+| OQ-5 | Should event-driven feedback be included in v0.1 or v0.2? | TBD | Open |
+
+## 18. Initial Architecture Decision
+
+Use FastAPI as the product API boundary, CLI as the local execution surface, LangGraph StateGraph as the agent orchestration runtime, LiteLLM Proxy as the multi-provider model gateway, PostgreSQL with pgvector as the unified data platform, SQLAlchemy 2 plus Alembic for data access and migrations, Pydantic v2 for structured validation, LangSmith for agent tracing/evaluation, structured JSON logs for service diagnostics, and Docker Compose for the local product-like stack.
+
+The first version should prioritize a complete, traceable, and recoverable end-to-end workflow over real ad platform integration. The system may create campaign drafts and recommendations, but it must not execute live campaign launches, spend changes, or irreversible platform actions without human approval.
+
+## 19. ADR Appendix
+
+### ADR-001: LangGraph StateGraph over LangChain AgentExecutor
+
+| Field | Value |
+|---|---|
+| Status | Accepted for v0.1 |
+| Decision | Use LangGraph StateGraph for orchestration |
+| Context | The product requires explicit planning, routing, tool execution, critic revision loops, checkpointing, and resumability |
+| Rationale | StateGraph makes control flow explicit and testable, while AgentExecutor is too opaque for product-level agent runtime design |
+| Consequences | More graph code must be maintained, but agent behavior becomes easier to inspect, test, and recover |
+
+### ADR-002: PostgreSQL + pgvector over Dedicated Vector DB
+
+| Field | Value |
+|---|---|
+| Status | Accepted for v0.1 |
+| Decision | Use PostgreSQL with pgvector and full-text search as the retrieval and data platform |
+| Context | The system needs structured business data, advertiser memory, RAG documents, embeddings, source metadata, and graph checkpoints |
+| Rationale | A unified Postgres data platform reduces synchronization complexity and supports joins, transactions, metadata filtering, migrations, and vector retrieval |
+| Consequences | Extreme vector search scale is not optimized in v0.1, and high-concurrency checkpoint workloads must be monitored |
+
+### ADR-003: Internal Typed Tool Registry over Direct Model Tool Execution
+
+| Field | Value |
+|---|---|
+| Status | Accepted for v0.1 |
+| Decision | Use an internal typed tool registry with Pydantic-validated inputs and outputs |
+| Context | Campaign planning includes budget, bidding, audience, creative, and analytics tools that may become expensive or externally visible later |
+| Rationale | The LLM should propose intent, but the platform should validate, authorize, execute, and record all tool actions |
+| Consequences | Tool schemas and registry code add implementation work, but safety, testability, and deterministic failure behavior improve |
+
+### ADR-004: LiteLLM Proxy as Multi-Provider LLM Gateway
+
+| Field | Value |
+|---|---|
+| Status | Accepted for v0.1 |
+| Decision | Route chat and embedding calls through LiteLLM Proxy |
+| Context | The product should support multiple model providers and avoid hard-coding OpenAI, Anthropic, or any single vendor into application logic |
+| Rationale | LiteLLM Proxy provides an OpenAI-compatible gateway for provider routing, retry, fallback, and future cost tracking |
+| Consequences | The local stack has an additional service, and provider capability differences must be represented in fallback logic |
+
+### ADR-005: TypedDict Graph State + Pydantic Boundary Validation
+
+| Field | Value |
+|---|---|
+| Status | Accepted for v0.1 |
+| Decision | Use TypedDict for internal LangGraph state and Pydantic for API, tool, LLM output, and final strategy boundaries |
+| Context | LangGraph state needs frequent partial updates, while product interfaces and tool actions require strict validation |
+| Rationale | TypedDict keeps graph state lightweight; Pydantic enforces correctness at external, persistent, and executable boundaries |
+| Consequences | Developers must clearly distinguish mutable workflow state from validated boundary objects |
+
+## 20. Decision Log
+
+| Date | Decision | Rationale | Status |
+|---|---|---|---|
+| 2026-05-07 | Use Autonomous Ads Growth Agent Platform as project direction | Stronger match for AI Agent framework, ads growth automation, and LLMOps requirements | Accepted |
+| 2026-05-07 | Use RFC format for high-level design | Better fit for iterative architecture review than a narrow PRD | Accepted |
+| 2026-05-10 | Follow large-company review standard | Adds DRI, RACI, SLOs, launch gates, safety guardrails, and evaluation plan | Accepted |
+| 2026-05-10 | Select FastAPI plus CLI for v0.1 interface | FastAPI provides product API contracts while CLI supports local demo, eval, and debugging | Accepted |
+| 2026-05-10 | Select LiteLLM Proxy as LLM Gateway | Multi-provider routing and fallback should be a platform capability | Accepted |
+| 2026-05-10 | Select PostgreSQL + pgvector as unified data platform | Reduces data synchronization overhead and supports business data, memory, RAG, and checkpoints | Accepted |
+| 2026-05-10 | Select internal typed tool registry | Safer and more testable than direct model tool execution | Accepted |
+| 2026-05-10 | Select TypedDict graph state with Pydantic boundary validation | Balances LangGraph update ergonomics with strict product contract validation | Accepted |
+| TBD | Select first demo vertical | Fitness app, ecommerce, SaaS, or local service still open | Open |

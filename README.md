@@ -1,0 +1,71 @@
+# Autonomous Ads Growth Agent Platform
+
+Production-style AI agent platform for advertiser growth automation.
+
+The platform turns advertiser goals into structured campaign strategies across audience, creative, budget, bidding, measurement, and feedback optimization. It is designed around LangGraph-based orchestration, typed tool execution, RAG, advertiser memory, structured outputs, and LangSmith evaluation.
+
+## Current Status
+
+This repository is in v0.1 bootstrap. The first implementation milestone is an end-to-end local workflow:
+
+1. Accept an advertiser growth goal through FastAPI or CLI.
+2. Convert the request into a structured advertiser brief.
+3. Route tasks through a LangGraph StateGraph.
+4. Call typed mock ads tools.
+5. Retrieve campaign knowledge from PostgreSQL + pgvector.
+6. Run a critic pass.
+7. Return a validated campaign growth strategy.
+
+## Architecture Direction
+
+The HLD is maintained in:
+
+- [RFC-Autonomous-Ads-Growth-Agent-Platform-v0.1.md](./RFC-Autonomous-Ads-Growth-Agent-Platform-v0.1.md)
+
+Locked v0.1 stack:
+
+- FastAPI product API
+- CLI for local demo and evals
+- LangGraph StateGraph for orchestration
+- LiteLLM Proxy as the multi-provider LLM gateway
+- PostgreSQL + pgvector for business data, RAG, memory, and checkpoints
+- SQLAlchemy 2 + Alembic for data access and migrations
+- Pydantic v2 for API, tool, and final output schemas
+- LangSmith for agent traces and evaluations
+- Structured JSON logs for service diagnostics
+- Docker Compose for local development
+
+## Development
+
+Python 3.11+ is expected.
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[dev]"
+```
+
+Run the local API:
+
+```bash
+uvicorn ads_growth_agent.api:app --reload
+```
+
+Run the CLI:
+
+```bash
+ads-growth-agent health
+```
+
+Run tests:
+
+```bash
+pytest
+```
+
+## Repository Principles
+
+- The model proposes structured intent; the platform validates and executes.
+- Tool execution goes through typed internal registries, not raw model authority.
+- Recommendations must be grounded in retrieved sources, tool outputs, or explicit assumptions.
+- v0.1 creates drafts and recommendations only; it does not launch live campaigns or change spend.
