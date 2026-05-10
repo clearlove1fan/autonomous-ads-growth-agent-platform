@@ -27,7 +27,7 @@ Add a production-like local runtime stack for the project: FastAPI service, Post
 - [x] Add Postgres extension initialization and LiteLLM Proxy config.
 - [x] Update environment example and README local stack instructions.
 - [x] Run non-network validation where possible and record any blocked checks.
-- [~] Commit and push the local runtime stack.
+- [x] Commit and push the local runtime stack.
 
 ## Decisions
 
@@ -67,4 +67,4 @@ Add a production-like local runtime stack for the project: FastAPI service, Post
 
 ## Final Status
 
-Local runtime stack files have been added. Compose startup still needs to be verified in an environment with Docker Compose v2 installed.
+Completed. Local runtime stack files were added, committed as `1433f1d add local runtime stack`, and pushed to GitHub. Compose startup still needs to be verified in an environment with Docker Compose v2 installed.
