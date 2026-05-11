@@ -5,9 +5,15 @@ from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
 from ads_growth_agent.api import app as api_app
+from ads_growth_agent.api import get_runtime_idempotency_store, get_runtime_settings
 from ads_growth_agent.cli import app as cli_app
 from ads_growth_agent.config import Settings
-from ads_growth_agent.contracts import AdvertiserBrief
+from ads_growth_agent.contracts import AdvertiserBrief, GrowthStrategyRequest
+from ads_growth_agent.persistence.idempotency_store import (
+    IdempotencyConflictError,
+    IdempotencyStart,
+    hash_growth_strategy_request,
+)
 from ads_growth_agent.strategy import generate_mock_growth_strategy
 
 
@@ -42,6 +48,89 @@ def test_growth_strategy_api_returns_structured_strategy() -> None:
     assert payload["run_metadata"]["node_path"] == payload["node_path"]
     assert payload["run_metadata"]["trace_id"].startswith("trace_")
     assert payload["tool_results"][0]["success"] is True
+
+
+def test_growth_strategy_api_idempotency_completes_new_request() -> None:
+    store = FakeIdempotencyStore(IdempotencyStart(status="started"))
+    _override_api_dependencies(
+        settings=Settings(idempotency_backend="postgres", idempotency_ttl_seconds=60),
+        store=store,
+    )
+    try:
+        response = TestClient(api_app).post(
+            "/growth-strategies",
+            json={"brief": _brief_payload()},
+            headers={"Idempotency-Key": "idem_001"},
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.headers["idempotency-status"] == "created"
+    assert store.begins == [
+        (
+            "idem_001",
+            hash_growth_strategy_request(
+                GrowthStrategyRequest.model_validate({"brief": _brief_payload()})
+            ),
+            60,
+        )
+    ]
+    assert store.completed[0]["key"] == "idem_001"
+    assert store.completed[0]["run_id"] is None
+    assert store.completed[0]["response_json"]["strategy"]["advertiser_id"] == "adv_fitness_001"
+    assert store.failed == []
+
+
+def test_growth_strategy_api_idempotency_replays_completed_response() -> None:
+    replay_payload = generate_mock_growth_strategy(
+        AdvertiserBrief.model_validate(_brief_payload())
+    ).model_dump(mode="json")
+    store = FakeIdempotencyStore(
+        IdempotencyStart(status="replayed", response_json=replay_payload)
+    )
+    _override_api_dependencies(
+        settings=Settings(idempotency_backend="postgres"),
+        store=store,
+    )
+    try:
+        response = TestClient(api_app).post(
+            "/growth-strategies",
+            json={"brief": _brief_payload()},
+            headers={"Idempotency-Key": "idem_replay"},
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.headers["idempotency-status"] == "replayed"
+    assert response.json() == replay_payload
+    assert store.completed == []
+
+
+def test_growth_strategy_api_idempotency_rejects_conflicting_key() -> None:
+    store = FakeIdempotencyStore(
+        begin_error=IdempotencyConflictError(
+            "IDEMPOTENCY_KEY_REUSED",
+            "Idempotency key was already used with a different request body.",
+        )
+    )
+    _override_api_dependencies(
+        settings=Settings(idempotency_backend="postgres"),
+        store=store,
+    )
+    try:
+        response = TestClient(api_app).post(
+            "/growth-strategies",
+            json={"brief": _brief_payload()},
+            headers={"Idempotency-Key": "idem_conflict"},
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["error_code"] == "IDEMPOTENCY_KEY_REUSED"
+    assert store.completed == []
 
 
 def test_plan_cli_accepts_brief_file(tmp_path) -> None:
@@ -94,6 +183,69 @@ def test_seed_knowledge_cli_uses_configured_database_and_tenant(monkeypatch) -> 
     assert calls["engine_kwargs"] == {"pool_pre_ping": True}
     assert calls["tenant_id"] == "tenant_cli"
     assert calls["disposed"] is True
+
+
+def _override_api_dependencies(*, settings: Settings, store: object) -> None:
+    api_app.dependency_overrides[get_runtime_settings] = lambda: settings
+    api_app.dependency_overrides[get_runtime_idempotency_store] = lambda: store
+
+
+class FakeIdempotencyStore:
+    def __init__(
+        self,
+        start: IdempotencyStart | None = None,
+        *,
+        begin_error: IdempotencyConflictError | None = None,
+    ) -> None:
+        self._start = start or IdempotencyStart(status="started")
+        self._begin_error = begin_error
+        self.begins: list[tuple[str, str, int]] = []
+        self.completed: list[dict[str, object]] = []
+        self.failed: list[dict[str, object]] = []
+
+    def begin(self, key: str, request_hash: str, *, ttl_seconds: int) -> IdempotencyStart:
+        self.begins.append((key, request_hash, ttl_seconds))
+        if self._begin_error is not None:
+            raise self._begin_error
+        return self._start
+
+    def mark_completed(
+        self,
+        key: str,
+        request_hash: str,
+        *,
+        run_id: str | None,
+        response_json: dict[str, object],
+        ttl_seconds: int,
+    ) -> None:
+        self.completed.append(
+            {
+                "key": key,
+                "request_hash": request_hash,
+                "run_id": run_id,
+                "response_json": response_json,
+                "ttl_seconds": ttl_seconds,
+            }
+        )
+
+    def mark_failed(
+        self,
+        key: str,
+        request_hash: str,
+        *,
+        run_id: str | None,
+        error_json: dict[str, object],
+        ttl_seconds: int,
+    ) -> None:
+        self.failed.append(
+            {
+                "key": key,
+                "request_hash": request_hash,
+                "run_id": run_id,
+                "error_json": error_json,
+                "ttl_seconds": ttl_seconds,
+            }
+        )
 
 
 def _brief_payload() -> dict[str, object]:

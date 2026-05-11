@@ -1,10 +1,18 @@
-from fastapi import FastAPI, HTTPException
+from typing import Annotated
+
+from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from pydantic import BaseModel
 
 from ads_growth_agent import __version__
-from ads_growth_agent.config import get_settings
+from ads_growth_agent.config import Settings, get_settings
 from ads_growth_agent.contracts import GrowthStrategyRequest, GrowthStrategyResponse
+from ads_growth_agent.idempotency_store_factory import build_configured_idempotency_store
 from ads_growth_agent.logging_config import configure_logging
+from ads_growth_agent.persistence.idempotency_store import (
+    IdempotencyConflictError,
+    IdempotencyStore,
+    hash_growth_strategy_request,
+)
 from ads_growth_agent.strategy import StrategyGenerationError, generate_growth_strategy
 
 
@@ -23,9 +31,19 @@ app = FastAPI(
 configure_logging()
 
 
+def get_runtime_settings() -> Settings:
+    return get_settings()
+
+
+def get_runtime_idempotency_store(
+    settings: Annotated[Settings, Depends(get_runtime_settings)],
+) -> IdempotencyStore:
+    return build_configured_idempotency_store(settings)
+
+
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
-    settings = get_settings()
+    settings = get_runtime_settings()
     return HealthResponse(
         status="ok",
         service="ads-growth-agent",
@@ -35,9 +53,91 @@ def health() -> HealthResponse:
 
 
 @app.post("/growth-strategies", response_model=GrowthStrategyResponse)
-def create_growth_strategy(request: GrowthStrategyRequest) -> GrowthStrategyResponse:
+def create_growth_strategy(
+    request: GrowthStrategyRequest,
+    response: Response,
+    settings: Annotated[Settings, Depends(get_runtime_settings)],
+    idempotency_store: Annotated[
+        IdempotencyStore,
+        Depends(get_runtime_idempotency_store),
+    ],
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+) -> GrowthStrategyResponse:
+    if idempotency_key and settings.idempotency_backend != "none":
+        return _create_growth_strategy_with_idempotency(
+            request,
+            response=response,
+            settings=settings,
+            idempotency_store=idempotency_store,
+            idempotency_key=idempotency_key,
+        )
+
+    return _generate_growth_strategy_response(request, settings=settings)
+
+
+def _create_growth_strategy_with_idempotency(
+    request: GrowthStrategyRequest,
+    *,
+    response: Response,
+    settings: Settings,
+    idempotency_store: IdempotencyStore,
+    idempotency_key: str,
+) -> GrowthStrategyResponse:
+    request_hash = hash_growth_strategy_request(request)
     try:
-        return generate_growth_strategy(request.brief)
+        start = idempotency_store.begin(
+            idempotency_key,
+            request_hash,
+            ttl_seconds=settings.idempotency_ttl_seconds,
+        )
+    except IdempotencyConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": exc.message, "error_code": exc.code},
+        ) from exc
+
+    if start.status == "replayed":
+        response.headers["Idempotency-Status"] = "replayed"
+        return GrowthStrategyResponse.model_validate(start.response_json)
+
+    try:
+        growth_response = _generate_growth_strategy_response(request, settings=settings)
+    except HTTPException as exc:
+        idempotency_store.mark_failed(
+            idempotency_key,
+            request_hash,
+            run_id=(
+                _run_id_from_http_error(exc)
+                if settings.run_persistence_backend == "postgres"
+                else None
+            ),
+            error_json={"detail": exc.detail},
+            ttl_seconds=settings.idempotency_ttl_seconds,
+        )
+        raise
+
+    idempotency_store.mark_completed(
+        idempotency_key,
+        request_hash,
+        run_id=(
+            growth_response.run_metadata.run_id
+            if settings.run_persistence_backend == "postgres"
+            else None
+        ),
+        response_json=growth_response.model_dump(mode="json"),
+        ttl_seconds=settings.idempotency_ttl_seconds,
+    )
+    response.headers["Idempotency-Status"] = "created"
+    return growth_response
+
+
+def _generate_growth_strategy_response(
+    request: GrowthStrategyRequest,
+    *,
+    settings: Settings,
+) -> GrowthStrategyResponse:
+    try:
+        return generate_growth_strategy(request.brief, settings=settings)
     except StrategyGenerationError as exc:
         error = exc.tool_result.error
         raise HTTPException(
@@ -51,3 +151,13 @@ def create_growth_strategy(request: GrowthStrategyRequest) -> GrowthStrategyResp
                 ),
             },
         ) from exc
+
+
+def _run_id_from_http_error(exc: HTTPException) -> str | None:
+    if not isinstance(exc.detail, dict):
+        return None
+    run_metadata = exc.detail.get("run_metadata")
+    if not isinstance(run_metadata, dict):
+        return None
+    run_id = run_metadata.get("run_id")
+    return run_id if isinstance(run_id, str) else None

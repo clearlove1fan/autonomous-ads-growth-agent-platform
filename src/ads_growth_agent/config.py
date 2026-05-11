@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     knowledge_store_backend: Literal["memory", "postgres"] = "memory"
     run_persistence_backend: Literal["none", "postgres"] = "none"
     campaign_draft_persistence_backend: Literal["none", "postgres"] = "none"
+    idempotency_backend: Literal["none", "postgres"] = "none"
+    idempotency_ttl_seconds: int = 86_400
     litellm_base_url: str = "http://localhost:4000"
     litellm_api_key: str = "sk-local-dev-key"
     default_chat_model: str = "openai/gpt-4o-mini"

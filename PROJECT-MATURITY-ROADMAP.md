@@ -43,6 +43,7 @@ Completed:
 - Runtime knowledge-store backend switch for memory or Postgres retrieval.
 - Optional PostgreSQL run persistence for `agent_runs` and `agent_run_steps`.
 - Optional PostgreSQL campaign draft persistence for draft-only business artifacts.
+- Optional PostgreSQL API idempotency for duplicate request replay and conflict detection.
 
 Remaining:
 
@@ -178,4 +179,4 @@ Exit criteria:
 5. Design production schema with partition keys and replica strategy.
 6. Implement Alembic migrations for core tables.
 7. Persist agent runs and steps to PostgreSQL.
-8. Add API idempotency key support for strategy generation.
+8. Add LangGraph Postgres checkpointer.

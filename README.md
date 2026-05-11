@@ -184,6 +184,18 @@ CAMPAIGN_DRAFT_PERSISTENCE_BACKEND=postgres ads-growth-agent plan examples/fitne
 
 Persisted drafts keep `status=draft`, store the final strategy JSON for explainability, and include metadata such as campaign name, daily budget, audience segments, creative angles, and the safety note. No live campaign launch or spend mutation is performed.
 
+API idempotency is opt-in for production-style duplicate request protection. Set `IDEMPOTENCY_BACKEND=postgres` and send an `Idempotency-Key` header:
+
+```bash
+IDEMPOTENCY_BACKEND=postgres RUN_PERSISTENCE_BACKEND=postgres \
+  curl -X POST http://localhost:8000/growth-strategies \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: demo-fitness-001" \
+  -d '{"brief":{"advertiser_id":"adv_fitness_001","product_name":"FitTrack Pro","product_category":"fitness app","objective":"registrations","budget":"2000.00","currency":"USD","duration_days":14,"target_market":"United States","primary_kpi":"trial registrations"}}'
+```
+
+The first request stores an `idempotency_keys` row as `completed`; a repeated request with the same key and identical body replays the saved response; a repeated request with the same key and different body returns HTTP `409`. `RUN_PERSISTENCE_BACKEND=postgres` is recommended with idempotency so the idempotency record can link to `agent_runs.run_id`.
+
 The LLM gateway foundation targets LiteLLM's OpenAI-compatible API and supports:
 
 - native JSON schema structured output requests
