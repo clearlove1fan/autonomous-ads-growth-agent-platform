@@ -39,6 +39,8 @@ Completed:
 - Structured JSON logs.
 - LangSmith-compatible run metadata.
 - Local evaluation suite.
+- PostgreSQL-backed knowledge store adapter with seed loader.
+- Runtime knowledge-store backend switch for memory or Postgres retrieval.
 
 Remaining:
 
@@ -172,4 +174,5 @@ Exit criteria:
 4. Add agent-eval cases for RAG grounding and critique/revision.
 5. Design production schema with partition keys and replica strategy.
 6. Implement Alembic migrations for core tables.
-7. Add `PostgresKnowledgeStore`.
+7. Persist agent runs and steps to PostgreSQL.
+8. Add API idempotency key support for strategy generation.

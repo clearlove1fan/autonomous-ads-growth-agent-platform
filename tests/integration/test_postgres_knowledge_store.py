@@ -7,10 +7,13 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy.engine import URL, make_url
 
+from ads_growth_agent.config import Settings
 from ads_growth_agent.contracts import AdvertiserBrief, CampaignObjective
 from ads_growth_agent.knowledge import build_knowledge_query
+from ads_growth_agent.knowledge_store_factory import dispose_cached_knowledge_store_engines
 from ads_growth_agent.persistence.knowledge_seed import seed_default_knowledge
 from ads_growth_agent.persistence.knowledge_store import PostgresKnowledgeStore
+from ads_growth_agent.strategy import generate_growth_strategy
 
 pytestmark = pytest.mark.integration
 
@@ -67,6 +70,46 @@ def test_postgres_knowledge_store_retrieves_seeded_sources_and_records_event(
         assert 0 <= event["partition_bucket"] < 128
         assert memory_count == 1
     finally:
+        engine.dispose()
+        _drop_temporary_database(test_url)
+
+
+def test_strategy_generation_can_use_postgres_knowledge_backend(monkeypatch) -> None:
+    base_url = _integration_database_url()
+    test_url = _create_temporary_database(base_url)
+    engine = sa.create_engine(test_url)
+
+    try:
+        monkeypatch.setenv("DATABASE_URL", test_url.render_as_string(hide_password=False))
+        command.upgrade(Config("alembic.ini"), "head")
+        seed_default_knowledge(engine)
+
+        settings = Settings(
+            database_url=test_url.render_as_string(hide_password=False),
+            knowledge_store_backend="postgres",
+            tenant_id="default",
+        )
+        response = generate_growth_strategy(_fitness_brief(), settings=settings)
+
+        source_types = {source.source_type for source in response.strategy.sources}
+        assert response.node_path == [
+            "planner",
+            "retriever",
+            "tool_executor",
+            "critic",
+            "finalizer",
+        ]
+        assert {"advertiser_memory", "historical_case", "rag_document"}.issubset(source_types)
+
+        with engine.connect() as connection:
+            event_count = connection.execute(
+                sa.text("SELECT count(*) FROM retrieval_events WHERE run_id = :run_id"),
+                {"run_id": response.strategy.strategy_id},
+            ).scalar_one()
+
+        assert event_count == 1
+    finally:
+        dispose_cached_knowledge_store_engines()
         engine.dispose()
         _drop_temporary_database(test_url)
 

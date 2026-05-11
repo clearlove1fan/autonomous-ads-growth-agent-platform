@@ -64,6 +64,7 @@ Run the CLI:
 ```bash
 ads-growth-agent health
 ads-growth-agent plan examples/fitness_app_brief.json
+ads-growth-agent seed-knowledge
 ads-growth-agent eval examples/eval_cases.json
 ```
 
@@ -154,7 +155,18 @@ The local suite currently evaluates:
 
 The `retriever` node uses the v0.1 knowledge layer to attach deterministic local RAG results before tool execution. The default seed corpus includes campaign strategy playbooks, historical cases, and advertiser profile memory. Final strategies cite retrieved sources as `rag_document`, `historical_case`, or `advertiser_memory`.
 
-The default API/CLI workflow still uses the in-memory knowledge store for fast offline demos. A PostgreSQL-backed `PostgresKnowledgeStore` and seed loader are available under `ads_growth_agent.persistence`; the live integration suite verifies seeded retrieval from `knowledge_documents`, `knowledge_chunks`, and `advertiser_memories`, plus `retrieval_events` recording for run-level observability. This is the first database-backed RAG slice before adding embedding generation and hybrid vector ranking.
+The default API/CLI workflow still uses the in-memory knowledge store for fast offline demos. Set `KNOWLEDGE_STORE_BACKEND=postgres` to make strategy generation use the PostgreSQL-backed `PostgresKnowledgeStore`.
+
+Before switching to Postgres retrieval locally, apply migrations and seed the default corpus:
+
+```bash
+docker compose up -d postgres
+alembic upgrade head
+ads-growth-agent seed-knowledge
+KNOWLEDGE_STORE_BACKEND=postgres ads-growth-agent plan examples/fitness_app_brief.json
+```
+
+The live integration suite verifies seeded retrieval from `knowledge_documents`, `knowledge_chunks`, and `advertiser_memories`, plus `retrieval_events` recording for run-level observability. This is the first database-backed RAG slice before adding embedding generation and hybrid vector ranking.
 
 The LLM gateway foundation targets LiteLLM's OpenAI-compatible API and supports:
 

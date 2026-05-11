@@ -5,7 +5,7 @@ from ads_growth_agent import __version__
 from ads_growth_agent.config import get_settings
 from ads_growth_agent.contracts import GrowthStrategyRequest, GrowthStrategyResponse
 from ads_growth_agent.logging_config import configure_logging
-from ads_growth_agent.strategy import StrategyGenerationError, generate_mock_growth_strategy
+from ads_growth_agent.strategy import StrategyGenerationError, generate_growth_strategy
 
 
 class HealthResponse(BaseModel):
@@ -37,7 +37,7 @@ def health() -> HealthResponse:
 @app.post("/growth-strategies", response_model=GrowthStrategyResponse)
 def create_growth_strategy(request: GrowthStrategyRequest) -> GrowthStrategyResponse:
     try:
-        return generate_mock_growth_strategy(request.brief)
+        return generate_growth_strategy(request.brief)
     except StrategyGenerationError as exc:
         error = exc.tool_result.error
         raise HTTPException(

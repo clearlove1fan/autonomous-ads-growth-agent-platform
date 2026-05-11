@@ -1,15 +1,18 @@
 import json
 from pathlib import Path
 
+import sqlalchemy as sa
 import typer
 from pydantic import ValidationError
+from sqlalchemy.engine import make_url
 
 from ads_growth_agent import __version__
 from ads_growth_agent.config import get_settings
 from ads_growth_agent.contracts import AdvertiserBrief, GrowthStrategyRequest
 from ads_growth_agent.evaluation import load_eval_cases, run_local_eval_suite
 from ads_growth_agent.logging_config import configure_logging
-from ads_growth_agent.strategy import StrategyGenerationError, generate_mock_growth_strategy
+from ads_growth_agent.persistence.knowledge_seed import seed_default_knowledge
+from ads_growth_agent.strategy import StrategyGenerationError, generate_growth_strategy
 
 app = typer.Typer(help="Autonomous Ads Growth Agent Platform CLI.")
 BRIEF_FILE_ARGUMENT = typer.Argument(
@@ -48,7 +51,7 @@ def plan(brief_file: Path = BRIEF_FILE_ARGUMENT) -> None:
     try:
         payload = json.loads(brief_file.read_text())
         request = _parse_strategy_request(payload)
-        response = generate_mock_growth_strategy(request.brief)
+        response = generate_growth_strategy(request.brief)
     except json.JSONDecodeError as exc:
         typer.echo(f"Invalid JSON: {exc}", err=True)
         raise typer.Exit(2) from exc
@@ -60,6 +63,29 @@ def plan(brief_file: Path = BRIEF_FILE_ARGUMENT) -> None:
         raise typer.Exit(1) from exc
 
     typer.echo(response.model_dump_json(indent=2))
+
+
+@app.command("seed-knowledge")
+def seed_knowledge() -> None:
+    """Seed the default RAG and advertiser-memory corpus into PostgreSQL."""
+    settings = get_settings()
+    engine = sa.create_engine(settings.database_url, pool_pre_ping=True)
+    try:
+        seed_default_knowledge(engine, tenant_id=settings.tenant_id)
+    finally:
+        engine.dispose()
+
+    typer.echo(
+        json.dumps(
+            {
+                "status": "ok",
+                "tenant_id": settings.tenant_id,
+                "database_url": _safe_database_url(settings.database_url),
+                "seeded_corpus": "default_knowledge_documents",
+            },
+            indent=2,
+        )
+    )
 
 
 @app.command("eval")
@@ -82,6 +108,10 @@ def _parse_strategy_request(payload: object) -> GrowthStrategyRequest:
     if isinstance(payload, dict) and "brief" in payload:
         return GrowthStrategyRequest.model_validate(payload)
     return GrowthStrategyRequest(brief=AdvertiserBrief.model_validate(payload))
+
+
+def _safe_database_url(database_url: str) -> str:
+    return make_url(database_url).render_as_string(hide_password=True)
 
 
 @app.callback()

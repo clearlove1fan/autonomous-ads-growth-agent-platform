@@ -6,6 +6,7 @@ from typer.testing import CliRunner
 
 from ads_growth_agent.api import app as api_app
 from ads_growth_agent.cli import app as cli_app
+from ads_growth_agent.config import Settings
 from ads_growth_agent.contracts import AdvertiserBrief
 from ads_growth_agent.strategy import generate_mock_growth_strategy
 
@@ -54,6 +55,45 @@ def test_plan_cli_accepts_brief_file(tmp_path) -> None:
     assert payload["strategy"]["advertiser_id"] == "adv_fitness_001"
     assert payload["strategy"]["actions"]
     assert payload["run_metadata"]["tool_count"] == 5
+
+
+def test_seed_knowledge_cli_uses_configured_database_and_tenant(monkeypatch) -> None:
+    calls: dict[str, object] = {}
+
+    class FakeEngine:
+        def dispose(self) -> None:
+            calls["disposed"] = True
+
+    def fake_create_engine(database_url: str, **kwargs: object) -> FakeEngine:
+        calls["database_url"] = database_url
+        calls["engine_kwargs"] = kwargs
+        return FakeEngine()
+
+    def fake_seed_default_knowledge(engine: FakeEngine, *, tenant_id: str) -> None:
+        calls["seed_engine"] = engine
+        calls["tenant_id"] = tenant_id
+
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.get_settings",
+        lambda: Settings(
+            database_url="postgresql+psycopg://ads_growth:secret@localhost:5432/ads_growth",
+            tenant_id="tenant_cli",
+        ),
+    )
+    monkeypatch.setattr("ads_growth_agent.cli.sa.create_engine", fake_create_engine)
+    monkeypatch.setattr("ads_growth_agent.cli.seed_default_knowledge", fake_seed_default_knowledge)
+
+    result = CliRunner().invoke(cli_app, ["seed-knowledge"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["tenant_id"] == "tenant_cli"
+    assert payload["database_url"] == "postgresql+psycopg://ads_growth:***@localhost:5432/ads_growth"
+    assert calls["database_url"] == "postgresql+psycopg://ads_growth:secret@localhost:5432/ads_growth"
+    assert calls["engine_kwargs"] == {"pool_pre_ping": True}
+    assert calls["tenant_id"] == "tenant_cli"
+    assert calls["disposed"] is True
 
 
 def _brief_payload() -> dict[str, object]:
