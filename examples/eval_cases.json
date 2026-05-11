@@ -1,0 +1,78 @@
+{
+  "cases": [
+    {
+      "case_id": "fitness_app_registrations",
+      "description": "Fitness app advertiser optimizing for trial registrations with a fixed launch budget.",
+      "brief": {
+        "advertiser_id": "adv_fitness_001",
+        "product_name": "FitTrack Pro",
+        "product_category": "fitness app",
+        "objective": "registrations",
+        "budget": "2000.00",
+        "currency": "USD",
+        "duration_days": 14,
+        "target_market": "United States",
+        "primary_kpi": "trial registrations",
+        "target_cpa": "20.00",
+        "brand_voice": "motivational and practical",
+        "constraints": [
+          "Avoid unrealistic body transformation claims",
+          "Do not imply medical outcomes"
+        ],
+        "known_audiences": [
+          "Home workout beginners",
+          "Wearable fitness tracker users"
+        ]
+      }
+    },
+    {
+      "case_id": "skincare_purchase_growth",
+      "description": "DTC skincare advertiser optimizing for purchases with strict claims constraints.",
+      "brief": {
+        "advertiser_id": "adv_skincare_002",
+        "product_name": "GlowLab Barrier Serum",
+        "product_category": "skincare",
+        "objective": "purchases",
+        "budget": "3500.00",
+        "currency": "USD",
+        "duration_days": 21,
+        "target_market": "United States",
+        "primary_kpi": "first purchases",
+        "target_cpa": "35.00",
+        "brand_voice": "clinical and trustworthy",
+        "constraints": [
+          "Avoid medical cure claims",
+          "Avoid before-and-after claims that imply guaranteed results"
+        ],
+        "known_audiences": [
+          "Sensitive skin shoppers",
+          "Beauty routine content engagers"
+        ]
+      }
+    },
+    {
+      "case_id": "saas_lead_generation",
+      "description": "B2B SaaS advertiser optimizing for qualified lead generation.",
+      "brief": {
+        "advertiser_id": "adv_saas_003",
+        "product_name": "PipelineDesk",
+        "product_category": "sales productivity SaaS",
+        "objective": "leads",
+        "budget": "5000.00",
+        "currency": "USD",
+        "duration_days": 30,
+        "target_market": "United States",
+        "primary_kpi": "qualified demo requests",
+        "target_cpa": "50.00",
+        "brand_voice": "clear and ROI-focused",
+        "constraints": [
+          "Avoid unverifiable revenue lift claims"
+        ],
+        "known_audiences": [
+          "Sales operations managers",
+          "CRM software comparison viewers"
+        ]
+      }
+    }
+  ]
+}

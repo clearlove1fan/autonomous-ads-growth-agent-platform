@@ -56,6 +56,7 @@ Run the CLI:
 ```bash
 ads-growth-agent health
 ads-growth-agent plan examples/fitness_app_brief.json
+ads-growth-agent eval examples/eval_cases.json
 ```
 
 Run tests:
@@ -116,6 +117,20 @@ Responses include `run_metadata` for local observability and LangSmith correlati
 - `tool_count`
 - `failed_tool_count`
 - `tool_summaries`
+
+Run deterministic local evaluators:
+
+```bash
+ads-growth-agent eval examples/eval_cases.json
+```
+
+The local suite currently evaluates:
+
+- budget consistency
+- tool use correctness
+- strategy completeness
+- draft-only safety
+- observability metadata
 
 Check the repository-defined services:
 

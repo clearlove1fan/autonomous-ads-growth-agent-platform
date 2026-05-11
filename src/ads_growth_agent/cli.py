@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from ads_growth_agent import __version__
 from ads_growth_agent.config import get_settings
 from ads_growth_agent.contracts import AdvertiserBrief, GrowthStrategyRequest
+from ads_growth_agent.evaluation import load_eval_cases, run_local_eval_suite
 from ads_growth_agent.strategy import StrategyGenerationError, generate_mock_growth_strategy
 
 app = typer.Typer(help="Autonomous Ads Growth Agent Platform CLI.")
@@ -16,6 +17,13 @@ BRIEF_FILE_ARGUMENT = typer.Argument(
     dir_okay=False,
     readable=True,
     help="Path to an advertiser brief JSON file.",
+)
+EVAL_FILE_ARGUMENT = typer.Argument(
+    ...,
+    exists=True,
+    dir_okay=False,
+    readable=True,
+    help="Path to a local evaluation cases JSON file.",
 )
 
 
@@ -51,6 +59,22 @@ def plan(brief_file: Path = BRIEF_FILE_ARGUMENT) -> None:
         raise typer.Exit(1) from exc
 
     typer.echo(response.model_dump_json(indent=2))
+
+
+@app.command("eval")
+def run_eval(eval_file: Path = EVAL_FILE_ARGUMENT) -> None:
+    """Run deterministic local evaluators against curated advertiser briefs."""
+    try:
+        cases = load_eval_cases(eval_file)
+        report = run_local_eval_suite(cases)
+    except json.JSONDecodeError as exc:
+        typer.echo(f"Invalid JSON: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    except ValidationError as exc:
+        typer.echo(json.dumps(exc.errors(include_url=False), indent=2), err=True)
+        raise typer.Exit(2) from exc
+
+    typer.echo(report.model_dump_json(indent=2))
 
 
 def _parse_strategy_request(payload: object) -> GrowthStrategyRequest:
