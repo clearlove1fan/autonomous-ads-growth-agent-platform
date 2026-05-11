@@ -106,6 +106,17 @@ The current deterministic workflow runs through explicit LangGraph nodes:
 planner -> tool_executor -> critic -> finalizer
 ```
 
+Responses include `run_metadata` for local observability and LangSmith correlation:
+
+- `run_id`
+- `trace_id`
+- `langsmith_project`
+- `tracing_enabled`
+- `node_path`
+- `tool_count`
+- `failed_tool_count`
+- `tool_summaries`
+
 Check the repository-defined services:
 
 ```bash

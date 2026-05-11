@@ -44,5 +44,8 @@ def create_growth_strategy(request: GrowthStrategyRequest) -> GrowthStrategyResp
                 "message": str(exc),
                 "tool_name": exc.tool_result.tool_name,
                 "error_code": error.code if error else "TOOL_FAILURE",
+                "run_metadata": (
+                    exc.run_metadata.model_dump(mode="json") if exc.run_metadata else None
+                ),
             },
         ) from exc

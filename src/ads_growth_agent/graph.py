@@ -4,6 +4,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 from langgraph.graph import END, START, StateGraph
 
+from ads_growth_agent.config import Settings
 from ads_growth_agent.contracts import (
     AdvertiserBrief,
     AgentRole,
@@ -13,10 +14,17 @@ from ads_growth_agent.contracts import (
     RecommendedAction,
     RiskAssessment,
     RiskLevel,
+    RunMetadata,
     SourceCitation,
     SuccessMetric,
     ToolIntent,
     ToolResult,
+)
+from ads_growth_agent.observability import (
+    build_run_metadata,
+    create_run_context,
+    graph_tracing_context,
+    invoke_traced_graph,
 )
 from ads_growth_agent.tools import (
     AudienceRecommendationOutput,
@@ -31,9 +39,15 @@ from ads_growth_agent.tools import (
 
 
 class StrategyGenerationError(Exception):
-    def __init__(self, message: str, tool_result: ToolResult) -> None:
+    def __init__(
+        self,
+        message: str,
+        tool_result: ToolResult,
+        run_metadata: RunMetadata | None = None,
+    ) -> None:
         super().__init__(message)
         self.tool_result = tool_result
+        self.run_metadata = run_metadata
 
 
 class GrowthStrategyState(TypedDict, total=False):
@@ -51,13 +65,33 @@ class GrowthStrategyState(TypedDict, total=False):
 def run_growth_strategy_graph(
     brief: AdvertiserBrief,
     registry: ToolRegistry | None = None,
+    settings: Settings | None = None,
 ) -> GrowthStrategyResponse:
+    run_context = create_run_context(run_id=_strategy_id(brief), settings=settings)
     graph = build_growth_strategy_graph(registry or build_default_tool_registry())
-    final_state = graph.invoke({"brief": brief, "node_path": []})
+    try:
+        with graph_tracing_context(run_context, advertiser_id=brief.advertiser_id):
+            final_state = invoke_traced_graph(graph, {"brief": brief, "node_path": []})
+    except StrategyGenerationError as exc:
+        exc.run_metadata = build_run_metadata(
+            run_context,
+            node_path=[],
+            tool_results=[exc.tool_result],
+            error_summary=[str(exc)],
+        )
+        raise
+
+    tool_results = final_state.get("tool_results", [])
+    node_path = final_state.get("node_path", [])
     return GrowthStrategyResponse(
         strategy=final_state["strategy"],
-        tool_results=final_state.get("tool_results", []),
-        node_path=final_state.get("node_path", []),
+        tool_results=tool_results,
+        node_path=node_path,
+        run_metadata=build_run_metadata(
+            run_context,
+            node_path=node_path,
+            tool_results=tool_results,
+        ),
     )
 
 

@@ -26,6 +26,12 @@ def test_langgraph_workflow_runs_expected_node_path() -> None:
         "estimate_performance",
         "create_campaign_draft",
     ]
+    assert response.run_metadata.run_id == response.strategy.strategy_id
+    assert response.run_metadata.trace_id.startswith("trace_")
+    assert response.run_metadata.tracing_enabled is False
+    assert response.run_metadata.node_path == response.node_path
+    assert response.run_metadata.tool_count == 5
+    assert response.run_metadata.failed_tool_count == 0
     assert response.strategy.critique.passed is True
 
 
@@ -59,6 +65,10 @@ def test_langgraph_workflow_raises_structured_tool_error() -> None:
     assert exc_info.value.tool_result.success is False
     assert exc_info.value.tool_result.error is not None
     assert exc_info.value.tool_result.error.code == "BUDGET_SERVICE_DOWN"
+    assert exc_info.value.run_metadata is not None
+    assert exc_info.value.run_metadata.failed_tool_count == 1
+    assert exc_info.value.run_metadata.tool_summaries[0].error_code == "BUDGET_SERVICE_DOWN"
+    assert exc_info.value.run_metadata.error_summary == ["Budget mock failed"]
 
 
 def _brief() -> AdvertiserBrief:

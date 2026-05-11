@@ -122,6 +122,29 @@ class ToolResult(BaseModel):
         return self
 
 
+class ToolRunSummary(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    tool_name: str = Field(min_length=1, max_length=120)
+    success: bool
+    latency_ms: int = Field(ge=0)
+    error_code: str | None = Field(default=None, max_length=80)
+
+
+class RunMetadata(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    run_id: str = Field(min_length=1, max_length=128)
+    trace_id: str = Field(min_length=1, max_length=128)
+    langsmith_project: str = Field(min_length=1, max_length=200)
+    tracing_enabled: bool
+    node_path: list[str] = Field(default_factory=list)
+    tool_count: int = Field(ge=0)
+    failed_tool_count: int = Field(ge=0)
+    tool_summaries: list[ToolRunSummary] = Field(default_factory=list)
+    error_summary: list[str] = Field(default_factory=list)
+
+
 class BudgetAllocation(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -246,3 +269,4 @@ class GrowthStrategyResponse(BaseModel):
     strategy: FinalGrowthStrategy
     tool_results: list[ToolResult] = Field(default_factory=list)
     node_path: list[str] = Field(default_factory=list)
+    run_metadata: RunMetadata
