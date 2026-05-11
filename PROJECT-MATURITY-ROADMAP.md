@@ -41,6 +41,7 @@ Completed:
 - Local evaluation suite.
 - PostgreSQL-backed knowledge store adapter with seed loader.
 - Runtime knowledge-store backend switch for memory or Postgres retrieval.
+- Optional PostgreSQL run persistence for `agent_runs` and `agent_run_steps`.
 
 Remaining:
 
@@ -86,6 +87,7 @@ Planned work:
 - `campaign_drafts` persistence.
 - Seed loader for local knowledge corpus.
 - `PostgresKnowledgeStore` adapter.
+- `PostgresAgentRunStore` adapter.
 - LangGraph Postgres checkpointer.
 - API idempotency key for strategy generation.
 - Tenant-aware request context.

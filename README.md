@@ -168,6 +168,14 @@ KNOWLEDGE_STORE_BACKEND=postgres ads-growth-agent plan examples/fitness_app_brie
 
 The live integration suite verifies seeded retrieval from `knowledge_documents`, `knowledge_chunks`, and `advertiser_memories`, plus `retrieval_events` recording for run-level observability. This is the first database-backed RAG slice before adding embedding generation and hybrid vector ranking.
 
+Run audit persistence is also opt-in. Set `RUN_PERSISTENCE_BACKEND=postgres` to write completed or failed strategy runs into `agent_runs` and derived node records into `agent_run_steps`:
+
+```bash
+RUN_PERSISTENCE_BACKEND=postgres ads-growth-agent plan examples/fitness_app_brief.json
+```
+
+The current v0.1 `run_id` is deterministic for a given advertiser brief, so repeated identical runs update the same `agent_runs` row and replace its derived step rows. This is deliberate for local idempotent demos; later production work can introduce per-execution run IDs and replay tooling.
+
 The LLM gateway foundation targets LiteLLM's OpenAI-compatible API and supports:
 
 - native JSON schema structured output requests
