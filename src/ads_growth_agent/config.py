@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     use_llm_critic: bool = False
     llm_structured_output_max_repair_attempts: int = 1
     llm_critic_min_score: float = 7.0
+    max_revision_attempts: int = 1
     langsmith_tracing: bool = False
     langsmith_project: str = "ads-growth-agent-local"
 

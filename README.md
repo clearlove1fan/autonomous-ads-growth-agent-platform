@@ -154,7 +154,13 @@ The critic node can also be switched to LiteLLM-backed structured critique:
 USE_LLM_CRITIC=true ads-growth-agent plan examples/fitness_app_brief.json
 ```
 
-The LLM critic returns a validated `CritiqueReport`. The workflow finalizes only when the critique passes and meets `LLM_CRITIC_MIN_SCORE`; otherwise it records a structured `llm_critic` safe failure before finalization.
+The LLM critic returns a validated `CritiqueReport`. The workflow finalizes only when the critique passes and meets `LLM_CRITIC_MIN_SCORE`. If the critic returns a valid rejection, the graph can route through a bounded self-reflection step:
+
+```bash
+USE_LLM_CRITIC=true MAX_REVISION_ATTEMPTS=1 ads-growth-agent plan examples/fitness_app_brief.json
+```
+
+That route appears explicitly in `node_path` as `critic -> revision -> critic`. The revision node records critic issues and required revisions in graph state before the second critique. If the strategy is still rejected after the configured attempt limit, the workflow records a structured `llm_critic` safe failure before finalization.
 
 API and CLI runs emit structured JSON logs to stderr. CLI command payloads remain on stdout, while logs include summary fields such as:
 

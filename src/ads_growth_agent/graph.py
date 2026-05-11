@@ -93,6 +93,8 @@ class GrowthStrategyState(TypedDict, total=False):
     strategy: FinalGrowthStrategy
     errors: list[str]
     node_path: list[str]
+    requires_revision: bool
+    revision_count: int
 
 
 class PlannerOutput(BaseModel):
@@ -159,12 +161,21 @@ def build_growth_strategy_graph(
     builder.add_node("planner", _planner_node(settings=settings, llm_client=llm_client))
     builder.add_node("tool_executor", _tool_executor_node(registry))
     builder.add_node("critic", _critic_node(settings=settings, llm_client=llm_client))
+    builder.add_node("revision", _revision_node)
     builder.add_node("finalizer", _finalizer_node)
 
     builder.add_edge(START, "planner")
     builder.add_edge("planner", "tool_executor")
     builder.add_edge("tool_executor", "critic")
-    builder.add_edge("critic", "finalizer")
+    builder.add_conditional_edges(
+        "critic",
+        _route_after_critic,
+        {
+            "revise": "revision",
+            "finalize": "finalizer",
+        },
+    )
+    builder.add_edge("revision", "critic")
     builder.add_edge("finalizer", END)
     return builder.compile()
 
@@ -191,6 +202,8 @@ def _deterministic_planner_node(state: GrowthStrategyState) -> GrowthStrategySta
         "tool_intents": intents,
         "tool_results": [],
         "artifacts": {},
+        "requires_revision": False,
+        "revision_count": 0,
         "node_path": [*state.get("node_path", []), "planner"],
     }
 
@@ -254,6 +267,8 @@ def _llm_planner_node(
                 ],
             }
         },
+        "requires_revision": False,
+        "revision_count": 0,
         "node_path": node_path,
     }
 
@@ -566,6 +581,10 @@ def _tool_executor_node(registry: ToolRegistry):
     return execute_tools
 
 
+def _route_after_critic(state: GrowthStrategyState) -> str:
+    return "revise" if state.get("requires_revision", False) else "finalize"
+
+
 def _critic_node(
     *,
     settings: Settings,
@@ -592,6 +611,7 @@ def _deterministic_critic_node(state: GrowthStrategyState) -> GrowthStrategyStat
     )
     return {
         "critique": critique,
+        "requires_revision": False,
         "node_path": [*state.get("node_path", []), "critic"],
     }
 
@@ -626,11 +646,28 @@ def _llm_critic_node(
             node_path=node_path,
         )
 
+    artifacts: dict[str, Any] = dict(state.get("artifacts", {}))
+    artifacts = _record_critic_artifact(
+        artifacts,
+        critique=critique,
+        structured_result=structured_result,
+    )
+
     if not critique.passed or critique.score < settings.llm_critic_min_score:
+        if state.get("revision_count", 0) < settings.max_revision_attempts:
+            return {
+                "critique": critique,
+                "artifacts": artifacts,
+                "requires_revision": True,
+                "node_path": node_path,
+            }
+
         message = (
             "Critic rejected strategy: "
             f"passed={critique.passed}, score={critique.score}, "
-            f"required_min_score={settings.llm_critic_min_score}."
+            f"required_min_score={settings.llm_critic_min_score}, "
+            f"revision_attempts={state.get('revision_count', 0)}, "
+            f"max_revision_attempts={settings.max_revision_attempts}."
         )
         result = _critic_failure_tool_result(
             "LLM_CRITIC_REJECTED_STRATEGY",
@@ -645,16 +682,10 @@ def _llm_critic_node(
             node_path=node_path,
         )
 
-    artifacts: dict[str, Any] = dict(state.get("artifacts", {}))
-    artifacts["critic"] = {
-        "mode": "llm",
-        "structured_output_attempts": [
-            attempt.model_dump(mode="json") for attempt in structured_result.attempts
-        ],
-    }
     return {
         "critique": critique,
         "artifacts": artifacts,
+        "requires_revision": False,
         "node_path": node_path,
     }
 
@@ -714,6 +745,76 @@ def _artifact_payload(artifacts: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _record_critic_artifact(
+    artifacts: dict[str, Any],
+    *,
+    critique: CritiqueReport,
+    structured_result: StructuredOutputResult,
+) -> dict[str, Any]:
+    critic_payload = {
+        "mode": "llm",
+        "score": critique.score,
+        "passed": critique.passed,
+        "required_revisions": critique.required_revisions,
+        "structured_output_attempts": [
+            attempt.model_dump(mode="json") for attempt in structured_result.attempts
+        ],
+    }
+    history = list(artifacts.get("critic_history", []))
+    history.append(critic_payload)
+    artifacts["critic"] = critic_payload
+    artifacts["critic_history"] = history
+    return artifacts
+
+
+def _revision_node(state: GrowthStrategyState) -> GrowthStrategyState:
+    critique = state["critique"]
+    revision_count = state.get("revision_count", 0) + 1
+    artifacts: dict[str, Any] = dict(state.get("artifacts", {}))
+    revisions = list(artifacts.get("revisions", []))
+    revisions.append(
+        {
+            "attempt": revision_count,
+            "critic_score": critique.score,
+            "required_revisions": critique.required_revisions,
+            "issues": [issue.model_dump(mode="json") for issue in critique.issues],
+            "applied_adjustments": _revision_adjustments(critique),
+        }
+    )
+    artifacts["revisions"] = revisions
+
+    return {
+        "artifacts": artifacts,
+        "requires_revision": False,
+        "revision_count": revision_count,
+        "node_path": [*state.get("node_path", []), "revision"],
+    }
+
+
+def _revision_adjustments(critique: CritiqueReport) -> list[str]:
+    if critique.required_revisions:
+        return [
+            f"Recorded critic-required revision for final strategy context: {revision}"
+            for revision in critique.required_revisions
+        ]
+    return [
+        f"Recorded critic issue for final strategy context: {issue.suggested_fix}"
+        for issue in critique.issues
+    ]
+
+
+def _revision_notes(artifacts: dict[str, Any]) -> list[str]:
+    notes: list[str] = []
+    for revision in artifacts.get("revisions", []):
+        if not isinstance(revision, dict):
+            continue
+        required_revisions = revision.get("required_revisions") or []
+        notes.extend(str(item) for item in required_revisions)
+        if not required_revisions:
+            notes.extend(str(item) for item in revision.get("applied_adjustments", []))
+    return notes
+
+
 def _json_dump(value: Any) -> str:
     return json.dumps(value, sort_keys=True, default=str)
 
@@ -727,6 +828,20 @@ def _finalizer_node(state: GrowthStrategyState) -> GrowthStrategyState:
     budget: BudgetOptimizationOutput = artifacts["budget"]
     performance: PerformanceEstimateOutput = artifacts["performance"]
     draft: CampaignDraftOutput = artifacts["draft"]
+    revision_notes = _revision_notes(artifacts)
+    measurement_plan = [
+        f"Track primary KPI: {brief.primary_kpi}",
+        f"Monitor estimated CPA against {performance.estimated_cpa} {brief.currency}",
+        "Compare prospecting, retargeting, and creative-test cohorts daily.",
+    ]
+    measurement_plan.extend(
+        f"Critic revision applied: {revision_note}" for revision_note in revision_notes
+    )
+    assumptions = list(performance.assumptions)
+    assumptions.extend(
+        f"Critic revision context applied: {revision_note}"
+        for revision_note in revision_notes
+    )
 
     strategy = FinalGrowthStrategy(
         strategy_id=strategy_id,
@@ -740,11 +855,7 @@ def _finalizer_node(state: GrowthStrategyState) -> GrowthStrategyState:
         audience_strategy=audience.segments,
         creative_strategy=creative.creative_angles,
         bidding_strategy=budget.bidding_strategy,
-        measurement_plan=[
-            f"Track primary KPI: {brief.primary_kpi}",
-            f"Monitor estimated CPA against {performance.estimated_cpa} {brief.currency}",
-            "Compare prospecting, retargeting, and creative-test cohorts daily.",
-        ],
+        measurement_plan=measurement_plan,
         budget_plan=budget.budget_plan,
         actions=[
             RecommendedAction(
@@ -797,7 +908,7 @@ def _finalizer_node(state: GrowthStrategyState) -> GrowthStrategyState:
                 mitigation="Require human approval before any external ad platform mutation.",
             ),
         ],
-        assumptions=performance.assumptions,
+        assumptions=assumptions,
         success_metrics=[
             SuccessMetric(
                 name="Estimated conversions",

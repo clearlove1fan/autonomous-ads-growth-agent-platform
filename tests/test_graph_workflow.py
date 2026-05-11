@@ -201,10 +201,48 @@ def test_langgraph_llm_critic_runs_valid_structured_critique() -> None:
     assert response.run_metadata.failed_tool_count == 0
 
 
-def test_langgraph_llm_critic_rejection_blocks_finalizer() -> None:
+def test_langgraph_llm_critic_revision_loop_finalizes_after_second_pass() -> None:
     settings = _settings(use_llm_planner=False, use_llm_critic=True)
+    payloads = [_failing_critique_payload(), _passing_critique_payload()]
+    requests: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json=_completion(payloads.pop(0)))
+
+    response = run_growth_strategy_graph(
+        _brief(),
+        settings=settings,
+        llm_client=_llm_client(settings, handler),
+    )
+
+    assert len(requests) == 2
+    assert "revisions" in requests[1]["messages"][-1]["content"]
+    assert response.node_path == [
+        "planner",
+        "tool_executor",
+        "critic",
+        "revision",
+        "critic",
+        "finalizer",
+    ]
+    assert response.strategy.critique.score == 8.7
+    assert response.strategy.critique.passed is True
+    assert any(
+        "Add a concrete feedback threshold" in item
+        for item in response.strategy.measurement_plan
+    )
+    assert response.run_metadata.tool_count == 5
+    assert response.run_metadata.failed_tool_count == 0
+
+
+def test_langgraph_llm_critic_rejection_after_revision_limit_is_safe_failure() -> None:
+    settings = _settings(use_llm_planner=False, use_llm_critic=True)
+    request_count = 0
 
     def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal request_count
+        request_count += 1
         return httpx.Response(200, json=_completion(_failing_critique_payload()))
 
     with pytest.raises(StrategyGenerationError) as exc_info:
@@ -217,10 +255,18 @@ def test_langgraph_llm_critic_rejection_blocks_finalizer() -> None:
     assert exc_info.value.tool_result.tool_name == "llm_critic"
     assert exc_info.value.tool_result.error is not None
     assert exc_info.value.tool_result.error.code == "LLM_CRITIC_REJECTED_STRATEGY"
+    assert "revision_attempts=1" in exc_info.value.tool_result.error.message
     assert exc_info.value.run_metadata is not None
-    assert exc_info.value.run_metadata.node_path == ["planner", "tool_executor", "critic"]
+    assert exc_info.value.run_metadata.node_path == [
+        "planner",
+        "tool_executor",
+        "critic",
+        "revision",
+        "critic",
+    ]
     assert exc_info.value.run_metadata.tool_count == 6
     assert exc_info.value.run_metadata.failed_tool_count == 1
+    assert request_count == 2
     assert [summary.tool_name for summary in exc_info.value.run_metadata.tool_summaries][-1] == (
         "llm_critic"
     )
@@ -267,6 +313,7 @@ def _settings(
     *,
     use_llm_planner: bool,
     use_llm_critic: bool = False,
+    max_revision_attempts: int = 1,
 ) -> Settings:
     return Settings(
         litellm_base_url="http://llm.local",
@@ -276,6 +323,7 @@ def _settings(
         use_llm_critic=use_llm_critic,
         llm_structured_output_max_repair_attempts=0,
         llm_critic_min_score=7.0,
+        max_revision_attempts=max_revision_attempts,
         langsmith_tracing=False,
     )
 
