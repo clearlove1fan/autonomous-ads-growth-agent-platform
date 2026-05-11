@@ -30,7 +30,7 @@ Add an opt-in LLM critic path to the LangGraph workflow. By default the determin
 - [x] Enforce a minimum critic score/pass gate before finalization.
 - [x] Add tests for default deterministic mode, LLM critic success, failed critique safe failure, and gateway failure safe failure.
 - [x] Run lint, tests, compile checks.
-- [ ] Commit and push verified changes.
+- [x] Commit and push verified changes.
 
 ## Decisions
 
@@ -68,3 +68,4 @@ Add an opt-in LLM critic path to the LangGraph workflow. By default the determin
 ## Final Status
 
 Implementation and verification are complete. The working tree is ready to commit and push.
+Changes were committed and pushed in `6dba74f add llm critic feature flag`.
