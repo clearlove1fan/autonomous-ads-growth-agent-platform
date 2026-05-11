@@ -22,6 +22,10 @@ The HLD is maintained in:
 
 - [RFC-Autonomous-Ads-Growth-Agent-Platform-v0.1.md](./RFC-Autonomous-Ads-Growth-Agent-Platform-v0.1.md)
 
+The project maturity roadmap is maintained in:
+
+- [PROJECT-MATURITY-ROADMAP.md](./PROJECT-MATURITY-ROADMAP.md)
+
 Locked v0.1 stack:
 
 - FastAPI product API
