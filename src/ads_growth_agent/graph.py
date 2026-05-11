@@ -158,7 +158,7 @@ def build_growth_strategy_graph(
     builder = StateGraph(GrowthStrategyState)
     builder.add_node("planner", _planner_node(settings=settings, llm_client=llm_client))
     builder.add_node("tool_executor", _tool_executor_node(registry))
-    builder.add_node("critic", _critic_node)
+    builder.add_node("critic", _critic_node(settings=settings, llm_client=llm_client))
     builder.add_node("finalizer", _finalizer_node)
 
     builder.add_edge(START, "planner")
@@ -386,17 +386,57 @@ def _planner_failure_tool_result(
     *,
     structured_result: StructuredOutputResult | None = None,
 ) -> ToolResult:
-    source_metadata: dict[str, Any] = {"component": "planner"}
+    return _agent_failure_tool_result(
+        "planner",
+        "llm_planner",
+        code,
+        message,
+        structured_result=structured_result,
+    )
+
+
+def _critic_failure_tool_result(
+    code: str,
+    message: str,
+    *,
+    structured_result: StructuredOutputResult | None = None,
+    critique: CritiqueReport | None = None,
+) -> ToolResult:
+    source_metadata: dict[str, Any] = {}
+    if critique is not None:
+        source_metadata["critique"] = critique.model_dump(mode="json")
+    return _agent_failure_tool_result(
+        "critic",
+        "llm_critic",
+        code,
+        message,
+        structured_result=structured_result,
+        source_metadata=source_metadata,
+    )
+
+
+def _agent_failure_tool_result(
+    component: str,
+    tool_name: str,
+    code: str,
+    message: str,
+    *,
+    structured_result: StructuredOutputResult | None = None,
+    source_metadata: dict[str, Any] | None = None,
+) -> ToolResult:
+    metadata: dict[str, Any] = {"component": component}
+    if source_metadata is not None:
+        metadata.update(source_metadata)
     if structured_result is not None:
-        source_metadata["structured_output"] = structured_result.model_dump(mode="json")
+        metadata["structured_output"] = structured_result.model_dump(mode="json")
 
     return ToolResult(
-        tool_name="llm_planner",
+        tool_name=tool_name,
         success=False,
         payload={},
         error=ToolError(code=code[:80], message=_tool_error_message(message), retryable=False),
         latency_ms=0,
-        source_metadata=source_metadata,
+        source_metadata=metadata,
     )
 
 
@@ -526,7 +566,20 @@ def _tool_executor_node(registry: ToolRegistry):
     return execute_tools
 
 
-def _critic_node(state: GrowthStrategyState) -> GrowthStrategyState:
+def _critic_node(
+    *,
+    settings: Settings,
+    llm_client: LiteLLMGatewayClient | None,
+):
+    def critique(state: GrowthStrategyState) -> GrowthStrategyState:
+        if settings.use_llm_critic:
+            return _llm_critic_node(state, settings=settings, llm_client=llm_client)
+        return _deterministic_critic_node(state)
+
+    return critique
+
+
+def _deterministic_critic_node(state: GrowthStrategyState) -> GrowthStrategyState:
     critique = CritiqueReport(
         score=8.1,
         passed=True,
@@ -541,6 +594,128 @@ def _critic_node(state: GrowthStrategyState) -> GrowthStrategyState:
         "critique": critique,
         "node_path": [*state.get("node_path", []), "critic"],
     }
+
+
+def _llm_critic_node(
+    state: GrowthStrategyState,
+    *,
+    settings: Settings,
+    llm_client: LiteLLMGatewayClient | None,
+) -> GrowthStrategyState:
+    node_path = [*state.get("node_path", []), "critic"]
+    tool_results = list(state.get("tool_results", []))
+    client = llm_client or LiteLLMGatewayClient(settings=settings)
+
+    critique, structured_result = generate_structured_output(
+        client,
+        _critic_messages(state, settings=settings),
+        output_model=CritiqueReport,
+        model=settings.default_chat_model,
+        max_repair_attempts=settings.llm_structured_output_max_repair_attempts,
+    )
+    if critique is None:
+        result = _critic_failure_tool_result(
+            structured_result.error_code or "LLM_CRITIC_FAILED",
+            structured_result.error_message or "LLM critic failed to produce valid output.",
+            structured_result=structured_result,
+        )
+        raise StrategyGenerationError(
+            result.error.message if result.error else "LLM critic failed",
+            result,
+            tool_results=[*tool_results, result],
+            node_path=node_path,
+        )
+
+    if not critique.passed or critique.score < settings.llm_critic_min_score:
+        message = (
+            "Critic rejected strategy: "
+            f"passed={critique.passed}, score={critique.score}, "
+            f"required_min_score={settings.llm_critic_min_score}."
+        )
+        result = _critic_failure_tool_result(
+            "LLM_CRITIC_REJECTED_STRATEGY",
+            message,
+            structured_result=structured_result,
+            critique=critique,
+        )
+        raise StrategyGenerationError(
+            message,
+            result,
+            tool_results=[*tool_results, result],
+            node_path=node_path,
+        )
+
+    artifacts: dict[str, Any] = dict(state.get("artifacts", {}))
+    artifacts["critic"] = {
+        "mode": "llm",
+        "structured_output_attempts": [
+            attempt.model_dump(mode="json") for attempt in structured_result.attempts
+        ],
+    }
+    return {
+        "critique": critique,
+        "artifacts": artifacts,
+        "node_path": node_path,
+    }
+
+
+def _critic_messages(
+    state: GrowthStrategyState,
+    *,
+    settings: Settings,
+) -> list[LLMMessage]:
+    context = {
+        "brief": state["brief"].model_dump(mode="json"),
+        "strategy_id": state["strategy_id"],
+        "tool_results": [
+            result.model_dump(mode="json") for result in state.get("tool_results", [])
+        ],
+        "artifacts": _artifact_payload(state.get("artifacts", {})),
+        "quality_gate": {
+            "minimum_score": settings.llm_critic_min_score,
+            "draft_only_required": True,
+        },
+    }
+    return [
+        LLMMessage(
+            role="system",
+            content=(
+                "You are the critic agent for an autonomous ads growth platform. "
+                "Return only a CritiqueReport. Evaluate whether the draft strategy is safe "
+                "to finalize as a recommendation: budget math must be consistent, campaign "
+                "actions must remain draft-only, measurement should be concrete, and risks "
+                "or assumptions must be explicit. Set passed=false and include issues plus "
+                "required_revisions when the strategy should not be finalized."
+            ),
+        ),
+        LLMMessage(
+            role="user",
+            content=(
+                "Critique this workflow state and return the structured CritiqueReport. "
+                "If passed=true, score must meet or exceed the minimum score in the context. "
+                f"Workflow context JSON: {_json_dump(context)}"
+            ),
+        ),
+    ]
+
+
+def _artifact_payload(artifacts: dict[str, Any]) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for key, value in artifacts.items():
+        if isinstance(value, BaseModel):
+            payload[key] = value.model_dump(mode="json")
+        elif isinstance(value, list):
+            payload[key] = [
+                item.model_dump(mode="json") if isinstance(item, BaseModel) else item
+                for item in value
+            ]
+        else:
+            payload[key] = value
+    return payload
+
+
+def _json_dump(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, default=str)
 
 
 def _finalizer_node(state: GrowthStrategyState) -> GrowthStrategyState:

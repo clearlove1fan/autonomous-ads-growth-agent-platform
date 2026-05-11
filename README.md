@@ -148,6 +148,14 @@ USE_LLM_PLANNER=true ads-growth-agent plan examples/fitness_app_brief.json
 
 When enabled, the LLM may propose only the initial draft-safe tool intents. The platform still validates the returned `ToolIntent` plan, rejects unknown or missing tools, and executes through the internal typed tool registry. Invalid planner output returns a structured safe failure before any tool action runs.
 
+The critic node can also be switched to LiteLLM-backed structured critique:
+
+```bash
+USE_LLM_CRITIC=true ads-growth-agent plan examples/fitness_app_brief.json
+```
+
+The LLM critic returns a validated `CritiqueReport`. The workflow finalizes only when the critique passes and meets `LLM_CRITIC_MIN_SCORE`; otherwise it records a structured `llm_critic` safe failure before finalization.
+
 API and CLI runs emit structured JSON logs to stderr. CLI command payloads remain on stdout, while logs include summary fields such as:
 
 - `event`

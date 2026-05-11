@@ -84,11 +84,11 @@ def test_langgraph_workflow_raises_structured_tool_error() -> None:
     assert exc_info.value.run_metadata.error_summary == ["Budget mock failed"]
 
 
-def test_langgraph_default_planner_does_not_call_llm_client() -> None:
+def test_langgraph_default_agent_nodes_do_not_call_llm_client() -> None:
     settings = _settings(use_llm_planner=False)
 
     def handler(_: httpx.Request) -> httpx.Response:
-        raise AssertionError("LLM client should not be called when USE_LLM_PLANNER=false")
+        raise AssertionError("LLM client should not be called when LLM agent flags are false")
 
     response = run_growth_strategy_graph(
         _brief(),
@@ -177,6 +177,77 @@ def test_langgraph_llm_planner_gateway_failure_is_safe_failure() -> None:
     assert exc_info.value.run_metadata.failed_tool_count == 1
 
 
+def test_langgraph_llm_critic_runs_valid_structured_critique() -> None:
+    settings = _settings(use_llm_planner=False, use_llm_critic=True)
+    requests: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json=_completion(_passing_critique_payload()))
+
+    response = run_growth_strategy_graph(
+        _brief(),
+        settings=settings,
+        llm_client=_llm_client(settings, handler),
+    )
+
+    assert len(requests) == 1
+    assert requests[0]["model"] == "test-model"
+    assert requests[0]["response_format"]["json_schema"]["name"] == "CritiqueReport"
+    assert response.node_path == ["planner", "tool_executor", "critic", "finalizer"]
+    assert response.strategy.critique.score == 8.7
+    assert response.strategy.critique.passed is True
+    assert response.run_metadata.tool_count == 5
+    assert response.run_metadata.failed_tool_count == 0
+
+
+def test_langgraph_llm_critic_rejection_blocks_finalizer() -> None:
+    settings = _settings(use_llm_planner=False, use_llm_critic=True)
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_completion(_failing_critique_payload()))
+
+    with pytest.raises(StrategyGenerationError) as exc_info:
+        run_growth_strategy_graph(
+            _brief(),
+            settings=settings,
+            llm_client=_llm_client(settings, handler),
+        )
+
+    assert exc_info.value.tool_result.tool_name == "llm_critic"
+    assert exc_info.value.tool_result.error is not None
+    assert exc_info.value.tool_result.error.code == "LLM_CRITIC_REJECTED_STRATEGY"
+    assert exc_info.value.run_metadata is not None
+    assert exc_info.value.run_metadata.node_path == ["planner", "tool_executor", "critic"]
+    assert exc_info.value.run_metadata.tool_count == 6
+    assert exc_info.value.run_metadata.failed_tool_count == 1
+    assert [summary.tool_name for summary in exc_info.value.run_metadata.tool_summaries][-1] == (
+        "llm_critic"
+    )
+
+
+def test_langgraph_llm_critic_gateway_failure_is_safe_failure() -> None:
+    settings = _settings(use_llm_planner=False, use_llm_critic=True)
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="critic gateway unavailable")
+
+    with pytest.raises(StrategyGenerationError) as exc_info:
+        run_growth_strategy_graph(
+            _brief(),
+            settings=settings,
+            llm_client=_llm_client(settings, handler),
+        )
+
+    assert exc_info.value.tool_result.tool_name == "llm_critic"
+    assert exc_info.value.tool_result.error is not None
+    assert exc_info.value.tool_result.error.code == "MODEL_GATEWAY_HTTP_ERROR"
+    assert exc_info.value.run_metadata is not None
+    assert exc_info.value.run_metadata.node_path == ["planner", "tool_executor", "critic"]
+    assert exc_info.value.run_metadata.tool_count == 6
+    assert exc_info.value.run_metadata.failed_tool_count == 1
+
+
 def _brief() -> AdvertiserBrief:
     return AdvertiserBrief(
         advertiser_id="adv_fitness_001",
@@ -192,13 +263,19 @@ def _brief() -> AdvertiserBrief:
     )
 
 
-def _settings(*, use_llm_planner: bool) -> Settings:
+def _settings(
+    *,
+    use_llm_planner: bool,
+    use_llm_critic: bool = False,
+) -> Settings:
     return Settings(
         litellm_base_url="http://llm.local",
         litellm_api_key="test-key",
         default_chat_model="test-model",
         use_llm_planner=use_llm_planner,
+        use_llm_critic=use_llm_critic,
         llm_structured_output_max_repair_attempts=0,
+        llm_critic_min_score=7.0,
         langsmith_tracing=False,
     )
 
@@ -272,6 +349,35 @@ def _planner_payload(brief: AdvertiserBrief) -> dict:
                 },
             },
         ],
+    }
+
+
+def _passing_critique_payload() -> dict:
+    return {
+        "score": 8.7,
+        "passed": True,
+        "issues": [],
+        "required_revisions": [],
+        "rationale": (
+            "The plan is draft-only, has consistent budget allocation, measurable next "
+            "steps, and explicit assumptions."
+        ),
+    }
+
+
+def _failing_critique_payload() -> dict:
+    return {
+        "score": 5.8,
+        "passed": False,
+        "issues": [
+            {
+                "severity": "medium",
+                "message": "Measurement plan does not define a clear feedback threshold.",
+                "suggested_fix": "Add explicit CPA and conversion thresholds before finalization.",
+            }
+        ],
+        "required_revisions": ["Add a concrete feedback threshold before approving the draft."],
+        "rationale": "The strategy needs a sharper feedback loop before finalization.",
     }
 
 

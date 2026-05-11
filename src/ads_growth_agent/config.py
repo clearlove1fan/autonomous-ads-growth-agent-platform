@@ -12,7 +12,9 @@ class Settings(BaseSettings):
     default_chat_model: str = "openai/gpt-4o-mini"
     default_embedding_model: str = "openai/text-embedding-3-small"
     use_llm_planner: bool = False
+    use_llm_critic: bool = False
     llm_structured_output_max_repair_attempts: int = 1
+    llm_critic_min_score: float = 7.0
     langsmith_tracing: bool = False
     langsmith_project: str = "ads-growth-agent-local"
 
