@@ -26,6 +26,10 @@ The project maturity roadmap is maintained in:
 
 - [PROJECT-MATURITY-ROADMAP.md](./PROJECT-MATURITY-ROADMAP.md)
 
+The production-skeleton database schema is maintained in:
+
+- [DATABASE-SCHEMA.md](./DATABASE-SCHEMA.md)
+
 Locked v0.1 stack:
 
 - FastAPI product API
