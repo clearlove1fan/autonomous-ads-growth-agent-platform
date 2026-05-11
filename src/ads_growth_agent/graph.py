@@ -5,6 +5,7 @@ from typing import Any, TypedDict
 from uuid import NAMESPACE_URL, uuid5
 
 from langchain_core._api.deprecation import LangChainPendingDeprecationWarning
+from pydantic import BaseModel, ConfigDict, Field
 
 warnings.filterwarnings(
     "ignore",
@@ -14,7 +15,7 @@ warnings.filterwarnings(
 
 from langgraph.graph import END, START, StateGraph
 
-from ads_growth_agent.config import Settings
+from ads_growth_agent.config import Settings, get_settings
 from ads_growth_agent.contracts import (
     AdvertiserBrief,
     AgentRole,
@@ -27,8 +28,15 @@ from ads_growth_agent.contracts import (
     RunMetadata,
     SourceCitation,
     SuccessMetric,
+    ToolError,
     ToolIntent,
     ToolResult,
+)
+from ads_growth_agent.llm import (
+    LiteLLMGatewayClient,
+    LLMMessage,
+    StructuredOutputResult,
+    generate_structured_output,
 )
 from ads_growth_agent.logging_config import (
     log_strategy_run_completed,
@@ -51,6 +59,12 @@ from ads_growth_agent.tools import (
     build_default_tool_registry,
 )
 
+INITIAL_PLANNER_TOOLS = (
+    "recommend_audience",
+    "generate_creative_brief",
+    "optimize_budget",
+)
+
 
 class StrategyGenerationError(Exception):
     def __init__(
@@ -58,10 +72,15 @@ class StrategyGenerationError(Exception):
         message: str,
         tool_result: ToolResult,
         run_metadata: RunMetadata | None = None,
+        *,
+        tool_results: list[ToolResult] | None = None,
+        node_path: list[str] | None = None,
     ) -> None:
         super().__init__(message)
         self.tool_result = tool_result
         self.run_metadata = run_metadata
+        self.tool_results = tool_results or [tool_result]
+        self.node_path = node_path or []
 
 
 class GrowthStrategyState(TypedDict, total=False):
@@ -76,21 +95,34 @@ class GrowthStrategyState(TypedDict, total=False):
     node_path: list[str]
 
 
+class PlannerOutput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    rationale: str = Field(min_length=1, max_length=1_200)
+    tool_intents: list[ToolIntent] = Field(min_length=3, max_length=3)
+
+
 def run_growth_strategy_graph(
     brief: AdvertiserBrief,
     registry: ToolRegistry | None = None,
     settings: Settings | None = None,
+    llm_client: LiteLLMGatewayClient | None = None,
 ) -> GrowthStrategyResponse:
+    settings = settings or get_settings()
     run_context = create_run_context(run_id=_strategy_id(brief), settings=settings)
-    graph = build_growth_strategy_graph(registry or build_default_tool_registry())
+    graph = build_growth_strategy_graph(
+        registry or build_default_tool_registry(),
+        settings=settings,
+        llm_client=llm_client,
+    )
     try:
         with graph_tracing_context(run_context, advertiser_id=brief.advertiser_id):
             final_state = invoke_traced_graph(graph, {"brief": brief, "node_path": []})
     except StrategyGenerationError as exc:
         exc.run_metadata = build_run_metadata(
             run_context,
-            node_path=[],
-            tool_results=[exc.tool_result],
+            node_path=exc.node_path,
+            tool_results=exc.tool_results,
             error_summary=[str(exc)],
         )
         log_strategy_run_failed(
@@ -116,9 +148,15 @@ def run_growth_strategy_graph(
     return response
 
 
-def build_growth_strategy_graph(registry: ToolRegistry):
+def build_growth_strategy_graph(
+    registry: ToolRegistry,
+    *,
+    settings: Settings | None = None,
+    llm_client: LiteLLMGatewayClient | None = None,
+):
+    settings = settings or get_settings()
     builder = StateGraph(GrowthStrategyState)
-    builder.add_node("planner", _planner_node)
+    builder.add_node("planner", _planner_node(settings=settings, llm_client=llm_client))
     builder.add_node("tool_executor", _tool_executor_node(registry))
     builder.add_node("critic", _critic_node)
     builder.add_node("finalizer", _finalizer_node)
@@ -131,10 +169,100 @@ def build_growth_strategy_graph(registry: ToolRegistry):
     return builder.compile()
 
 
-def _planner_node(state: GrowthStrategyState) -> GrowthStrategyState:
+def _planner_node(
+    *,
+    settings: Settings,
+    llm_client: LiteLLMGatewayClient | None,
+):
+    def plan(state: GrowthStrategyState) -> GrowthStrategyState:
+        if settings.use_llm_planner:
+            return _llm_planner_node(state, settings=settings, llm_client=llm_client)
+        return _deterministic_planner_node(state)
+
+    return plan
+
+
+def _deterministic_planner_node(state: GrowthStrategyState) -> GrowthStrategyState:
     brief = state["brief"]
     strategy_id = _strategy_id(brief)
-    intents = [
+    intents = _deterministic_initial_tool_intents(brief, strategy_id)
+    return {
+        "strategy_id": strategy_id,
+        "tool_intents": intents,
+        "tool_results": [],
+        "artifacts": {},
+        "node_path": [*state.get("node_path", []), "planner"],
+    }
+
+
+def _llm_planner_node(
+    state: GrowthStrategyState,
+    *,
+    settings: Settings,
+    llm_client: LiteLLMGatewayClient | None,
+) -> GrowthStrategyState:
+    brief = state["brief"]
+    strategy_id = _strategy_id(brief)
+    node_path = [*state.get("node_path", []), "planner"]
+    client = llm_client or LiteLLMGatewayClient(settings=settings)
+
+    planner_output, structured_result = generate_structured_output(
+        client,
+        _planner_messages(brief, strategy_id),
+        output_model=PlannerOutput,
+        model=settings.default_chat_model,
+        max_repair_attempts=settings.llm_structured_output_max_repair_attempts,
+    )
+    if planner_output is None:
+        result = _planner_failure_tool_result(
+            structured_result.error_code or "LLM_PLANNER_FAILED",
+            structured_result.error_message or "LLM planner failed to produce valid output.",
+            structured_result=structured_result,
+        )
+        raise StrategyGenerationError(
+            result.error.message if result.error else "LLM planner failed",
+            result,
+            tool_results=[result],
+            node_path=node_path,
+        )
+
+    try:
+        intents = _validate_initial_tool_intents(planner_output.tool_intents)
+    except ValueError as exc:
+        result = _planner_failure_tool_result(
+            "LLM_PLANNER_INVALID_TOOL_PLAN",
+            str(exc),
+            structured_result=structured_result,
+        )
+        raise StrategyGenerationError(
+            str(exc),
+            result,
+            tool_results=[result],
+            node_path=node_path,
+        ) from exc
+
+    return {
+        "strategy_id": strategy_id,
+        "tool_intents": intents,
+        "tool_results": [],
+        "artifacts": {
+            "planner": {
+                "mode": "llm",
+                "rationale": planner_output.rationale,
+                "structured_output_attempts": [
+                    attempt.model_dump(mode="json") for attempt in structured_result.attempts
+                ],
+            }
+        },
+        "node_path": node_path,
+    }
+
+
+def _deterministic_initial_tool_intents(
+    brief: AdvertiserBrief,
+    strategy_id: str,
+) -> list[ToolIntent]:
+    return [
         ToolIntent(
             intent_id=f"{strategy_id}:audience",
             tool_name="recommend_audience",
@@ -172,13 +300,111 @@ def _planner_node(state: GrowthStrategyState) -> GrowthStrategyState:
             },
         ),
     ]
-    return {
-        "strategy_id": strategy_id,
-        "tool_intents": intents,
-        "tool_results": [],
-        "artifacts": {},
-        "node_path": [*state.get("node_path", []), "planner"],
-    }
+
+
+def _planner_messages(brief: AdvertiserBrief, strategy_id: str) -> list[LLMMessage]:
+    brief_payload = json.dumps(brief.model_dump(mode="json"), sort_keys=True)
+    return [
+        LLMMessage(
+            role="system",
+            content=(
+                "You are the planner agent for an autonomous ads growth platform. "
+                "Return exactly three draft-safe ToolIntent objects for the first workflow stage. "
+                "Use only these tool names: recommend_audience, generate_creative_brief, "
+                "optimize_budget. Do not invent tools. The platform will validate and execute "
+                "the intents; you are only proposing structured intent."
+            ),
+        ),
+        LLMMessage(
+            role="user",
+            content=(
+                "Create the initial tool plan for this advertiser brief.\n"
+                f"strategy_id: {strategy_id}\n"
+                "Required intent_id suffixes by tool:\n"
+                "- recommend_audience: :audience\n"
+                "- generate_creative_brief: :creative\n"
+                "- optimize_budget: :budget\n"
+                "Set requested_by to planner, risk_level to low, and requires_human_approval "
+                "to false for all three intents.\n"
+                "Expected params:\n"
+                "- recommend_audience: advertiser_id, product_category, objective, "
+                "target_market, known_audiences\n"
+                "- generate_creative_brief: product_name, product_category, objective, "
+                "brand_voice, constraints\n"
+                "- optimize_budget: advertiser_id, objective, total_budget, currency, "
+                "duration_days\n"
+                f"Advertiser brief JSON: {brief_payload}"
+            ),
+        ),
+    ]
+
+
+def _validate_initial_tool_intents(tool_intents: list[ToolIntent]) -> list[ToolIntent]:
+    names = [intent.tool_name for intent in tool_intents]
+    missing = [tool_name for tool_name in INITIAL_PLANNER_TOOLS if tool_name not in names]
+    unexpected = [tool_name for tool_name in names if tool_name not in INITIAL_PLANNER_TOOLS]
+    duplicates = sorted({tool_name for tool_name in names if names.count(tool_name) > 1})
+
+    if missing or unexpected or duplicates:
+        details = []
+        if missing:
+            details.append(f"missing={missing}")
+        if unexpected:
+            details.append(f"unexpected={unexpected}")
+        if duplicates:
+            details.append(f"duplicates={duplicates}")
+        detail_text = ", ".join(details)
+        raise ValueError(
+            f"Planner tool plan must contain exactly the initial tools: {detail_text}"
+        )
+
+    intents_by_name = {intent.tool_name: intent for intent in tool_intents}
+    return [intents_by_name[tool_name] for tool_name in INITIAL_PLANNER_TOOLS]
+
+
+def _ordered_initial_tool_intents_or_raise(
+    tool_intents: list[ToolIntent],
+    *,
+    tool_results_so_far: list[ToolResult],
+    node_path: list[str],
+) -> list[ToolIntent]:
+    try:
+        return _validate_initial_tool_intents(tool_intents)
+    except ValueError as exc:
+        result = _planner_failure_tool_result("PLANNER_INVALID_TOOL_PLAN", str(exc))
+        raise StrategyGenerationError(
+            str(exc),
+            result,
+            tool_results=[*tool_results_so_far, result],
+            node_path=node_path,
+        ) from exc
+
+
+def _planner_failure_tool_result(
+    code: str,
+    message: str,
+    *,
+    structured_result: StructuredOutputResult | None = None,
+) -> ToolResult:
+    source_metadata: dict[str, Any] = {"component": "planner"}
+    if structured_result is not None:
+        source_metadata["structured_output"] = structured_result.model_dump(mode="json")
+
+    return ToolResult(
+        tool_name="llm_planner",
+        success=False,
+        payload={},
+        error=ToolError(code=code[:80], message=_tool_error_message(message), retryable=False),
+        latency_ms=0,
+        source_metadata=source_metadata,
+    )
+
+
+def _tool_error_message(message: str) -> str:
+    normalized = message.strip() or "Planner failed."
+    if len(normalized) <= 500:
+        return normalized
+    return f"{normalized[:497]}..."
 
 
 def _tool_executor_node(registry: ToolRegistry):
@@ -201,17 +427,42 @@ def _tool_executor_node(registry: ToolRegistry):
         tool_intents = list(state.get("tool_intents", []))
         artifacts: dict[str, Any] = dict(state.get("artifacts", {}))
 
-        audience_result = _execute_or_raise(registry, context, tool_intents[0])
+        node_path = [*state.get("node_path", []), "tool_executor"]
+        initial_intents = _ordered_initial_tool_intents_or_raise(
+            tool_intents,
+            tool_results_so_far=tool_results,
+            node_path=node_path,
+        )
+
+        audience_result = _execute_or_raise(
+            registry,
+            context,
+            initial_intents[0],
+            tool_results_so_far=tool_results,
+            node_path=node_path,
+        )
         tool_results.append(audience_result)
         audience = AudienceRecommendationOutput.model_validate(audience_result.payload)
         artifacts["audience"] = audience
 
-        creative_result = _execute_or_raise(registry, context, tool_intents[1])
+        creative_result = _execute_or_raise(
+            registry,
+            context,
+            initial_intents[1],
+            tool_results_so_far=tool_results,
+            node_path=node_path,
+        )
         tool_results.append(creative_result)
         creative = CreativeBriefOutput.model_validate(creative_result.payload)
         artifacts["creative"] = creative
 
-        budget_result = _execute_or_raise(registry, context, tool_intents[2])
+        budget_result = _execute_or_raise(
+            registry,
+            context,
+            initial_intents[2],
+            tool_results_so_far=tool_results,
+            node_path=node_path,
+        )
         tool_results.append(budget_result)
         budget = BudgetOptimizationOutput.model_validate(budget_result.payload)
         artifacts["budget"] = budget
@@ -228,7 +479,13 @@ def _tool_executor_node(registry: ToolRegistry):
             },
         )
         tool_intents.append(performance_intent)
-        performance_result = _execute_or_raise(registry, context, performance_intent)
+        performance_result = _execute_or_raise(
+            registry,
+            context,
+            performance_intent,
+            tool_results_so_far=tool_results,
+            node_path=node_path,
+        )
         tool_results.append(performance_result)
         performance = PerformanceEstimateOutput.model_validate(performance_result.payload)
         artifacts["performance"] = performance
@@ -248,7 +505,13 @@ def _tool_executor_node(registry: ToolRegistry):
             },
         )
         tool_intents.append(draft_intent)
-        draft_result = _execute_or_raise(registry, context, draft_intent)
+        draft_result = _execute_or_raise(
+            registry,
+            context,
+            draft_intent,
+            tool_results_so_far=tool_results,
+            node_path=node_path,
+        )
         tool_results.append(draft_result)
         draft = CampaignDraftOutput.model_validate(draft_result.payload)
         artifacts["draft"] = draft
@@ -257,7 +520,7 @@ def _tool_executor_node(registry: ToolRegistry):
             "tool_intents": tool_intents,
             "tool_results": tool_results,
             "artifacts": artifacts,
-            "node_path": [*state.get("node_path", []), "tool_executor"],
+            "node_path": node_path,
         }
 
     return execute_tools
@@ -422,11 +685,19 @@ def _execute_or_raise(
     registry: ToolRegistry,
     context: ToolExecutionContext,
     intent: ToolIntent,
+    *,
+    tool_results_so_far: list[ToolResult],
+    node_path: list[str],
 ) -> ToolResult:
     result = registry.execute(intent, context)
     if not result.success:
         message = result.error.message if result.error else "tool execution failed"
-        raise StrategyGenerationError(message, result)
+        raise StrategyGenerationError(
+            message,
+            result,
+            tool_results=[*tool_results_so_far, result],
+            node_path=node_path,
+        )
     return result
 
 

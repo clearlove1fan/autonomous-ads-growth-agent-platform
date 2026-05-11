@@ -95,6 +95,13 @@ def _trace_inputs(inputs: dict) -> dict:
 
 
 def _trace_outputs(outputs: dict) -> dict:
+    if not isinstance(outputs, dict):
+        return {
+            "node_path": [],
+            "tool_count": 0,
+            "failed_tool_count": 0,
+        }
+
     tool_results = outputs.get("tool_results", [])
     return {
         "node_path": outputs.get("node_path", []),

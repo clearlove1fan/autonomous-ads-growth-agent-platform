@@ -140,7 +140,13 @@ The LLM gateway foundation targets LiteLLM's OpenAI-compatible API and supports:
 - bounded repair retry
 - safe failure when validation cannot be repaired
 
-This gateway is currently covered by offline `httpx.MockTransport` tests. Live model-backed planner and critic nodes are planned after this boundary remains stable.
+This gateway is covered by offline `httpx.MockTransport` tests. The planner node can now be switched from deterministic planning to LiteLLM-backed structured planning:
+
+```bash
+USE_LLM_PLANNER=true ads-growth-agent plan examples/fitness_app_brief.json
+```
+
+When enabled, the LLM may propose only the initial draft-safe tool intents. The platform still validates the returned `ToolIntent` plan, rejects unknown or missing tools, and executes through the internal typed tool registry. Invalid planner output returns a structured safe failure before any tool action runs.
 
 API and CLI runs emit structured JSON logs to stderr. CLI command payloads remain on stdout, while logs include summary fields such as:
 
