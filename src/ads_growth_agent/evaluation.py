@@ -10,7 +10,7 @@ from ads_growth_agent.contracts import AdvertiserBrief, GrowthStrategyResponse
 from ads_growth_agent.logging_config import log_evaluation_suite_completed
 from ads_growth_agent.strategy import generate_mock_growth_strategy
 
-REQUIRED_NODE_PATH = ["planner", "tool_executor", "critic", "finalizer"]
+REQUIRED_NODE_PATH = ["planner", "retriever", "tool_executor", "critic", "finalizer"]
 REQUIRED_TOOLS = [
     "recommend_audience",
     "generate_creative_brief",
@@ -118,6 +118,7 @@ def evaluate_growth_strategy(
         evaluate_budget_consistency,
         evaluate_tool_use_correctness,
         evaluate_strategy_completeness,
+        evaluate_retrieval_grounding,
         evaluate_draft_only_safety,
         evaluate_observability_metadata,
     ]
@@ -218,6 +219,33 @@ def evaluate_strategy_completeness(
         if passed
         else "Strategy is missing one or more required sections.",
         details={"checks": checks},
+    )
+
+
+def evaluate_retrieval_grounding(
+    case: EvalCase,
+    response: GrowthStrategyResponse,
+) -> EvaluationScore:
+    del case
+    retrieved_sources = [
+        source
+        for source in response.strategy.sources
+        if source.source_type in {"rag_document", "historical_case", "advertiser_memory"}
+    ]
+    source_types = sorted({source.source_type for source in retrieved_sources})
+    passed = bool(retrieved_sources)
+    return EvaluationScore(
+        name="retrieval_grounding",
+        passed=passed,
+        score=1.0 if passed else 0.0,
+        message="Strategy cites retrieved RAG, historical, or advertiser-memory sources."
+        if passed
+        else "Strategy does not cite retrieved knowledge sources.",
+        details={
+            "retrieved_source_count": len(retrieved_sources),
+            "retrieved_source_types": source_types,
+            "source_ids": [source.source_id for source in retrieved_sources],
+        },
     )
 
 

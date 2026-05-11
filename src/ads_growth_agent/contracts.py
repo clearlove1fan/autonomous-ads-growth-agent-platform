@@ -211,7 +211,13 @@ class SourceCitation(BaseModel):
 
     source_id: str = Field(min_length=1, max_length=160)
     title: str = Field(min_length=1, max_length=240)
-    source_type: Literal["mock_tool", "assumption", "rag_document", "historical_case"]
+    source_type: Literal[
+        "mock_tool",
+        "assumption",
+        "rag_document",
+        "historical_case",
+        "advertiser_memory",
+    ]
     relevance: float = Field(ge=0, le=1)
 
 

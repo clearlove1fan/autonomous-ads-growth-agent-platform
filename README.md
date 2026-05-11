@@ -104,7 +104,7 @@ curl -X POST http://localhost:8000/growth-strategies \
 The current deterministic workflow runs through explicit LangGraph nodes:
 
 ```text
-planner -> tool_executor -> critic -> finalizer
+planner -> retriever -> tool_executor -> critic -> finalizer
 ```
 
 Responses include `run_metadata` for local observability and LangSmith correlation:
@@ -129,8 +129,11 @@ The local suite currently evaluates:
 - budget consistency
 - tool use correctness
 - strategy completeness
+- retrieval grounding
 - draft-only safety
 - observability metadata
+
+The `retriever` node uses the v0.1 knowledge layer to attach deterministic local RAG results before tool execution. The default seed corpus includes campaign strategy playbooks, historical cases, and advertiser profile memory. Final strategies cite retrieved sources as `rag_document`, `historical_case`, or `advertiser_memory`; the retrieval interface is intentionally shaped to be replaced by PostgreSQL + pgvector hybrid search in a later infrastructure slice.
 
 The LLM gateway foundation targets LiteLLM's OpenAI-compatible API and supports:
 

@@ -49,6 +49,7 @@ def test_evaluation_report_contains_expected_score_names() -> None:
         "budget_consistency",
         "tool_use_correctness",
         "strategy_completeness",
+        "retrieval_grounding",
         "draft_only_safety",
         "observability_metadata",
     ]

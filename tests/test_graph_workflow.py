@@ -23,7 +23,7 @@ from ads_growth_agent.tools import (
 def test_langgraph_workflow_runs_expected_node_path() -> None:
     response = run_growth_strategy_graph(_brief())
 
-    assert response.node_path == ["planner", "tool_executor", "critic", "finalizer"]
+    assert response.node_path == ["planner", "retriever", "tool_executor", "critic", "finalizer"]
     assert len(response.tool_results) == 5
     assert [result.tool_name for result in response.tool_results] == [
         "recommend_audience",
@@ -39,6 +39,8 @@ def test_langgraph_workflow_runs_expected_node_path() -> None:
     assert response.run_metadata.tool_count == 5
     assert response.run_metadata.failed_tool_count == 0
     assert response.strategy.critique.passed is True
+    assert any(source.source_type == "advertiser_memory" for source in response.strategy.sources)
+    assert any(source.source_type == "rag_document" for source in response.strategy.sources)
 
 
 def test_langgraph_workflow_preserves_budget_validation() -> None:
@@ -72,7 +74,7 @@ def test_langgraph_workflow_raises_structured_tool_error() -> None:
     assert exc_info.value.tool_result.error is not None
     assert exc_info.value.tool_result.error.code == "BUDGET_SERVICE_DOWN"
     assert exc_info.value.run_metadata is not None
-    assert exc_info.value.run_metadata.node_path == ["planner", "tool_executor"]
+    assert exc_info.value.run_metadata.node_path == ["planner", "retriever", "tool_executor"]
     assert exc_info.value.run_metadata.tool_count == 3
     assert exc_info.value.run_metadata.failed_tool_count == 1
     assert [summary.tool_name for summary in exc_info.value.run_metadata.tool_summaries] == [
@@ -96,7 +98,7 @@ def test_langgraph_default_agent_nodes_do_not_call_llm_client() -> None:
         llm_client=_llm_client(settings, handler),
     )
 
-    assert response.node_path == ["planner", "tool_executor", "critic", "finalizer"]
+    assert response.node_path == ["planner", "retriever", "tool_executor", "critic", "finalizer"]
     assert response.run_metadata.failed_tool_count == 0
 
 
@@ -120,7 +122,7 @@ def test_langgraph_llm_planner_runs_valid_structured_tool_plan() -> None:
     assert len(requests) == 1
     assert requests[0]["model"] == "test-model"
     assert requests[0]["response_format"]["type"] == "json_schema"
-    assert response.node_path == ["planner", "tool_executor", "critic", "finalizer"]
+    assert response.node_path == ["planner", "retriever", "tool_executor", "critic", "finalizer"]
     assert [result.tool_name for result in response.tool_results] == [
         "recommend_audience",
         "generate_creative_brief",
@@ -194,7 +196,7 @@ def test_langgraph_llm_critic_runs_valid_structured_critique() -> None:
     assert len(requests) == 1
     assert requests[0]["model"] == "test-model"
     assert requests[0]["response_format"]["json_schema"]["name"] == "CritiqueReport"
-    assert response.node_path == ["planner", "tool_executor", "critic", "finalizer"]
+    assert response.node_path == ["planner", "retriever", "tool_executor", "critic", "finalizer"]
     assert response.strategy.critique.score == 8.7
     assert response.strategy.critique.passed is True
     assert response.run_metadata.tool_count == 5
@@ -220,6 +222,7 @@ def test_langgraph_llm_critic_revision_loop_finalizes_after_second_pass() -> Non
     assert "revisions" in requests[1]["messages"][-1]["content"]
     assert response.node_path == [
         "planner",
+        "retriever",
         "tool_executor",
         "critic",
         "revision",
@@ -259,6 +262,7 @@ def test_langgraph_llm_critic_rejection_after_revision_limit_is_safe_failure() -
     assert exc_info.value.run_metadata is not None
     assert exc_info.value.run_metadata.node_path == [
         "planner",
+        "retriever",
         "tool_executor",
         "critic",
         "revision",
@@ -289,7 +293,12 @@ def test_langgraph_llm_critic_gateway_failure_is_safe_failure() -> None:
     assert exc_info.value.tool_result.error is not None
     assert exc_info.value.tool_result.error.code == "MODEL_GATEWAY_HTTP_ERROR"
     assert exc_info.value.run_metadata is not None
-    assert exc_info.value.run_metadata.node_path == ["planner", "tool_executor", "critic"]
+    assert exc_info.value.run_metadata.node_path == [
+        "planner",
+        "retriever",
+        "tool_executor",
+        "critic",
+    ]
     assert exc_info.value.run_metadata.tool_count == 6
     assert exc_info.value.run_metadata.failed_tool_count == 1
 

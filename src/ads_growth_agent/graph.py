@@ -32,6 +32,12 @@ from ads_growth_agent.contracts import (
     ToolIntent,
     ToolResult,
 )
+from ads_growth_agent.knowledge import (
+    KnowledgeRetrievalResult,
+    KnowledgeStore,
+    build_default_knowledge_store,
+    build_knowledge_query,
+)
 from ads_growth_agent.llm import (
     LiteLLMGatewayClient,
     LLMMessage,
@@ -92,6 +98,7 @@ class GrowthStrategyState(TypedDict, total=False):
     critique: CritiqueReport
     strategy: FinalGrowthStrategy
     errors: list[str]
+    knowledge: KnowledgeRetrievalResult
     node_path: list[str]
     requires_revision: bool
     revision_count: int
@@ -109,6 +116,7 @@ def run_growth_strategy_graph(
     registry: ToolRegistry | None = None,
     settings: Settings | None = None,
     llm_client: LiteLLMGatewayClient | None = None,
+    knowledge_store: KnowledgeStore | None = None,
 ) -> GrowthStrategyResponse:
     settings = settings or get_settings()
     run_context = create_run_context(run_id=_strategy_id(brief), settings=settings)
@@ -116,6 +124,7 @@ def run_growth_strategy_graph(
         registry or build_default_tool_registry(),
         settings=settings,
         llm_client=llm_client,
+        knowledge_store=knowledge_store,
     )
     try:
         with graph_tracing_context(run_context, advertiser_id=brief.advertiser_id):
@@ -155,17 +164,21 @@ def build_growth_strategy_graph(
     *,
     settings: Settings | None = None,
     llm_client: LiteLLMGatewayClient | None = None,
+    knowledge_store: KnowledgeStore | None = None,
 ):
     settings = settings or get_settings()
+    knowledge_store = knowledge_store or build_default_knowledge_store()
     builder = StateGraph(GrowthStrategyState)
     builder.add_node("planner", _planner_node(settings=settings, llm_client=llm_client))
+    builder.add_node("retriever", _retriever_node(settings=settings, store=knowledge_store))
     builder.add_node("tool_executor", _tool_executor_node(registry))
     builder.add_node("critic", _critic_node(settings=settings, llm_client=llm_client))
     builder.add_node("revision", _revision_node)
     builder.add_node("finalizer", _finalizer_node)
 
     builder.add_edge(START, "planner")
-    builder.add_edge("planner", "tool_executor")
+    builder.add_edge("planner", "retriever")
+    builder.add_edge("retriever", "tool_executor")
     builder.add_edge("tool_executor", "critic")
     builder.add_conditional_edges(
         "critic",
@@ -393,6 +406,26 @@ def _ordered_initial_tool_intents_or_raise(
             tool_results=[*tool_results_so_far, result],
             node_path=node_path,
         ) from exc
+
+
+def _retriever_node(
+    *,
+    settings: Settings,
+    store: KnowledgeStore,
+):
+    def retrieve(state: GrowthStrategyState) -> GrowthStrategyState:
+        brief = state["brief"]
+        query = build_knowledge_query(brief, top_k=settings.knowledge_top_k)
+        retrieval = store.retrieve(query)
+        artifacts: dict[str, Any] = dict(state.get("artifacts", {}))
+        artifacts["knowledge"] = retrieval
+        return {
+            "knowledge": retrieval,
+            "artifacts": artifacts,
+            "node_path": [*state.get("node_path", []), "retriever"],
+        }
+
+    return retrieve
 
 
 def _planner_failure_tool_result(
@@ -815,6 +848,29 @@ def _revision_notes(artifacts: dict[str, Any]) -> list[str]:
     return notes
 
 
+def _knowledge_notes(retrieval: Any) -> list[str]:
+    if not isinstance(retrieval, KnowledgeRetrievalResult):
+        return []
+    return [
+        f"{item.title} ({item.source_type}, relevance={item.relevance})"
+        for item in retrieval.results
+    ]
+
+
+def _knowledge_source_citations(retrieval: Any) -> list[SourceCitation]:
+    if not isinstance(retrieval, KnowledgeRetrievalResult):
+        return []
+    return [
+        SourceCitation(
+            source_id=item.source_id,
+            title=item.title,
+            source_type=item.source_type,
+            relevance=item.relevance,
+        )
+        for item in retrieval.results
+    ]
+
+
 def _json_dump(value: Any) -> str:
     return json.dumps(value, sort_keys=True, default=str)
 
@@ -828,7 +884,9 @@ def _finalizer_node(state: GrowthStrategyState) -> GrowthStrategyState:
     budget: BudgetOptimizationOutput = artifacts["budget"]
     performance: PerformanceEstimateOutput = artifacts["performance"]
     draft: CampaignDraftOutput = artifacts["draft"]
+    retrieval = state.get("knowledge") or artifacts.get("knowledge")
     revision_notes = _revision_notes(artifacts)
+    knowledge_notes = _knowledge_notes(retrieval)
     measurement_plan = [
         f"Track primary KPI: {brief.primary_kpi}",
         f"Monitor estimated CPA against {performance.estimated_cpa} {brief.currency}",
@@ -838,6 +896,9 @@ def _finalizer_node(state: GrowthStrategyState) -> GrowthStrategyState:
         f"Critic revision applied: {revision_note}" for revision_note in revision_notes
     )
     assumptions = list(performance.assumptions)
+    assumptions.extend(
+        f"Retrieved knowledge used: {knowledge_note}" for knowledge_note in knowledge_notes
+    )
     assumptions.extend(
         f"Critic revision context applied: {revision_note}"
         for revision_note in revision_notes
@@ -958,6 +1019,7 @@ def _finalizer_node(state: GrowthStrategyState) -> GrowthStrategyState:
                 source_type="mock_tool",
                 relevance=0.82,
             ),
+            *_knowledge_source_citations(retrieval),
         ],
     )
 
