@@ -415,7 +415,11 @@ def _retriever_node(
 ):
     def retrieve(state: GrowthStrategyState) -> GrowthStrategyState:
         brief = state["brief"]
-        query = build_knowledge_query(brief, top_k=settings.knowledge_top_k)
+        query = build_knowledge_query(
+            brief,
+            top_k=settings.knowledge_top_k,
+            run_id=state.get("strategy_id"),
+        )
         retrieval = store.retrieve(query)
         artifacts: dict[str, Any] = dict(state.get("artifacts", {}))
         artifacts["knowledge"] = retrieval

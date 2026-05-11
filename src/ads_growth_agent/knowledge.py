@@ -25,6 +25,7 @@ class KnowledgeQuery(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     advertiser_id: str = Field(min_length=1, max_length=128)
+    run_id: str | None = Field(default=None, min_length=1, max_length=160)
     query: str = Field(min_length=1, max_length=2_000)
     product_category: str = Field(min_length=1, max_length=120)
     objective: CampaignObjective
@@ -77,10 +78,15 @@ class InMemoryKnowledgeStore:
 
 
 def build_default_knowledge_store() -> KnowledgeStore:
-    return InMemoryKnowledgeStore(_default_documents())
+    return InMemoryKnowledgeStore(default_knowledge_documents())
 
 
-def build_knowledge_query(brief: AdvertiserBrief, *, top_k: int = 3) -> KnowledgeQuery:
+def build_knowledge_query(
+    brief: AdvertiserBrief,
+    *,
+    top_k: int = 3,
+    run_id: str | None = None,
+) -> KnowledgeQuery:
     query_parts = [
         brief.product_name,
         brief.product_category,
@@ -94,6 +100,7 @@ def build_knowledge_query(brief: AdvertiserBrief, *, top_k: int = 3) -> Knowledg
     ]
     return KnowledgeQuery(
         advertiser_id=brief.advertiser_id,
+        run_id=run_id,
         query=" ".join(part for part in query_parts if part),
         product_category=brief.product_category,
         objective=brief.objective,
@@ -194,7 +201,7 @@ def _normalized_phrase(value: str) -> str:
     return " ".join(re.findall(r"[a-z0-9]+", value.lower()))
 
 
-def _default_documents() -> list[KnowledgeDocument]:
+def default_knowledge_documents() -> list[KnowledgeDocument]:
     return [
         KnowledgeDocument(
             source_id="rag:playbook:app_registration_learning:v1",

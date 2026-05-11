@@ -1,0 +1,128 @@
+import os
+from uuid import uuid4
+
+import pytest
+import sqlalchemy as sa
+from alembic import command
+from alembic.config import Config
+from sqlalchemy.engine import URL, make_url
+
+from ads_growth_agent.contracts import AdvertiserBrief, CampaignObjective
+from ads_growth_agent.knowledge import build_knowledge_query
+from ads_growth_agent.persistence.knowledge_seed import seed_default_knowledge
+from ads_growth_agent.persistence.knowledge_store import PostgresKnowledgeStore
+
+pytestmark = pytest.mark.integration
+
+DEFAULT_TEST_DATABASE_URL = (
+    "postgresql+psycopg://ads_growth:ads_growth@localhost:5432/ads_growth"
+)
+
+
+def test_postgres_knowledge_store_retrieves_seeded_sources_and_records_event(
+    monkeypatch,
+) -> None:
+    base_url = _integration_database_url()
+    test_url = _create_temporary_database(base_url)
+    engine = sa.create_engine(test_url)
+
+    try:
+        monkeypatch.setenv("DATABASE_URL", test_url.render_as_string(hide_password=False))
+        command.upgrade(Config("alembic.ini"), "head")
+
+        seed_default_knowledge(engine)
+        seed_default_knowledge(engine)
+
+        query = build_knowledge_query(_fitness_brief(), top_k=3, run_id="strategy_test_run_001")
+        result = PostgresKnowledgeStore(engine).retrieve(query)
+
+        source_types = {item.source_type for item in result.results}
+        source_ids = {item.source_id for item in result.results}
+
+        assert result.query.run_id == "strategy_test_run_001"
+        assert len(result.results) == 3
+        assert source_types == {"advertiser_memory", "historical_case", "rag_document"}
+        assert "memory:adv_fitness_001:profile:v1" in source_ids
+        assert result.results[0].relevance >= result.results[-1].relevance
+
+        with engine.connect() as connection:
+            event = connection.execute(
+                sa.text(
+                    "SELECT run_id, advertiser_id, top_k, results, partition_bucket "
+                    "FROM retrieval_events WHERE run_id = :run_id"
+                ),
+                {"run_id": "strategy_test_run_001"},
+            ).mappings().one()
+            memory_count = connection.execute(
+                sa.text(
+                    "SELECT count(*) FROM advertiser_memories "
+                    "WHERE metadata ->> 'source_id' = :source_id"
+                ),
+                {"source_id": "memory:adv_fitness_001:profile:v1"},
+            ).scalar_one()
+
+        assert event["advertiser_id"] == "adv_fitness_001"
+        assert event["top_k"] == 3
+        assert len(event["results"]) == 3
+        assert 0 <= event["partition_bucket"] < 128
+        assert memory_count == 1
+    finally:
+        engine.dispose()
+        _drop_temporary_database(test_url)
+
+
+def _fitness_brief() -> AdvertiserBrief:
+    return AdvertiserBrief(
+        advertiser_id="adv_fitness_001",
+        product_name="FitTrack Pro",
+        product_category="fitness app",
+        objective=CampaignObjective.REGISTRATIONS,
+        budget="2000.00",
+        currency="USD",
+        duration_days=14,
+        target_market="United States",
+        primary_kpi="trial registrations",
+        brand_voice="motivational and practical",
+        constraints=["Avoid unrealistic body transformation claims"],
+        known_audiences=["Home workout beginners"],
+    )
+
+
+def _integration_database_url() -> URL:
+    if os.getenv("RUN_POSTGRES_INTEGRATION") != "1":
+        pytest.skip("Set RUN_POSTGRES_INTEGRATION=1 to run live PostgreSQL tests.")
+    return make_url(os.getenv("TEST_DATABASE_URL", DEFAULT_TEST_DATABASE_URL))
+
+
+def _create_temporary_database(base_url: URL) -> URL:
+    database_name = f"ads_growth_test_{uuid4().hex[:12]}"
+    admin_url = base_url.set(database="postgres")
+    test_url = base_url.set(database=database_name)
+
+    engine = sa.create_engine(admin_url, isolation_level="AUTOCOMMIT")
+    try:
+        with engine.connect() as connection:
+            connection.execute(sa.text(f'CREATE DATABASE "{database_name}"'))
+    finally:
+        engine.dispose()
+
+    return test_url
+
+
+def _drop_temporary_database(test_url: URL) -> None:
+    database_name = test_url.database
+    admin_url = test_url.set(database="postgres")
+    engine = sa.create_engine(admin_url, isolation_level="AUTOCOMMIT")
+    try:
+        with engine.connect() as connection:
+            connection.execute(
+                sa.text(
+                    "SELECT pg_terminate_backend(pid) "
+                    "FROM pg_stat_activity "
+                    "WHERE datname = :database_name AND pid <> pg_backend_pid()"
+                ),
+                {"database_name": database_name},
+            )
+            connection.execute(sa.text(f'DROP DATABASE IF EXISTS "{database_name}"'))
+    finally:
+        engine.dispose()

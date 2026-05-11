@@ -73,16 +73,16 @@ Run tests:
 pytest
 ```
 
-Run live PostgreSQL migration smoke tests:
+Run live PostgreSQL integration tests:
 
 ```bash
 docker compose up -d postgres
 RUN_POSTGRES_INTEGRATION=1 \
   TEST_DATABASE_URL=postgresql+psycopg://ads_growth:ads_growth@localhost:5432/ads_growth \
-  pytest tests/integration/test_migrations_postgres.py
+  pytest tests/integration
 ```
 
-The migration smoke test creates and drops an isolated temporary database. It is skipped by default unless `RUN_POSTGRES_INTEGRATION=1` is set.
+The live tests create and drop isolated temporary databases. They are skipped by default unless `RUN_POSTGRES_INTEGRATION=1` is set.
 
 ## Local Runtime Stack
 
@@ -152,7 +152,9 @@ The local suite currently evaluates:
 - draft-only safety
 - observability metadata
 
-The `retriever` node uses the v0.1 knowledge layer to attach deterministic local RAG results before tool execution. The default seed corpus includes campaign strategy playbooks, historical cases, and advertiser profile memory. Final strategies cite retrieved sources as `rag_document`, `historical_case`, or `advertiser_memory`; the retrieval interface is intentionally shaped to be replaced by PostgreSQL + pgvector hybrid search in a later infrastructure slice.
+The `retriever` node uses the v0.1 knowledge layer to attach deterministic local RAG results before tool execution. The default seed corpus includes campaign strategy playbooks, historical cases, and advertiser profile memory. Final strategies cite retrieved sources as `rag_document`, `historical_case`, or `advertiser_memory`.
+
+The default API/CLI workflow still uses the in-memory knowledge store for fast offline demos. A PostgreSQL-backed `PostgresKnowledgeStore` and seed loader are available under `ads_growth_agent.persistence`; the live integration suite verifies seeded retrieval from `knowledge_documents`, `knowledge_chunks`, and `advertiser_memories`, plus `retrieval_events` recording for run-level observability. This is the first database-backed RAG slice before adding embedding generation and hybrid vector ranking.
 
 The LLM gateway foundation targets LiteLLM's OpenAI-compatible API and supports:
 

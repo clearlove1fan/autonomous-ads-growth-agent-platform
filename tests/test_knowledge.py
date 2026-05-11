@@ -4,7 +4,9 @@ from ads_growth_agent.knowledge import (
     KnowledgeDocument,
     build_default_knowledge_store,
     build_knowledge_query,
+    default_knowledge_documents,
 )
+from ads_growth_agent.persistence.partitioning import partition_bucket
 
 
 def test_default_knowledge_store_retrieves_advertiser_memory_and_rag_docs() -> None:
@@ -21,6 +23,31 @@ def test_default_knowledge_store_retrieves_advertiser_memory_and_rag_docs() -> N
     assert "historical_case" in source_types
     assert "memory:adv_fitness_001:profile:v1" in source_ids
     assert result.results[0].relevance >= result.results[-1].relevance
+
+
+def test_build_knowledge_query_can_carry_run_id_for_retrieval_events() -> None:
+    query = build_knowledge_query(_fitness_brief(), run_id="strategy_123")
+
+    assert query.run_id == "strategy_123"
+
+
+def test_default_seed_documents_are_public_for_postgres_seeding() -> None:
+    documents = default_knowledge_documents()
+
+    assert len(documents) >= 3
+    assert {document.source_type for document in documents} >= {
+        "rag_document",
+        "historical_case",
+        "advertiser_memory",
+    }
+
+
+def test_partition_bucket_is_stable_and_bounded() -> None:
+    first = partition_bucket("adv_fitness_001")
+    second = partition_bucket("adv_fitness_001")
+
+    assert first == second
+    assert 0 <= first < 128
 
 
 def test_in_memory_store_penalizes_other_advertiser_memory() -> None:
