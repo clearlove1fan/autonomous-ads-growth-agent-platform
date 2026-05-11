@@ -1,3 +1,4 @@
+import re
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Response
@@ -23,6 +24,8 @@ class HealthResponse(BaseModel):
     environment: str
 
 
+TENANT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+
 app = FastAPI(
     title="Autonomous Ads Growth Agent Platform",
     version=__version__,
@@ -35,8 +38,31 @@ def get_runtime_settings() -> Settings:
     return get_settings()
 
 
-def get_runtime_idempotency_store(
+def get_request_settings(
     settings: Annotated[Settings, Depends(get_runtime_settings)],
+    x_tenant_id: Annotated[str | None, Header(alias="X-Tenant-ID")] = None,
+) -> Settings:
+    if x_tenant_id is None:
+        return settings
+
+    tenant_id = x_tenant_id.strip()
+    if not TENANT_ID_PATTERN.fullmatch(tenant_id):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": (
+                    "X-Tenant-ID must be 1-128 characters and contain only "
+                    "letters, numbers, underscores, or hyphens."
+                ),
+                "error_code": "INVALID_TENANT_ID",
+            },
+        )
+
+    return settings.model_copy(update={"tenant_id": tenant_id})
+
+
+def get_runtime_idempotency_store(
+    settings: Annotated[Settings, Depends(get_request_settings)],
 ) -> IdempotencyStore:
     return build_configured_idempotency_store(settings)
 
@@ -56,13 +82,15 @@ def health() -> HealthResponse:
 def create_growth_strategy(
     request: GrowthStrategyRequest,
     response: Response,
-    settings: Annotated[Settings, Depends(get_runtime_settings)],
+    settings: Annotated[Settings, Depends(get_request_settings)],
     idempotency_store: Annotated[
         IdempotencyStore,
         Depends(get_runtime_idempotency_store),
     ],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> GrowthStrategyResponse:
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+
     if idempotency_key and settings.idempotency_backend != "none":
         return _create_growth_strategy_with_idempotency(
             request,

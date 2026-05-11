@@ -191,10 +191,11 @@ IDEMPOTENCY_BACKEND=postgres RUN_PERSISTENCE_BACKEND=postgres \
   curl -X POST http://localhost:8000/growth-strategies \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: demo-fitness-001" \
+  -H "X-Tenant-ID: tenant_demo" \
   -d '{"brief":{"advertiser_id":"adv_fitness_001","product_name":"FitTrack Pro","product_category":"fitness app","objective":"registrations","budget":"2000.00","currency":"USD","duration_days":14,"target_market":"United States","primary_kpi":"trial registrations"}}'
 ```
 
-The first request stores an `idempotency_keys` row as `completed`; a repeated request with the same key and identical body replays the saved response; a repeated request with the same key and different body returns HTTP `409`. `RUN_PERSISTENCE_BACKEND=postgres` is recommended with idempotency so the idempotency record can link to `agent_runs.run_id`.
+The first request stores an `idempotency_keys` row as `completed`; a repeated request with the same key and identical body replays the saved response; a repeated request with the same key and different body returns HTTP `409`. `RUN_PERSISTENCE_BACKEND=postgres` is recommended with idempotency so the idempotency record can link to `agent_runs.run_id`. API callers can override the process-level `TENANT_ID` per request with `X-Tenant-ID`; the effective tenant is returned in the response header and is used by idempotency, run persistence, draft persistence, RAG/memory stores, and LangGraph checkpoint thread IDs.
 
 LangGraph checkpointing is also configurable. The default `GRAPH_CHECKPOINTER_BACKEND=none` keeps local demos simple. Use `memory` for local debugging, or `postgres` for durable LangGraph checkpoints:
 
@@ -202,7 +203,7 @@ LangGraph checkpointing is also configurable. The default `GRAPH_CHECKPOINTER_BA
 GRAPH_CHECKPOINTER_BACKEND=postgres ads-growth-agent plan examples/fitness_app_brief.json
 ```
 
-The Postgres backend uses the official `langgraph-checkpoint-postgres` `PostgresSaver` and creates LangGraph-owned tables such as `checkpoints`, `checkpoint_blobs`, and `checkpoint_writes` when `GRAPH_CHECKPOINTER_SETUP=true`. These tables are separate from the application-owned Alembic schema.
+The Postgres backend uses the official `langgraph-checkpoint-postgres` `PostgresSaver` and creates LangGraph-owned tables such as `checkpoints`, `checkpoint_blobs`, and `checkpoint_writes` when `GRAPH_CHECKPOINTER_SETUP=true`. These tables are separate from the application-owned Alembic schema. Checkpoint `thread_id` values are namespaced as `<tenant_id>:<run_id>` so deterministic run IDs do not collide across tenants.
 
 The LLM gateway foundation targets LiteLLM's OpenAI-compatible API and supports:
 

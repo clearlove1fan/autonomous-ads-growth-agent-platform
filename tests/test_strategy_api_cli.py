@@ -4,6 +4,7 @@ from decimal import Decimal
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
+from ads_growth_agent import api as api_module
 from ads_growth_agent.api import app as api_app
 from ads_growth_agent.api import get_runtime_idempotency_store, get_runtime_settings
 from ads_growth_agent.cli import app as cli_app
@@ -80,6 +81,70 @@ def test_growth_strategy_api_idempotency_completes_new_request() -> None:
     assert store.completed[0]["run_id"] is None
     assert store.completed[0]["response_json"]["strategy"]["advertiser_id"] == "adv_fitness_001"
     assert store.failed == []
+
+
+def test_growth_strategy_api_uses_x_tenant_id_for_request_scoped_settings(
+    monkeypatch,
+) -> None:
+    captured: dict[str, str] = {}
+    store = FakeIdempotencyStore(IdempotencyStart(status="started"))
+
+    def fake_build_configured_idempotency_store(settings: Settings) -> FakeIdempotencyStore:
+        captured["idempotency_tenant_id"] = settings.tenant_id
+        return store
+
+    def fake_generate_growth_strategy(
+        brief: AdvertiserBrief,
+        *,
+        settings: Settings,
+    ):
+        captured["strategy_tenant_id"] = settings.tenant_id
+        return generate_mock_growth_strategy(brief)
+
+    monkeypatch.setattr(
+        api_module,
+        "build_configured_idempotency_store",
+        fake_build_configured_idempotency_store,
+    )
+    monkeypatch.setattr(
+        api_module,
+        "generate_growth_strategy",
+        fake_generate_growth_strategy,
+    )
+    api_app.dependency_overrides[get_runtime_settings] = lambda: Settings(
+        idempotency_backend="postgres",
+        tenant_id="process_default",
+    )
+    try:
+        response = TestClient(api_app).post(
+            "/growth-strategies",
+            json={"brief": _brief_payload()},
+            headers={
+                "Idempotency-Key": "idem_tenant",
+                "X-Tenant-ID": "tenant_api",
+            },
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.headers["x-tenant-id"] == "tenant_api"
+    assert response.headers["idempotency-status"] == "created"
+    assert captured == {
+        "idempotency_tenant_id": "tenant_api",
+        "strategy_tenant_id": "tenant_api",
+    }
+
+
+def test_growth_strategy_api_rejects_invalid_x_tenant_id() -> None:
+    response = TestClient(api_app).post(
+        "/growth-strategies",
+        json={"brief": _brief_payload()},
+        headers={"X-Tenant-ID": "tenant with spaces"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["error_code"] == "INVALID_TENANT_ID"
 
 
 def test_growth_strategy_api_idempotency_replays_completed_response() -> None:

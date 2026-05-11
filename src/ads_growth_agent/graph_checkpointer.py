@@ -38,12 +38,14 @@ def graph_checkpoint_config(
     run_context: RunContext,
     *,
     enabled: bool,
+    tenant_id: str | None = None,
 ) -> dict[str, Any] | None:
     if not enabled:
         return None
+    thread_id = run_context.run_id if tenant_id is None else f"{tenant_id}:{run_context.run_id}"
     return {
         "configurable": {
-            "thread_id": run_context.run_id,
+            "thread_id": thread_id,
         }
     }
 

@@ -137,6 +137,7 @@ def run_growth_strategy_graph(
             config = graph_checkpoint_config(
                 run_context,
                 enabled=checkpointer is not None,
+                tenant_id=settings.tenant_id,
             )
             with graph_tracing_context(run_context, advertiser_id=brief.advertiser_id):
                 final_state = invoke_traced_graph(

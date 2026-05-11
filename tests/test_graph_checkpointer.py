@@ -31,6 +31,17 @@ def test_graph_checkpoint_config_uses_run_id_as_thread_id() -> None:
     )
 
     assert config == {"configurable": {"thread_id": "strategy_123"}}
+    tenant_config = graph_checkpoint_config(
+        RunContext(
+            run_id="strategy_123",
+            trace_id="trace_123",
+            langsmith_project="test",
+            tracing_enabled=False,
+        ),
+        enabled=True,
+        tenant_id="tenant_api",
+    )
+    assert tenant_config == {"configurable": {"thread_id": "tenant_api:strategy_123"}}
     assert graph_checkpoint_config(
         RunContext(
             run_id="strategy_123",

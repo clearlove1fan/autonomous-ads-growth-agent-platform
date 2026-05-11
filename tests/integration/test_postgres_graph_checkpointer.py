@@ -38,11 +38,11 @@ def test_strategy_generation_writes_langgraph_postgres_checkpoints(monkeypatch) 
             table_names = set(sa.inspect(connection).get_table_names())
             checkpoint_count = connection.execute(
                 sa.text("SELECT count(*) FROM checkpoints WHERE thread_id = :thread_id"),
-                {"thread_id": response.run_metadata.run_id},
+                {"thread_id": f"default:{response.run_metadata.run_id}"},
             ).scalar_one()
             write_count = connection.execute(
                 sa.text("SELECT count(*) FROM checkpoint_writes WHERE thread_id = :thread_id"),
-                {"thread_id": response.run_metadata.run_id},
+                {"thread_id": f"default:{response.run_metadata.run_id}"},
             ).scalar_one()
             migration_count = connection.execute(
                 sa.text("SELECT count(*) FROM checkpoint_migrations")
