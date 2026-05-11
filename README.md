@@ -132,6 +132,16 @@ The local suite currently evaluates:
 - draft-only safety
 - observability metadata
 
+The LLM gateway foundation targets LiteLLM's OpenAI-compatible API and supports:
+
+- native JSON schema structured output requests
+- JSON-schema prompt fallback
+- Pydantic validation
+- bounded repair retry
+- safe failure when validation cannot be repaired
+
+This gateway is currently covered by offline `httpx.MockTransport` tests. Live model-backed planner and critic nodes are planned after this boundary remains stable.
+
 API and CLI runs emit structured JSON logs to stderr. CLI command payloads remain on stdout, while logs include summary fields such as:
 
 - `event`
