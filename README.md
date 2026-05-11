@@ -73,6 +73,17 @@ Run tests:
 pytest
 ```
 
+Run live PostgreSQL migration smoke tests:
+
+```bash
+docker compose up -d postgres
+RUN_POSTGRES_INTEGRATION=1 \
+  TEST_DATABASE_URL=postgresql+psycopg://ads_growth:ads_growth@localhost:5432/ads_growth \
+  pytest tests/integration/test_migrations_postgres.py
+```
+
+The migration smoke test creates and drops an isolated temporary database. It is skipped by default unless `RUN_POSTGRES_INTEGRATION=1` is set.
+
 ## Local Runtime Stack
 
 The local product-like stack uses Docker Compose:
