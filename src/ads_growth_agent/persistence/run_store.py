@@ -12,12 +12,11 @@ from ads_growth_agent.contracts import (
     RunMetadata,
     ToolResult,
 )
+from ads_growth_agent.persistence.identity import upsert_tenant_and_advertiser
 from ads_growth_agent.persistence.partitioning import partition_bucket
 from ads_growth_agent.persistence.schema import (
-    advertisers,
     agent_run_steps,
     agent_runs,
-    tenants,
 )
 
 DEFAULT_TENANT_ID = "default"
@@ -60,7 +59,12 @@ class PostgresAgentRunStore:
 
     def record_completed(self, brief: AdvertiserBrief, response: GrowthStrategyResponse) -> None:
         with _transaction(self._bind) as connection:
-            _upsert_tenant_and_advertiser(connection, brief, tenant_id=self._tenant_id)
+            upsert_tenant_and_advertiser(
+                connection,
+                brief,
+                tenant_id=self._tenant_id,
+                upserted_by="agent_run_store",
+            )
             _upsert_agent_run(
                 connection,
                 brief,
@@ -86,7 +90,12 @@ class PostgresAgentRunStore:
         error_message: str,
     ) -> None:
         with _transaction(self._bind) as connection:
-            _upsert_tenant_and_advertiser(connection, brief, tenant_id=self._tenant_id)
+            upsert_tenant_and_advertiser(
+                connection,
+                brief,
+                tenant_id=self._tenant_id,
+                upserted_by="agent_run_store",
+            )
             error_summary = run_metadata.error_summary or [error_message]
             _upsert_agent_run(
                 connection,
@@ -112,62 +121,6 @@ def _transaction(bind: Engine | Connection) -> Iterator[Connection]:
             yield connection
     else:
         yield bind
-
-
-def _upsert_tenant_and_advertiser(
-    connection: Connection,
-    brief: AdvertiserBrief,
-    *,
-    tenant_id: str,
-) -> None:
-    tenant_stmt = (
-        pg_insert(tenants)
-        .values(
-            tenant_id=tenant_id,
-            display_name="Default Ads Growth Tenant",
-            region="us",
-            status="active",
-            metadata={"upserted_by": "agent_run_store"},
-        )
-        .on_conflict_do_update(
-            index_elements=[tenants.c.tenant_id],
-            set_={
-                "status": "active",
-                "metadata": {"upserted_by": "agent_run_store"},
-                "updated_at": sa.func.now(),
-            },
-        )
-    )
-    connection.execute(tenant_stmt)
-
-    advertiser_stmt = (
-        pg_insert(advertisers)
-        .values(
-            tenant_id=tenant_id,
-            advertiser_id=brief.advertiser_id,
-            name=brief.product_name,
-            industry=brief.product_category,
-            target_markets=[brief.target_market],
-            status="active",
-            metadata={"upserted_by": "agent_run_store"},
-            partition_key=brief.advertiser_id,
-            partition_bucket=partition_bucket(brief.advertiser_id),
-        )
-        .on_conflict_do_update(
-            index_elements=[advertisers.c.tenant_id, advertisers.c.advertiser_id],
-            set_={
-                "name": brief.product_name,
-                "industry": brief.product_category,
-                "target_markets": [brief.target_market],
-                "status": "active",
-                "metadata": {"upserted_by": "agent_run_store"},
-                "partition_key": brief.advertiser_id,
-                "partition_bucket": partition_bucket(brief.advertiser_id),
-                "updated_at": sa.func.now(),
-            },
-        )
-    )
-    connection.execute(advertiser_stmt)
 
 
 def _upsert_agent_run(

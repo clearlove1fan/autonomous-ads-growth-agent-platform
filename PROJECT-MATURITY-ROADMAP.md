@@ -42,6 +42,7 @@ Completed:
 - PostgreSQL-backed knowledge store adapter with seed loader.
 - Runtime knowledge-store backend switch for memory or Postgres retrieval.
 - Optional PostgreSQL run persistence for `agent_runs` and `agent_run_steps`.
+- Optional PostgreSQL campaign draft persistence for draft-only business artifacts.
 
 Remaining:
 

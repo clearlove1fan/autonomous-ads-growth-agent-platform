@@ -176,6 +176,14 @@ RUN_PERSISTENCE_BACKEND=postgres ads-growth-agent plan examples/fitness_app_brie
 
 The current v0.1 `run_id` is deterministic for a given advertiser brief, so repeated identical runs update the same `agent_runs` row and replace its derived step rows. This is deliberate for local idempotent demos; later production work can introduce per-execution run IDs and replay tooling.
 
+Campaign draft persistence is separately opt-in. Set `CAMPAIGN_DRAFT_PERSISTENCE_BACKEND=postgres` to store the `create_campaign_draft` tool output in `campaign_drafts`:
+
+```bash
+CAMPAIGN_DRAFT_PERSISTENCE_BACKEND=postgres ads-growth-agent plan examples/fitness_app_brief.json
+```
+
+Persisted drafts keep `status=draft`, store the final strategy JSON for explainability, and include metadata such as campaign name, daily budget, audience segments, creative angles, and the safety note. No live campaign launch or spend mutation is performed.
+
 The LLM gateway foundation targets LiteLLM's OpenAI-compatible API and supports:
 
 - native JSON schema structured output requests

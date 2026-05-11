@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://ads_growth:ads_growth@localhost:5432/ads_growth"
     knowledge_store_backend: Literal["memory", "postgres"] = "memory"
     run_persistence_backend: Literal["none", "postgres"] = "none"
+    campaign_draft_persistence_backend: Literal["none", "postgres"] = "none"
     litellm_base_url: str = "http://localhost:4000"
     litellm_api_key: str = "sk-local-dev-key"
     default_chat_model: str = "openai/gpt-4o-mini"
