@@ -32,6 +32,10 @@ from ads_growth_agent.contracts import (
     ToolIntent,
     ToolResult,
 )
+from ads_growth_agent.graph_checkpointer import (
+    graph_checkpoint_config,
+    open_configured_graph_checkpointer,
+)
 from ads_growth_agent.knowledge import (
     KnowledgeRetrievalResult,
     KnowledgeStore,
@@ -120,15 +124,26 @@ def run_growth_strategy_graph(
 ) -> GrowthStrategyResponse:
     settings = settings or get_settings()
     run_context = create_run_context(run_id=_strategy_id(brief), settings=settings)
-    graph = build_growth_strategy_graph(
-        registry or build_default_tool_registry(),
-        settings=settings,
-        llm_client=llm_client,
-        knowledge_store=knowledge_store,
-    )
+    checkpointer_context = open_configured_graph_checkpointer(settings)
     try:
-        with graph_tracing_context(run_context, advertiser_id=brief.advertiser_id):
-            final_state = invoke_traced_graph(graph, {"brief": brief, "node_path": []})
+        with checkpointer_context as checkpointer:
+            graph = build_growth_strategy_graph(
+                registry or build_default_tool_registry(),
+                settings=settings,
+                llm_client=llm_client,
+                knowledge_store=knowledge_store,
+                checkpointer=checkpointer,
+            )
+            config = graph_checkpoint_config(
+                run_context,
+                enabled=checkpointer is not None,
+            )
+            with graph_tracing_context(run_context, advertiser_id=brief.advertiser_id):
+                final_state = invoke_traced_graph(
+                    graph,
+                    {"brief": brief, "node_path": []},
+                    config=config,
+                )
     except StrategyGenerationError as exc:
         exc.run_metadata = build_run_metadata(
             run_context,
@@ -165,6 +180,7 @@ def build_growth_strategy_graph(
     settings: Settings | None = None,
     llm_client: LiteLLMGatewayClient | None = None,
     knowledge_store: KnowledgeStore | None = None,
+    checkpointer: Any | None = None,
 ):
     settings = settings or get_settings()
     knowledge_store = knowledge_store or build_default_knowledge_store()
@@ -190,7 +206,7 @@ def build_growth_strategy_graph(
     )
     builder.add_edge("revision", "critic")
     builder.add_edge("finalizer", END)
-    return builder.compile()
+    return builder.compile(checkpointer=checkpointer)
 
 
 def _planner_node(

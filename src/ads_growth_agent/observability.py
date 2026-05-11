@@ -51,8 +51,10 @@ def graph_tracing_context(run_context: RunContext, *, advertiser_id: str) -> Ite
     process_inputs=lambda inputs: _trace_inputs(inputs),
     process_outputs=lambda outputs: _trace_outputs(outputs),
 )
-def invoke_traced_graph(graph, initial_state: dict):
-    return graph.invoke(initial_state)
+def invoke_traced_graph(graph, initial_state: dict, config: dict | None = None):
+    if config is None:
+        return graph.invoke(initial_state)
+    return graph.invoke(initial_state, config=config)
 
 
 def build_run_metadata(

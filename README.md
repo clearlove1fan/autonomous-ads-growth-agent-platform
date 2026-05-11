@@ -196,6 +196,14 @@ IDEMPOTENCY_BACKEND=postgres RUN_PERSISTENCE_BACKEND=postgres \
 
 The first request stores an `idempotency_keys` row as `completed`; a repeated request with the same key and identical body replays the saved response; a repeated request with the same key and different body returns HTTP `409`. `RUN_PERSISTENCE_BACKEND=postgres` is recommended with idempotency so the idempotency record can link to `agent_runs.run_id`.
 
+LangGraph checkpointing is also configurable. The default `GRAPH_CHECKPOINTER_BACKEND=none` keeps local demos simple. Use `memory` for local debugging, or `postgres` for durable LangGraph checkpoints:
+
+```bash
+GRAPH_CHECKPOINTER_BACKEND=postgres ads-growth-agent plan examples/fitness_app_brief.json
+```
+
+The Postgres backend uses the official `langgraph-checkpoint-postgres` `PostgresSaver` and creates LangGraph-owned tables such as `checkpoints`, `checkpoint_blobs`, and `checkpoint_writes` when `GRAPH_CHECKPOINTER_SETUP=true`. These tables are separate from the application-owned Alembic schema.
+
 The LLM gateway foundation targets LiteLLM's OpenAI-compatible API and supports:
 
 - native JSON schema structured output requests

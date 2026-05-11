@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     campaign_draft_persistence_backend: Literal["none", "postgres"] = "none"
     idempotency_backend: Literal["none", "postgres"] = "none"
     idempotency_ttl_seconds: int = 86_400
+    graph_checkpointer_backend: Literal["none", "memory", "postgres"] = "none"
+    graph_checkpointer_setup: bool = True
     litellm_base_url: str = "http://localhost:4000"
     litellm_api_key: str = "sk-local-dev-key"
     default_chat_model: str = "openai/gpt-4o-mini"
