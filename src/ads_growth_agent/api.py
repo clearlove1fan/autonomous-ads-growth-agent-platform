@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from ads_growth_agent import __version__
 from ads_growth_agent.config import get_settings
 from ads_growth_agent.contracts import GrowthStrategyRequest, GrowthStrategyResponse
+from ads_growth_agent.logging_config import configure_logging
 from ads_growth_agent.strategy import StrategyGenerationError, generate_mock_growth_strategy
 
 
@@ -19,6 +20,7 @@ app = FastAPI(
     version=__version__,
     description="AI agent platform for advertiser growth automation.",
 )
+configure_logging()
 
 
 @app.get("/health", response_model=HealthResponse)

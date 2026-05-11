@@ -8,6 +8,7 @@ from ads_growth_agent import __version__
 from ads_growth_agent.config import get_settings
 from ads_growth_agent.contracts import AdvertiserBrief, GrowthStrategyRequest
 from ads_growth_agent.evaluation import load_eval_cases, run_local_eval_suite
+from ads_growth_agent.logging_config import configure_logging
 from ads_growth_agent.strategy import StrategyGenerationError, generate_mock_growth_strategy
 
 app = typer.Typer(help="Autonomous Ads Growth Agent Platform CLI.")
@@ -85,6 +86,7 @@ def _parse_strategy_request(payload: object) -> GrowthStrategyRequest:
 
 @app.callback()
 def main(version: bool = typer.Option(False, "--version", help="Show version and exit.")) -> None:
+    configure_logging()
     if version:
         typer.echo(__version__)
         raise typer.Exit()

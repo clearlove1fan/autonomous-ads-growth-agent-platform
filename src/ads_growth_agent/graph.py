@@ -1,6 +1,16 @@
+# ruff: noqa: E402
 import json
+import warnings
 from typing import Any, TypedDict
 from uuid import NAMESPACE_URL, uuid5
+
+from langchain_core._api.deprecation import LangChainPendingDeprecationWarning
+
+warnings.filterwarnings(
+    "ignore",
+    category=LangChainPendingDeprecationWarning,
+    module=r"langgraph\.cache\.base.*",
+)
 
 from langgraph.graph import END, START, StateGraph
 
@@ -19,6 +29,10 @@ from ads_growth_agent.contracts import (
     SuccessMetric,
     ToolIntent,
     ToolResult,
+)
+from ads_growth_agent.logging_config import (
+    log_strategy_run_completed,
+    log_strategy_run_failed,
 )
 from ads_growth_agent.observability import (
     build_run_metadata,
@@ -79,11 +93,16 @@ def run_growth_strategy_graph(
             tool_results=[exc.tool_result],
             error_summary=[str(exc)],
         )
+        log_strategy_run_failed(
+            advertiser_id=brief.advertiser_id,
+            tool_result=exc.tool_result,
+            run_metadata=exc.run_metadata,
+        )
         raise
 
     tool_results = final_state.get("tool_results", [])
     node_path = final_state.get("node_path", [])
-    return GrowthStrategyResponse(
+    response = GrowthStrategyResponse(
         strategy=final_state["strategy"],
         tool_results=tool_results,
         node_path=node_path,
@@ -93,6 +112,8 @@ def run_growth_strategy_graph(
             tool_results=tool_results,
         ),
     )
+    log_strategy_run_completed(response)
+    return response
 
 
 def build_growth_strategy_graph(registry: ToolRegistry):

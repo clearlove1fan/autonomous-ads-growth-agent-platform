@@ -7,6 +7,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from ads_growth_agent.contracts import AdvertiserBrief, GrowthStrategyResponse
+from ads_growth_agent.logging_config import log_evaluation_suite_completed
 from ads_growth_agent.strategy import generate_mock_growth_strategy
 
 REQUIRED_NODE_PATH = ["planner", "tool_executor", "critic", "finalizer"]
@@ -96,7 +97,7 @@ def run_local_eval_suite(
     ]
     passed_cases = sum(1 for report in reports if report.passed)
     total_cases = len(reports)
-    return EvaluationSuiteReport(
+    report = EvaluationSuiteReport(
         suite_id=suite_id,
         total_cases=total_cases,
         passed_cases=passed_cases,
@@ -104,6 +105,8 @@ def run_local_eval_suite(
         pass_rate=passed_cases / total_cases if total_cases else 0,
         reports=reports,
     )
+    log_evaluation_suite_completed(report)
+    return report
 
 
 def evaluate_growth_strategy(

@@ -132,6 +132,18 @@ The local suite currently evaluates:
 - draft-only safety
 - observability metadata
 
+API and CLI runs emit structured JSON logs to stderr. CLI command payloads remain on stdout, while logs include summary fields such as:
+
+- `event`
+- `run_id`
+- `trace_id`
+- `advertiser_id`
+- `node_path`
+- `tool_count`
+- `failed_tool_count`
+- `suite_id`
+- `pass_rate`
+
 Check the repository-defined services:
 
 ```bash
