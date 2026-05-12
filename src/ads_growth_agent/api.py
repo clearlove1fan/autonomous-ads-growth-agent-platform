@@ -1,4 +1,5 @@
 import re
+from collections.abc import Callable
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Response
@@ -17,6 +18,7 @@ from ads_growth_agent.contracts import (
 )
 from ads_growth_agent.feedback import analyze_campaign_performance_event
 from ads_growth_agent.graph import strategy_id_for_brief
+from ads_growth_agent.health import ReadinessResponse, check_readiness
 from ads_growth_agent.idempotency_store_factory import build_configured_idempotency_store
 from ads_growth_agent.logging_config import configure_logging
 from ads_growth_agent.observability import RunContext, create_run_context
@@ -57,6 +59,10 @@ configure_logging()
 
 def get_runtime_settings() -> Settings:
     return get_settings()
+
+
+def get_runtime_readiness_checker() -> Callable[[Settings], ReadinessResponse]:
+    return check_readiness
 
 
 def get_request_settings(
@@ -100,9 +106,36 @@ def get_runtime_performance_event_store(
     return build_configured_performance_event_store(settings)
 
 
+@app.get("/health/live", response_model=HealthResponse)
+def health_live(
+    settings: Annotated[Settings, Depends(get_runtime_settings)],
+) -> HealthResponse:
+    return _health_response(settings)
+
+
 @app.get("/health", response_model=HealthResponse)
-def health() -> HealthResponse:
-    settings = get_runtime_settings()
+def health(
+    settings: Annotated[Settings, Depends(get_runtime_settings)],
+) -> HealthResponse:
+    return _health_response(settings)
+
+
+@app.get("/health/ready", response_model=ReadinessResponse)
+def health_ready(
+    response: Response,
+    settings: Annotated[Settings, Depends(get_runtime_settings)],
+    readiness_checker: Annotated[
+        Callable[[Settings], ReadinessResponse],
+        Depends(get_runtime_readiness_checker),
+    ],
+) -> ReadinessResponse:
+    readiness = readiness_checker(settings)
+    if readiness.status != "ok":
+        response.status_code = 503
+    return readiness
+
+
+def _health_response(settings: Settings) -> HealthResponse:
     return HealthResponse(
         status="ok",
         service="ads-growth-agent",

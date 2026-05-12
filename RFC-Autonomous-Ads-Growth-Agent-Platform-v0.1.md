@@ -526,6 +526,7 @@ The model is treated as a reasoning engine, not as the system authority. The LLM
 | Campaign draft persistence | Implemented as opt-in Postgres backend | Drafts remain `status=draft` and no live spend action is executed |
 | Campaign performance feedback loop | Implemented | Performance snapshots produce metrics, health status, recommendations, and guardrails |
 | Performance event idempotency | Implemented | Same event payload replays persisted analysis; same event ID with changed payload returns `409` |
+| Dependency readiness checks | Implemented | `/health/live` is shallow; `/health/ready` checks configured Postgres and LiteLLM dependencies |
 | Native table partitioning | Not implemented | Schema is partition-aware, but local migrations do not create native partitions |
 | Replica-aware query routing | Not implemented | Replica strategy is documented but runtime routing still uses one database URL |
 | Full production auth and rate limits | Not implemented | Tenant context is caller-supplied; no authentication/authorization boundary yet |

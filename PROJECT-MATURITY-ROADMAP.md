@@ -49,6 +49,7 @@ Completed:
 - Campaign performance event ingestion and deterministic feedback analysis.
 - Performance event idempotency and conflict protection.
 - HLD implementation-sync sections with current architecture and sequence diagrams.
+- Liveness/readiness health endpoints with configured dependency checks.
 
 Remaining:
 
@@ -182,8 +183,8 @@ Exit criteria:
 1. Add curated demo script and expected outputs for the fitness app scenario.
 2. Add agent-eval cases for RAG grounding and critique/revision.
 3. Add negative demo cases for safe failure, idempotency conflict, and event conflict.
-4. Add dependency readiness checks for Postgres, LiteLLM, and configured persistence backends.
-5. Add asynchronous workflow job model for long-running strategy generation.
-6. Add auth boundary design and first local API key/JWT guard.
-7. Add production metrics endpoint for run latency, validation failures, tool failures, and feedback events.
+4. Add asynchronous workflow job model for long-running strategy generation.
+5. Add auth boundary design and first local API key/JWT guard.
+6. Add production metrics endpoint for run latency, validation failures, tool failures, and feedback events.
+7. Add timeout budgets and circuit-breaker behavior for LLM, retrieval, and tool execution.
 8. Implement native partition migrations and replica-aware read routing as a later production-hardening slice.

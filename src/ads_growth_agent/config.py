@@ -1,5 +1,6 @@
 from typing import Literal
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,7 +19,9 @@ class Settings(BaseSettings):
     idempotency_ttl_seconds: int = 86_400
     graph_checkpointer_backend: Literal["none", "memory", "postgres"] = "none"
     graph_checkpointer_setup: bool = True
+    dependency_check_timeout_seconds: int = Field(default=2, ge=1, le=30)
     litellm_base_url: str = "http://localhost:4000"
+    litellm_health_path: str = "/health/readiness"
     litellm_api_key: str = "sk-local-dev-key"
     default_chat_model: str = "openai/gpt-4o-mini"
     default_embedding_model: str = "openai/text-embedding-3-small"

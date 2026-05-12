@@ -99,7 +99,7 @@ Create a local environment file:
 cp .env.example .env
 ```
 
-Set `OPENAI_API_KEY` in `.env` before calling LiteLLM-backed model endpoints. The current API health endpoint does not require a model key.
+Set `OPENAI_API_KEY` in `.env` before calling LiteLLM-backed model endpoints. Liveness does not require a model key; readiness checks LiteLLM only when LLM planner or critic features are enabled.
 
 Start the stack:
 
@@ -111,7 +111,11 @@ Check the API:
 
 ```bash
 curl http://localhost:8000/health
+curl http://localhost:8000/health/live
+curl http://localhost:8000/health/ready
 ```
+
+`/health/live` is a shallow process check. `/health/ready` validates dependencies that are required by the current configuration, such as PostgreSQL-backed persistence or LiteLLM-backed agent reasoning.
 
 Generate a draft growth strategy:
 
