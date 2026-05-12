@@ -70,6 +70,42 @@ Exit criteria:
 - The project clearly shows agent-platform engineering rather than a prompt demo.
 - A reviewer can see which checks run automatically and which launch gates are still pending.
 
+## Phase 1.5: Engineering Workflow and Quality Gates
+
+Goal: make the project safe to iterate on by turning local quality expectations into repeatable repository-level gates.
+
+Completion standard:
+
+- CI has separate, readable checks for lint, unit tests, deterministic end-to-end smoke, and integration/release verification.
+- Dependency installs are reproducible from a committed lock file.
+- The branch and PR workflow is documented and reflected in GitHub repository settings where possible.
+- Release milestones include version tags, changelog notes, and verification notes.
+- The roadmap remains honest about which gates are implemented versus planned.
+
+Current state:
+
+- `.github/workflows/ci.yml` runs package install, `ruff check .`, and `pytest` on pull requests and pushes to `main`.
+- There is no committed dependency lock file.
+- Branch protection and required PR approval are not verified.
+- Tests exist across unit and integration areas, but a distinct seeded API/CLI end-to-end CI smoke gate is not yet defined.
+- Release tagging and changelog discipline are not yet planned as executable steps.
+
+Planned work:
+
+- Add a DevOps and quality gates ExecPlan under `.agent/plans/`.
+- Generate and commit a reproducible dependency lock file for CI/demo installs.
+- Expand CI into explicit lint, unit, deterministic E2E smoke, and integration/release jobs.
+- Add a seeded API or CLI E2E smoke test that validates final strategy schema, run metadata, budget consistency, retrieval/source behavior where available, and draft-only safety.
+- Document branch strategy, PR review expectations, required checks, and release tagging in the RFC and README.
+- Configure GitHub branch protection for `main` once repository settings are available.
+
+Exit criteria:
+
+- `main` cannot be updated through a normal PR path unless required checks pass.
+- A clean machine or CI runner can install reproducible dependencies and run the deterministic smoke path.
+- A release candidate has a clear tag, changelog entry, and verification record.
+- Any skipped integration or release gate has an explicit reason and owner.
+
 ## Phase 2: Production Architecture Skeleton
 
 Goal: make the repo look like the backend foundation of a real platform, even if it still runs locally.
@@ -184,14 +220,18 @@ Exit criteria:
 - Every committed slice should include verification notes.
 - Prefer replacing interfaces over rewriting graph logic.
 - Keep default local behavior deterministic and model-key-free.
+- Do not claim launch readiness until CI, dependency locking, branch protection, and deterministic E2E smoke gates are explicitly accounted for.
 
 ## Next Recommended Backlog
 
-1. Add curated demo script and expected outputs for the fitness app scenario.
-2. Add agent-eval cases for RAG grounding and critique/revision.
-3. Add negative demo cases for safe failure, idempotency conflict, and event conflict.
-4. Replace in-process background jobs with a durable worker queue design and outbox/DLQ plan.
-5. Add auth boundary design and first local API key/JWT guard.
-6. Add production metrics endpoint for run latency, validation failures, tool failures, and feedback events.
-7. Add timeout budgets and circuit-breaker behavior for LLM, retrieval, and tool execution.
-8. Implement native partition migrations and replica-aware read routing as a later production-hardening slice.
+1. Expand GitHub Actions into explicit lint, unit, deterministic E2E smoke, and integration/release gates.
+2. Add a reproducible dependency lock file and update CI/demo install instructions to use it.
+3. Document and configure branch protection for `main`, including required checks and PR review expectations.
+4. Add curated demo script and expected outputs for the fitness app scenario.
+5. Add agent-eval cases for RAG grounding and critique/revision.
+6. Add negative demo cases for safe failure, idempotency conflict, and event conflict.
+7. Replace in-process background jobs with a durable worker queue design and outbox/DLQ plan.
+8. Add auth boundary design and first local API key/JWT guard.
+9. Add production metrics endpoint for run latency, validation failures, tool failures, and feedback events.
+10. Add timeout budgets and circuit-breaker behavior for LLM, retrieval, and tool execution.
+11. Implement native partition migrations and replica-aware read routing as a later production-hardening slice.
