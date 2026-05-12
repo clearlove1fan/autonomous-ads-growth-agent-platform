@@ -6,11 +6,11 @@ This roadmap defines the order in which the Autonomous Ads Growth Agent Platform
 
 | Dimension | Current Estimate | Target Before Moving On | Status |
 |---|---:|---:|---|
-| Interview-quality technical project | 50-60% | 85-90% | In progress |
-| Production architecture skeleton | 30-40% | 75-80% | Started |
-| True production-ready system | 10-15% | 60%+ for this repo | Not yet |
+| Interview-quality technical project | 65-70% | 85-90% | In progress |
+| Production architecture skeleton | 50-55% | 75-80% | In progress |
+| True production-ready system | 15-20% | 60%+ for this repo | Early |
 
-These numbers are intentionally conservative. The project has strong agent-runtime foundations, but it should not claim production-grade availability or distributed-system readiness yet.
+These numbers are intentionally conservative. The project now has a credible agent-runtime and production-skeleton foundation, including persistence, tenant scoping, retry/resume, checkpointing, and event feedback. It should still not claim production-grade availability, security, or distributed-system readiness yet.
 
 ## Phase 1: Interview-Quality Technical Project
 
@@ -45,12 +45,14 @@ Completed:
 - Optional PostgreSQL campaign draft persistence for draft-only business artifacts.
 - Optional PostgreSQL API idempotency for duplicate request replay and conflict detection.
 - Optional LangGraph memory/PostgreSQL checkpointer for durable graph state.
+- Run detail, retry, and resume APIs.
+- Campaign performance event ingestion and deterministic feedback analysis.
+- Performance event idempotency and conflict protection.
+- HLD implementation-sync sections with current architecture and sequence diagrams.
 
 Remaining:
 
-- Polish HLD and ADR appendix against the current implementation.
-- Add architecture diagrams and request/response sequence diagrams.
-- Add a curated demo script with expected outputs.
+- Add a curated demo script with expected outputs and screenshots/log excerpts.
 - Add agent-eval cases for planner, retrieval grounding, critic, and revision behavior.
 - Add a resume/interview mapping section that ties project features to the TikTok JD.
 - Add negative demo cases that show safe failure rather than silent bad output.
@@ -95,12 +97,16 @@ Planned work:
 - API idempotency key for strategy generation.
 - Tenant-aware request context.
 - Repository/service layer around persistence.
+- Run detail, retry, and resume APIs.
+- Campaign performance event persistence and idempotency.
 
 Exit criteria:
 
 - The in-memory knowledge store can be swapped for Postgres without changing graph logic.
 - Agent runs and steps are persisted with enough detail for replay/debugging.
 - Campaign drafts are stored as drafts only.
+- Campaign performance events are persisted, replayable, and conflict-safe.
+- Failed runs can be retried and failed/running runs can be resumed with clear semantics.
 - Alembic migrations create the local database from scratch.
 - Local Docker Compose can run API, Postgres + pgvector, and LiteLLM together.
 
@@ -173,11 +179,11 @@ Exit criteria:
 
 ## Next Recommended Backlog
 
-1. Update HLD and ADRs to reflect current implemented graph.
-2. Add architecture and sequence diagrams.
-3. Add demo script and interview walkthrough.
-4. Add agent-eval cases for RAG grounding and critique/revision.
-5. Design production schema with partition keys and replica strategy.
-6. Implement Alembic migrations for core tables.
-7. Persist agent runs and steps to PostgreSQL.
-8. Add tenant-aware request context and headers.
+1. Add curated demo script and expected outputs for the fitness app scenario.
+2. Add agent-eval cases for RAG grounding and critique/revision.
+3. Add negative demo cases for safe failure, idempotency conflict, and event conflict.
+4. Add dependency readiness checks for Postgres, LiteLLM, and configured persistence backends.
+5. Add asynchronous workflow job model for long-running strategy generation.
+6. Add auth boundary design and first local API key/JWT guard.
+7. Add production metrics endpoint for run latency, validation failures, tool failures, and feedback events.
+8. Implement native partition migrations and replica-aware read routing as a later production-hardening slice.

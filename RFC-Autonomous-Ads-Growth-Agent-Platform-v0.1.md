@@ -271,45 +271,59 @@ The product aims to create an autonomous agent workflow that can reason over adv
 
 ```mermaid
 flowchart TD
-    A["Advertiser Goal"] --> B["Intake Agent"]
-    B --> C["Planner Agent"]
-    C --> D["Supervisor Router"]
-    D --> E["Audience Strategist"]
-    D --> F["Creative Strategist"]
-    D --> G["Budget Optimizer"]
-    D --> H["Performance Analyst"]
-    E --> I["Tool Layer"]
-    F --> I
-    G --> I
-    H --> I
-    I --> J["Mock Ads Platform Tools"]
-    I --> K["RAG Knowledge Layer"]
-    I --> L["Memory Layer"]
-    E --> M["Draft Strategy"]
-    F --> M
-    G --> M
-    H --> M
-    M --> N["Critic Agent"]
-    N --> O{"Quality Gate"}
-    O -- "Revise" --> C
-    O -- "Pass" --> P["Final Structured Strategy"]
-    P --> Q["LangSmith Tracing and Evals"]
-    R["Campaign Performance Event"] --> H
+    C["API Client or CLI"] --> A["FastAPI / CLI Boundary"]
+    A --> T["Tenant Request Context"]
+    T --> I["API Idempotency Store"]
+    T --> G["LangGraph StateGraph"]
+
+    subgraph Graph["Agent Runtime"]
+        G --> P["planner"]
+        P --> R["retriever"]
+        R --> X["tool_executor"]
+        X --> K["critic"]
+        K --> Q{"quality gate"}
+        Q -- "revise within max attempts" --> P
+        Q -- "pass or safe stop" --> F["finalizer"]
+    end
+
+    G --> CP["LangGraph Checkpointer"]
+    G --> LS["LangSmith Trace Metadata"]
+    G --> JL["Structured JSON Logs"]
+    R --> KS["Knowledge + Memory Stores"]
+    X --> TR["Internal Typed Tool Registry"]
+    TR --> MT["Mock Ads Tools"]
+    F --> RS["Run Store"]
+    F --> DS["Campaign Draft Store"]
+    F --> OUT["Validated Growth Strategy"]
+
+    A --> EV["Campaign Performance Event API"]
+    EV --> FA["Deterministic Feedback Analyzer"]
+    FA --> PES["Performance Event Store"]
+    FA --> REC["Draft-only Feedback Recommendations"]
+
+    KS --> DB["PostgreSQL + pgvector"]
+    RS --> DB
+    DS --> DB
+    PES --> DB
+    CP --> DB
 ```
 
 ### 10.1 Logical Components
 
-| Component | Responsibility | v0.1 Implementation |
+| Component | Responsibility | Current v0.1 Implementation |
 |---|---|---|
-| Experience/API Layer | Accept advertiser requests and return strategy output | FastAPI product API plus CLI for demo, eval, and debugging |
-| Orchestration Layer | Manage graph state, routing, retries, checkpointing, and revision loop | LangGraph StateGraph |
-| Agent Layer | Perform role-specific reasoning | Intake, Planner, Supervisor, Audience, Creative, Budget, Performance, Critic |
-| LLM Gateway Layer | Provide multi-provider model access, retry, fallback, and future cost tracking | LiteLLM Proxy |
-| Tool Layer | Encapsulate advertising actions and analytics | Internal typed tool registry with Pydantic validation |
-| Knowledge Layer | Retrieve policy, strategy, and historical campaign context | PostgreSQL documents, pgvector, and Postgres full-text search |
-| Memory Layer | Store in-run and advertiser-level context | LangGraph state plus PostgreSQL-backed memory and checkpoints |
-| Evaluation Layer | Score output quality and workflow health | LangSmith datasets and evaluators |
-| Observability Layer | Trace decisions, tool calls, errors, and state transitions | LangSmith tracing plus structured JSON logs |
+| Experience/API Layer | Accept advertiser requests, return strategy output, expose run and event APIs | FastAPI endpoints for strategy generation, run detail, retry, resume, and campaign performance events; CLI for demo, eval, and debugging |
+| Request Context Layer | Resolve tenant scope and duplicate request behavior | `X-Tenant-ID` request override plus optional PostgreSQL idempotency key store |
+| Orchestration Layer | Manage graph state, routing, checkpointing, and revision loop | LangGraph StateGraph with deterministic default nodes and optional Postgres checkpointer |
+| Agent Layer | Perform role-specific planning, retrieval, tool execution, critique, and finalization | Implemented as explicit graph nodes: planner, retriever, tool_executor, critic, finalizer |
+| LLM Gateway Layer | Provide multi-provider model access, retry, fallback, and future cost tracking | LiteLLM Proxy integration for opt-in LLM planner/critic and structured output repair |
+| Tool Layer | Encapsulate advertising actions and analytics | Internal typed tool registry with Pydantic validation and draft-only mock ads tools |
+| Knowledge Layer | Retrieve policy, strategy, and historical campaign context | In-memory default store plus optional PostgreSQL documents, pgvector columns, and retrieval events |
+| Memory Layer | Store in-run and advertiser-level context | LangGraph state plus PostgreSQL-backed advertiser memory and optional graph checkpoints |
+| Run Lifecycle Layer | Persist workflow executions for audit, debug, retry, and resume | Optional PostgreSQL `agent_runs` and `agent_run_steps` with running/completed/failed lifecycle |
+| Feedback Loop Layer | Ingest campaign telemetry and return optimization recommendations | Performance event API, deterministic feedback analyzer, optional PostgreSQL persistence, and event-level idempotency |
+| Evaluation Layer | Score output quality and workflow health | Local deterministic eval suite with LangSmith-compatible run metadata |
+| Observability Layer | Trace decisions, tool calls, errors, and state transitions | LangSmith trace IDs plus structured JSON logs and persisted run/event records |
 
 ### 10.2 Interface Contracts
 
@@ -321,6 +335,80 @@ flowchart TD
 | RetrievedContext | RAG Layer | Specialist Agents, Critic | Source ID, document type, snippet summary, relevance score |
 | CritiqueReport | Critic Agent | Planner Agent, Finalizer | Quality score, issue list, required revisions, pass/fail |
 | FinalGrowthStrategy | Finalizer | User/API, LangSmith | Validated strategy, actions, assumptions, risks, sources |
+| RunMetadata | Orchestration Layer | API, CLI, persistence, observability | Run ID, execution ID, strategy ID, trace ID, node path, tool summaries |
+| AgentRunDetailResponse | Run Store | API caller | Run status, persisted final strategy or error, metadata, and ordered step records |
+| CampaignPerformanceEventRequest | API caller | Feedback Analyzer | Campaign metrics, objective, target CPA, attribution window, and event references |
+| CampaignFeedbackAnalysis | Feedback Analyzer | API caller, Event Store | Derived metrics, health status, recommendations, guardrails, and source event ID |
+
+### 10.3 Strategy Generation Sequence
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API as FastAPI / CLI
+    participant Idem as Idempotency Store
+    participant Graph as LangGraph StateGraph
+    participant RAG as Knowledge / Memory Store
+    participant Tools as Typed Tool Registry
+    participant Runs as Run Store
+    participant Drafts as Campaign Draft Store
+
+    Client->>API: Submit advertiser brief
+    API->>API: Resolve tenant context
+    API->>Idem: Check Idempotency-Key when present
+    API->>Runs: Create running agent_run when enabled
+    API->>Graph: Invoke workflow with run context
+    Graph->>RAG: Retrieve strategy docs, cases, memory
+    Graph->>Tools: Execute validated draft/read tools
+    Graph->>Graph: Critique and revise within max attempts
+    Graph->>Drafts: Persist campaign draft when enabled
+    Graph->>Runs: Mark completed or failed and write steps
+    Graph-->>API: Return validated FinalGrowthStrategy
+    API->>Idem: Store completed response when enabled
+    API-->>Client: Strategy response + run metadata
+```
+
+### 10.4 Run Recovery and Campaign Feedback Sequences
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API
+    participant Runs as Run Store
+    participant Graph as LangGraph + Checkpointer
+
+    Client->>API: POST /runs/{run_id}/retry
+    API->>Runs: Require original run status = failed
+    API->>Graph: Start fresh execution under same strategy identity
+    Graph-->>API: New run_id and strategy response
+
+    Client->>API: POST /runs/{run_id}/resume
+    API->>Runs: Reject completed run; load stored advertiser brief
+    API->>Graph: Reuse same run_id and checkpoint thread when available
+    Graph-->>API: Resumed strategy response
+```
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API
+    participant Store as Performance Event Store
+    participant Analyzer as Feedback Analyzer
+
+    Client->>API: POST /campaign-events/performance
+    API->>Store: Lookup event_id when persistence enabled
+    Store-->>API: Existing event hash or not found
+    alt Same event hash
+        API-->>Client: Replay stored analysis
+    else Different event hash
+        API-->>Client: 409 PERFORMANCE_EVENT_ID_CONFLICT
+    else New event
+        API->>Analyzer: Compute CTR, CVR, CPA, ROAS, health status
+        Analyzer-->>API: Draft-only recommendations and guardrails
+        API->>Store: Persist event, hash, and analysis
+        API-->>Client: Created analysis
+    end
+```
 
 ## 11. Technology Choices
 
@@ -413,14 +501,37 @@ The model is treated as a reasoning engine, not as the system authority. The LLM
 | Workflow | One complete LangGraph run from brief to final strategy |
 | Agents | Intake, Planner, Supervisor, Audience, Creative, Budget, Performance, Critic |
 | Tools | Mock campaign, audience, creative, budget, and analytics tools |
-| RAG | PostgreSQL-backed document chunks, pgvector embeddings, full-text search, and source attribution |
+| RAG | PostgreSQL-backed document chunks, pgvector-ready schema, Postgres full-text retrieval, metadata filtering, and source attribution |
 | Memory | LangGraph state, PostgreSQL-backed advertiser memory, and Postgres checkpoints |
 | Observability | LangSmith tracing/evals plus structured JSON logs |
 | Output | Validated JSON strategy plus human-readable summary |
 | Local Packaging | Docker Compose for FastAPI, PostgreSQL with pgvector, and LiteLLM Proxy |
 | Feedback Loop | Campaign performance event ingestion, deterministic feedback analysis, and draft-only revised recommendations |
 
-### 13.1 Out-of-Scope Until Later Versions
+### 13.1 Current Implementation Status
+
+| Capability | Status | Evidence |
+|---|---|---|
+| FastAPI strategy generation | Implemented | `POST /growth-strategies` returns a validated `GrowthStrategyResponse` |
+| CLI demo and eval | Implemented | `ads-growth-agent plan`, `health`, `seed-knowledge`, and `eval` commands |
+| Deterministic LangGraph workflow | Implemented | Graph nodes run planner, retriever, tool_executor, critic, and finalizer |
+| Internal typed tool registry | Implemented | Unknown tools, invalid params, permission errors, and failures return structured results |
+| LiteLLM gateway | Implemented behind feature flags | Optional LLM planner/critic and structured output fallback route through LiteLLM |
+| RAG and advertiser memory | Implemented as default in-memory plus optional Postgres store | Seeded knowledge, memory retrieval, retrieval events, and Postgres adapter exist |
+| Run lifecycle persistence | Implemented as opt-in Postgres backend | `agent_runs` and `agent_run_steps` record running, completed, and failed executions |
+| Run detail API | Implemented | `GET /runs/{run_id}` returns status, strategy/error, metadata, and steps |
+| Retry API | Implemented | Failed runs can be retried as a new execution under the same strategy identity |
+| Resume API | Implemented with honest v0.1 semantics | Failed/running runs reuse the same run ID; Postgres checkpointer enables checkpoint-thread reuse |
+| API idempotency | Implemented as opt-in Postgres backend | Same key/body replays response; same key/different body returns conflict |
+| Campaign draft persistence | Implemented as opt-in Postgres backend | Drafts remain `status=draft` and no live spend action is executed |
+| Campaign performance feedback loop | Implemented | Performance snapshots produce metrics, health status, recommendations, and guardrails |
+| Performance event idempotency | Implemented | Same event payload replays persisted analysis; same event ID with changed payload returns `409` |
+| Native table partitioning | Not implemented | Schema is partition-aware, but local migrations do not create native partitions |
+| Replica-aware query routing | Not implemented | Replica strategy is documented but runtime routing still uses one database URL |
+| Full production auth and rate limits | Not implemented | Tenant context is caller-supplied; no authentication/authorization boundary yet |
+| Async job queue / outbox / DLQ | Not implemented | Strategy generation currently runs synchronously in the API/CLI process |
+
+### 13.2 Out-of-Scope Until Later Versions
 
 | Area | Reason |
 |---|---|
@@ -465,6 +576,11 @@ The model is treated as a reasoning engine, not as the system authority. The LLM
 | RAG | Validate pgvector retrieval, metadata filtering, Postgres full-text fallback, hybrid ranking, and source attribution |
 | LangGraph workflow | Verify planner to router to specialist agents to critic to finalizer state flow |
 | Observability | Verify every workflow run produces a LangSmith trace ID and structured JSON log entries |
+| Run lifecycle | Verify running/completed/failed transitions, ordered step persistence, run detail reads, retry eligibility, and resume rejection rules |
+| API idempotency | Verify same idempotency key and same body replays the response, while changed bodies return conflict |
+| Campaign feedback | Verify CTR/CVR/CPA/ROAS calculation, health status selection, recommendation generation, and draft-only guardrails |
+| Performance event idempotency | Verify same `event_id` and event hash replays stored analysis, while conflicting payloads return `409` |
+| Live Postgres integration | Verify Alembic migrations, Postgres stores, checkpointer setup, tenant scoping, and integration tests against Docker Postgres |
 
 ## 15. Risks and Mitigations
 
@@ -479,30 +595,34 @@ The model is treated as a reasoning engine, not as the system authority. The LLM
 | Structured output degrades across providers | Invalid tool intents or final outputs | Use Validate + Repair and safe failure after bounded retries |
 | PostgreSQL checkpoint contention under high concurrency | Slower workflow execution | Accept for v0.1, monitor query latency, and revisit partitioning or dedicated checkpoint storage if needed |
 | LiteLLM Proxy adds another service | More local setup and runtime failure modes | Use Docker Compose health checks and clear fallback/error handling |
+| Caller-supplied tenant header is spoofable | Incorrect tenant isolation in any externally exposed environment | Treat `X-Tenant-ID` as local/demo only until real auth maps callers to tenants |
+| Synchronous workflow ties API latency to graph execution | Slow or failed dependencies can hold request workers | Add async job queue, timeout budgets, and worker separation before production launch |
+| Partition-aware schema is mistaken for implemented partitioning | Overstated scalability claims | Document native partitioning and replica routing as future production hardening work |
+| Event feedback recommendations are mistaken for autonomous execution | Unapproved spend or targeting changes | Keep v0.1 recommendations draft-only and require human approval for execute-category tools |
 
 ## 16. Launch Readiness Checklist
 
 | Gate | Requirement | Status |
 |---|---|---|
-| Product scope sign-off | Goals, non-goals, and v0.1 scope approved | Pending |
-| Architecture sign-off | Graph architecture, agent boundaries, and tool interfaces approved | Pending |
-| Technology decision sign-off | Technology choices and ADR appendix reviewed | Pending |
-| Data sign-off | RAG documents and mock datasets reviewed | Pending |
-| Safety sign-off | Guardrails for policy risk and autonomous actions approved | Pending |
-| Eval sign-off | Minimum eval dataset and pass thresholds defined | Pending |
-| Observability sign-off | LangSmith traces and error metadata verified | Pending |
-| Local stack readiness | Docker Compose starts FastAPI, PostgreSQL with pgvector, and LiteLLM Proxy | Pending |
-| Demo readiness | End-to-end workflow runs with seeded sample advertiser cases | Pending |
+| Product scope sign-off | Goals, non-goals, and v0.1 scope approved | Drafted, not formally reviewed |
+| Architecture sign-off | Graph architecture, agent boundaries, and tool interfaces approved | Implemented for v0.1 skeleton; review pending |
+| Technology decision sign-off | Technology choices and ADR appendix reviewed | ADR-001 through ADR-007 drafted; review pending |
+| Data sign-off | RAG documents and mock datasets reviewed | Seed corpus and eval cases exist; data review pending |
+| Safety sign-off | Guardrails for policy risk and autonomous actions approved | Draft-only guardrails implemented; formal safety review pending |
+| Eval sign-off | Minimum eval dataset and pass thresholds defined | Local eval suite exists; broader agent eval coverage pending |
+| Observability sign-off | LangSmith traces and error metadata verified | Run metadata and JSON logs implemented; metrics/dashboard pending |
+| Local stack readiness | Docker Compose starts FastAPI, PostgreSQL with pgvector, and LiteLLM Proxy | Implemented; local environment verification required per machine |
+| Demo readiness | End-to-end workflow runs with seeded sample advertiser cases | Partially ready; curated walkthrough and expected outputs pending |
 
 ## 17. Open Questions
 
 | ID | Question | Owner | Status |
 |---|---|---|---|
 | OQ-1 | Should v0.1 expose a CLI, FastAPI endpoint, or lightweight web UI? | TBD | Closed: FastAPI plus CLI selected |
-| OQ-2 | What campaign vertical should the demo optimize for first: fitness app, ecommerce, SaaS, or local service? | TBD | Open |
+| OQ-2 | What campaign vertical should the demo optimize for first: fitness app, ecommerce, SaaS, or local service? | TBD | Closed for v0.1: fitness app selected as the default deterministic demo |
 | OQ-3 | Should memory be stored in JSON, SQLite, or vector store for v0.1? | TBD | Closed: PostgreSQL-backed memory and checkpoints selected |
-| OQ-4 | What minimum evaluation dataset size is enough for the portfolio demo? | TBD | Open |
-| OQ-5 | Should event-driven feedback be included in v0.1 or v0.2? | TBD | Open |
+| OQ-4 | What minimum evaluation dataset size is enough for the portfolio demo? | TBD | Partially answered: local eval cases exist; larger regression set remains open |
+| OQ-5 | Should event-driven feedback be included in v0.1 or v0.2? | TBD | Closed: first performance event feedback loop included in v0.1 |
 
 ## 18. Initial Architecture Decision
 
@@ -562,6 +682,26 @@ The first version should prioritize a complete, traceable, and recoverable end-t
 | Rationale | TypedDict keeps graph state lightweight; Pydantic enforces correctness at external, persistent, and executable boundaries |
 | Consequences | Developers must clearly distinguish mutable workflow state from validated boundary objects |
 
+### ADR-006: Retry and Resume as Separate Run Lifecycle Operations
+
+| Field | Value |
+|---|---|
+| Status | Accepted for v0.1 |
+| Decision | Model retry as a new execution and resume as continuation of the same execution identity |
+| Context | Failed agent runs need recovery behavior, but retry and resume have different audit and checkpoint semantics |
+| Rationale | Retry should preserve the original failed run and create a new run for auditability; resume should reuse the same run ID and checkpoint thread when durable checkpoints exist |
+| Consequences | API callers must choose the right recovery action, but run history remains easier to reason about |
+
+### ADR-007: Idempotent Campaign Performance Event Ingestion
+
+| Field | Value |
+|---|---|
+| Status | Accepted for v0.1 |
+| Decision | Use `event_id` plus a normalized event hash to replay duplicate telemetry and reject conflicting telemetry |
+| Context | Campaign telemetry can be retried by clients or delivery systems, and silent overwrites would corrupt feedback analysis |
+| Rationale | Replaying the same event preserves stable audit output, while returning `409` for changed payloads prevents event identity reuse from hiding data conflicts |
+| Consequences | The first version stores the event hash in metadata; high-volume production deployments may promote it to an indexed column |
+
 ## 20. Decision Log
 
 | Date | Decision | Rationale | Status |
@@ -575,4 +715,6 @@ The first version should prioritize a complete, traceable, and recoverable end-t
 | 2026-05-10 | Select internal typed tool registry | Safer and more testable than direct model tool execution | Accepted |
 | 2026-05-10 | Select TypedDict graph state with Pydantic boundary validation | Balances LangGraph update ergonomics with strict product contract validation | Accepted |
 | 2026-05-12 | Add campaign performance event feedback loop | Moves FR-7 from design-only toward functional event-driven optimization while preserving draft-only safety | Accepted |
-| TBD | Select first demo vertical | Fitness app, ecommerce, SaaS, or local service still open | Open |
+| 2026-05-12 | Separate retry from resume | Retry creates a new execution for auditability; resume preserves the original run identity and checkpoint thread when available | Accepted |
+| 2026-05-12 | Add performance event idempotency | Duplicate campaign telemetry should replay stored analysis and conflicting telemetry should be rejected | Accepted |
+| 2026-05-12 | Select first demo vertical | Fitness app selected because the existing sample brief, budget math, and conversion KPIs are concrete and easy to evaluate | Accepted |
