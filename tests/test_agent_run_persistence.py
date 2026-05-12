@@ -5,11 +5,11 @@ from ads_growth_agent.config import Settings
 from ads_growth_agent.contracts import (
     AdvertiserBrief,
     CampaignObjective,
-    RunMetadata,
     ToolError,
     ToolResult,
 )
 from ads_growth_agent.graph import StrategyGenerationError
+from ads_growth_agent.observability import build_run_metadata
 from ads_growth_agent.persistence.run_store import NoopAgentRunStore, PostgresAgentRunStore
 from ads_growth_agent.run_store_factory import (
     build_configured_run_store,
@@ -69,8 +69,16 @@ def test_generate_growth_strategy_records_completed_run_with_injected_store() ->
         run_store=run_store,
     )
 
+    assert run_store.started == [
+        (
+            _fitness_brief().advertiser_id,
+            response.run_metadata.run_id,
+            response.strategy.strategy_id,
+        )
+    ]
     assert run_store.completed == [(_fitness_brief().advertiser_id, response.run_metadata.run_id)]
     assert run_store.failed == []
+    assert run_store.events == ["started", "completed"]
 
 
 def test_generate_growth_strategy_records_failed_run_with_injected_store(monkeypatch) -> None:
@@ -82,18 +90,13 @@ def test_generate_growth_strategy_records_failed_run_with_injected_store(monkeyp
         error=ToolError(code="PLANNER_FAILED", message="planner failed", retryable=False),
         latency_ms=0,
     )
-    run_metadata = RunMetadata(
-        run_id="strategy_failure",
-        trace_id="trace_failure",
-        langsmith_project="test",
-        tracing_enabled=False,
-        node_path=["planner"],
-        tool_count=1,
-        failed_tool_count=1,
-        error_summary=["planner failed"],
-    )
-
     def fake_run_growth_strategy_graph(*args: object, **kwargs: object):
+        run_metadata = build_run_metadata(
+            kwargs["run_context"],
+            node_path=["planner"],
+            tool_results=[failure_result],
+            error_summary=["planner failed"],
+        )
         raise StrategyGenerationError(
             "planner failed",
             failure_result,
@@ -116,21 +119,34 @@ def test_generate_growth_strategy_records_failed_run_with_injected_store(monkeyp
         )
 
     assert run_store.completed == []
+    assert run_store.started[0][0] == _fitness_brief().advertiser_id
+    assert run_store.started[0][2].startswith("strategy_")
     assert run_store.failed == [
-        (_fitness_brief().advertiser_id, "strategy_failure", "planner failed")
+        (_fitness_brief().advertiser_id, run_store.started[0][1], "planner failed")
     ]
+    assert run_store.events == ["started", "failed"]
 
 
 class CapturingRunStore:
     def __init__(self) -> None:
+        self.started: list[tuple[str, str, str | None]] = []
         self.completed: list[tuple[str, str]] = []
         self.failed: list[tuple[str, str, str]] = []
+        self.events: list[str] = []
+
+    def record_started(self, brief, run_metadata) -> None:
+        self.started.append(
+            (brief.advertiser_id, run_metadata.run_id, run_metadata.strategy_id)
+        )
+        self.events.append("started")
 
     def record_completed(self, brief, response) -> None:
         self.completed.append((brief.advertiser_id, response.run_metadata.run_id))
+        self.events.append("completed")
 
     def record_failed(self, brief, run_metadata, *, tool_results, error_message) -> None:
         self.failed.append((brief.advertiser_id, run_metadata.run_id, error_message))
+        self.events.append("failed")
 
 
 def _fitness_brief() -> AdvertiserBrief:

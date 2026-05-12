@@ -53,6 +53,7 @@ from ads_growth_agent.logging_config import (
     log_strategy_run_failed,
 )
 from ads_growth_agent.observability import (
+    RunContext,
     build_run_metadata,
     create_run_context,
     graph_tracing_context,
@@ -122,10 +123,15 @@ def run_growth_strategy_graph(
     settings: Settings | None = None,
     llm_client: LiteLLMGatewayClient | None = None,
     knowledge_store: KnowledgeStore | None = None,
+    run_context: RunContext | None = None,
 ) -> GrowthStrategyResponse:
     settings = settings or get_settings()
-    strategy_id = _strategy_id(brief)
-    run_context = create_run_context(strategy_id=strategy_id, settings=settings)
+    strategy_id = strategy_id_for_brief(brief)
+    run_context = run_context or create_run_context(strategy_id=strategy_id, settings=settings)
+    if run_context.strategy_id not in {None, strategy_id}:
+        raise ValueError(
+            "run context strategy_id does not match the advertiser brief strategy_id"
+        )
     checkpointer_context = open_configured_graph_checkpointer(settings)
     try:
         with checkpointer_context as checkpointer:
@@ -227,7 +233,7 @@ def _planner_node(
 
 def _deterministic_planner_node(state: GrowthStrategyState) -> GrowthStrategyState:
     brief = state["brief"]
-    strategy_id = _strategy_id(brief)
+    strategy_id = strategy_id_for_brief(brief)
     intents = _deterministic_initial_tool_intents(brief, strategy_id)
     return {
         "strategy_id": strategy_id,
@@ -247,7 +253,7 @@ def _llm_planner_node(
     llm_client: LiteLLMGatewayClient | None,
 ) -> GrowthStrategyState:
     brief = state["brief"]
-    strategy_id = _strategy_id(brief)
+    strategy_id = strategy_id_for_brief(brief)
     node_path = [*state.get("node_path", []), "planner"]
     client = llm_client or LiteLLMGatewayClient(settings=settings)
 
@@ -1073,6 +1079,6 @@ def _execute_or_raise(
     return result
 
 
-def _strategy_id(brief: AdvertiserBrief) -> str:
+def strategy_id_for_brief(brief: AdvertiserBrief) -> str:
     payload = json.dumps(brief.model_dump(mode="json"), sort_keys=True)
     return f"strategy_{uuid5(NAMESPACE_URL, payload).hex[:16]}"

@@ -9,6 +9,8 @@ from sqlalchemy.engine import URL, make_url
 
 from ads_growth_agent.config import Settings
 from ads_growth_agent.contracts import AdvertiserBrief, CampaignObjective
+from ads_growth_agent.observability import build_run_metadata, create_run_context
+from ads_growth_agent.persistence.run_store import PostgresAgentRunStore
 from ads_growth_agent.run_store_factory import dispose_cached_run_store_engines
 from ads_growth_agent.strategy import generate_growth_strategy
 
@@ -32,6 +34,14 @@ def test_strategy_generation_persists_agent_run_and_steps(monkeypatch) -> None:
             database_url=test_url.render_as_string(hide_password=False),
             run_persistence_backend="postgres",
             tenant_id="default",
+        )
+        lifecycle_context = create_run_context(
+            strategy_id="strategy_lifecycle",
+            settings=settings,
+        )
+        PostgresAgentRunStore(engine, tenant_id="default").record_started(
+            _fitness_brief(),
+            build_run_metadata(lifecycle_context, node_path=[], tool_results=[]),
         )
         response = generate_growth_strategy(_fitness_brief(), settings=settings)
         response_again = generate_growth_strategy(_fitness_brief(), settings=settings)
@@ -67,7 +77,19 @@ def test_strategy_generation_persists_agent_run_and_steps(monkeypatch) -> None:
                 sa.text("SELECT count(*) FROM agent_runs WHERE strategy_id = :strategy_id"),
                 {"strategy_id": response.strategy.strategy_id},
             ).scalar_one()
+            started_run = connection.execute(
+                sa.text(
+                    "SELECT run_id, strategy_id, status, completed_at, final_strategy_json "
+                    "FROM agent_runs WHERE run_id = :run_id"
+                ),
+                {"run_id": lifecycle_context.run_id},
+            ).mappings().one()
 
+        assert started_run["run_id"] == lifecycle_context.run_id
+        assert started_run["strategy_id"] == "strategy_lifecycle"
+        assert started_run["status"] == "running"
+        assert started_run["completed_at"] is None
+        assert started_run["final_strategy_json"] is None
         assert run_count == 1
         assert strategy_run_count == 2
         assert run["run_id"] == response_again.run_metadata.run_id

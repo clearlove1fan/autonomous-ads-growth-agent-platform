@@ -10,7 +10,7 @@ from ads_growth_agent.config import Settings
 from ads_growth_agent.contracts import AdvertiserBrief, AgentRole, BudgetPlan, ToolIntent
 from ads_growth_agent.graph import StrategyGenerationError, run_growth_strategy_graph
 from ads_growth_agent.llm import LiteLLMGatewayClient
-from ads_growth_agent.observability import _trace_outputs
+from ads_growth_agent.observability import _trace_outputs, create_run_context
 from ads_growth_agent.tools import (
     ToolDefinition,
     ToolExecutionContext,
@@ -63,6 +63,17 @@ def test_langgraph_workflow_separates_strategy_id_from_execution_run_id() -> Non
     assert first.run_metadata.run_id != second.run_metadata.run_id
     assert first.run_metadata.execution_id == first.run_metadata.run_id
     assert second.run_metadata.execution_id == second.run_metadata.run_id
+
+
+def test_langgraph_workflow_uses_supplied_run_context() -> None:
+    strategy_id = run_growth_strategy_graph(_brief()).strategy.strategy_id
+    run_context = create_run_context(strategy_id=strategy_id)
+
+    response = run_growth_strategy_graph(_brief(), run_context=run_context)
+
+    assert response.run_metadata.run_id == run_context.run_id
+    assert response.run_metadata.execution_id == run_context.run_id
+    assert response.run_metadata.strategy_id == strategy_id
 
 
 def test_langgraph_workflow_raises_structured_tool_error() -> None:

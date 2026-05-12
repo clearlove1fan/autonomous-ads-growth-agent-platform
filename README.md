@@ -170,13 +170,15 @@ KNOWLEDGE_STORE_BACKEND=postgres ads-growth-agent plan examples/fitness_app_brie
 
 The live integration suite verifies seeded retrieval from `knowledge_documents`, `knowledge_chunks`, and `advertiser_memories`, plus `retrieval_events` recording for run-level observability. This is the first database-backed RAG slice before adding embedding generation and hybrid vector ranking.
 
-Run audit persistence is also opt-in. Set `RUN_PERSISTENCE_BACKEND=postgres` to write completed or failed strategy runs into `agent_runs` and derived node records into `agent_run_steps`:
+Run audit persistence is also opt-in. Set `RUN_PERSISTENCE_BACKEND=postgres` to write strategy executions into `agent_runs` and derived node records into `agent_run_steps`:
 
 ```bash
 RUN_PERSISTENCE_BACKEND=postgres ads-growth-agent plan examples/fitness_app_brief.json
 ```
 
 `strategy.strategy_id` is stable for a given advertiser brief, while `run_metadata.run_id` is a per-execution ID. `run_metadata.execution_id` mirrors `run_id` for clarity, and `run_metadata.strategy_id` links the execution back to the stable strategy. Repeated identical runs now create separate audit rows under the same `strategy_id`, which is closer to production replay, retry, and concurrency semantics.
+
+When run persistence is enabled, each execution is first recorded as `running` before LangGraph starts. The same row is then updated to `completed` or `failed`, with node-level rows written to `agent_run_steps` once terminal state is reached. This lifecycle is the foundation for later resume and retry endpoints.
 
 Campaign draft persistence is separately opt-in. Set `CAMPAIGN_DRAFT_PERSISTENCE_BACKEND=postgres` to store the `create_campaign_draft` tool output in `campaign_drafts`:
 

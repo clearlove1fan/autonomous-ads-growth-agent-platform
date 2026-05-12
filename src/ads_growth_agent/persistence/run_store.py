@@ -23,6 +23,9 @@ DEFAULT_TENANT_ID = "default"
 
 
 class AgentRunStore(Protocol):
+    def record_started(self, brief: AdvertiserBrief, run_metadata: RunMetadata) -> None:
+        """Persist a running strategy execution."""
+
     def record_completed(self, brief: AdvertiserBrief, response: GrowthStrategyResponse) -> None:
         """Persist a completed strategy run."""
 
@@ -38,6 +41,9 @@ class AgentRunStore(Protocol):
 
 
 class NoopAgentRunStore:
+    def record_started(self, brief: AdvertiserBrief, run_metadata: RunMetadata) -> None:
+        return None
+
     def record_completed(self, brief: AdvertiserBrief, response: GrowthStrategyResponse) -> None:
         return None
 
@@ -56,6 +62,24 @@ class PostgresAgentRunStore:
     def __init__(self, bind: Engine | Connection, *, tenant_id: str = DEFAULT_TENANT_ID) -> None:
         self._bind = bind
         self._tenant_id = tenant_id
+
+    def record_started(self, brief: AdvertiserBrief, run_metadata: RunMetadata) -> None:
+        with _transaction(self._bind) as connection:
+            upsert_tenant_and_advertiser(
+                connection,
+                brief,
+                tenant_id=self._tenant_id,
+                upserted_by="agent_run_store",
+            )
+            _upsert_agent_run(
+                connection,
+                brief,
+                run_metadata,
+                tenant_id=self._tenant_id,
+                status="running",
+                final_strategy_json=None,
+                error_summary=[],
+            )
 
     def record_completed(self, brief: AdvertiserBrief, response: GrowthStrategyResponse) -> None:
         with _transaction(self._bind) as connection:
@@ -134,6 +158,7 @@ def _upsert_agent_run(
     error_summary: list[str],
 ) -> None:
     strategy_id = _strategy_id(run_metadata)
+    completed_at = sa.func.now() if status in {"completed", "failed"} else None
     metadata = {
         "strategy_id": strategy_id,
         "execution_id": run_metadata.execution_id,
@@ -160,7 +185,7 @@ def _upsert_agent_run(
         "metadata": metadata,
         "partition_key": run_metadata.run_id,
         "partition_bucket": partition_bucket(run_metadata.run_id),
-        "completed_at": sa.func.now(),
+        "completed_at": completed_at,
     }
     stmt = (
         pg_insert(agent_runs)
@@ -179,7 +204,7 @@ def _upsert_agent_run(
                 "metadata": values["metadata"],
                 "partition_key": values["partition_key"],
                 "partition_bucket": values["partition_bucket"],
-                "completed_at": sa.func.now(),
+                "completed_at": values["completed_at"],
             },
         )
     )

@@ -3,9 +3,14 @@ from ads_growth_agent.campaign_draft_store_factory import (
 )
 from ads_growth_agent.config import Settings, get_settings
 from ads_growth_agent.contracts import AdvertiserBrief, GrowthStrategyResponse
-from ads_growth_agent.graph import StrategyGenerationError, run_growth_strategy_graph
+from ads_growth_agent.graph import (
+    StrategyGenerationError,
+    run_growth_strategy_graph,
+    strategy_id_for_brief,
+)
 from ads_growth_agent.knowledge import KnowledgeStore
 from ads_growth_agent.knowledge_store_factory import build_configured_knowledge_store
+from ads_growth_agent.observability import build_run_metadata, create_run_context
 from ads_growth_agent.persistence.campaign_draft_store import CampaignDraftStore
 from ads_growth_agent.persistence.run_store import AgentRunStore
 from ads_growth_agent.run_store_factory import build_configured_run_store
@@ -28,12 +33,21 @@ def generate_growth_strategy(
     campaign_draft_store = campaign_draft_store or build_configured_campaign_draft_store(
         settings
     )
+    run_context = create_run_context(
+        strategy_id=strategy_id_for_brief(brief),
+        settings=settings,
+    )
+    run_store.record_started(
+        brief,
+        build_run_metadata(run_context, node_path=[], tool_results=[]),
+    )
     try:
         response = run_growth_strategy_graph(
             brief,
             registry,
             settings=settings,
             knowledge_store=knowledge_store or build_configured_knowledge_store(settings),
+            run_context=run_context,
         )
     except StrategyGenerationError as exc:
         if exc.run_metadata is not None:
