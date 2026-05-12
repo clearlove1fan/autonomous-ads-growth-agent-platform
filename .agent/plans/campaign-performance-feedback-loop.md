@@ -34,7 +34,7 @@ Add the first functional event-driven feedback loop: the platform can ingest a c
 - [x] Add live Postgres integration coverage for event persistence.
 - [x] Update README and schema documentation.
 - [x] Run targeted tests, default tests, and ruff; add skipped live integration coverage.
-- [ ] Commit and push the verified slice.
+- [x] Commit and push the verified slice.
   Blocked: git staging requires writing `.git/index.lock`, and the environment rejected escalation because the current Codex usage limit was reached.
 
 ## Decisions
@@ -70,4 +70,4 @@ Add the first functional event-driven feedback loop: the platform can ingest a c
 
 ## Final Status
 
-Implementation and verification are complete. Commit and push are pending.
+Implementation, verification, commit, and push are complete.
