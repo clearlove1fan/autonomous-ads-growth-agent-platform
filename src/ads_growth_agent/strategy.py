@@ -10,7 +10,7 @@ from ads_growth_agent.graph import (
 )
 from ads_growth_agent.knowledge import KnowledgeStore
 from ads_growth_agent.knowledge_store_factory import build_configured_knowledge_store
-from ads_growth_agent.observability import build_run_metadata, create_run_context
+from ads_growth_agent.observability import RunContext, build_run_metadata, create_run_context
 from ads_growth_agent.persistence.campaign_draft_store import CampaignDraftStore
 from ads_growth_agent.persistence.run_store import AgentRunStore
 from ads_growth_agent.run_store_factory import build_configured_run_store
@@ -27,13 +27,14 @@ def generate_growth_strategy(
     knowledge_store: KnowledgeStore | None = None,
     run_store: AgentRunStore | None = None,
     campaign_draft_store: CampaignDraftStore | None = None,
+    run_context: RunContext | None = None,
 ) -> GrowthStrategyResponse:
     settings = settings or get_settings()
     run_store = run_store or build_configured_run_store(settings)
     campaign_draft_store = campaign_draft_store or build_configured_campaign_draft_store(
         settings
     )
-    run_context = create_run_context(
+    run_context = run_context or create_run_context(
         strategy_id=strategy_id_for_brief(brief),
         settings=settings,
     )

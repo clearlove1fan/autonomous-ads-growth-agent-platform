@@ -80,6 +80,12 @@ class PostgresAgentRunStore:
                 final_strategy_json=None,
                 error_summary=[],
             )
+            _replace_run_steps(
+                connection,
+                run_metadata,
+                tenant_id=self._tenant_id,
+                steps=[],
+            )
 
     def record_completed(self, brief: AdvertiserBrief, response: GrowthStrategyResponse) -> None:
         with _transaction(self._bind) as connection:
@@ -169,6 +175,7 @@ def _upsert_agent_run(
         "product_name": brief.product_name,
         "product_category": brief.product_category,
         "target_market": brief.target_market,
+        "advertiser_brief": brief.model_dump(mode="json"),
         "run_persistence": "postgres",
     }
     values = {

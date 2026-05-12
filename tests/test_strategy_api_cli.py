@@ -265,6 +265,142 @@ def test_get_agent_run_api_returns_404_when_run_is_missing() -> None:
     assert response.json()["detail"]["error_code"] == "RUN_NOT_FOUND"
 
 
+def test_resume_agent_run_api_resumes_same_execution(monkeypatch) -> None:
+    original_response = generate_mock_growth_strategy(
+        AdvertiserBrief.model_validate(_brief_payload())
+    )
+    failed_run = _run_detail_from_growth_response(original_response, status="failed")
+    store = FakeRunReadStore(failed_run)
+    captured: dict[str, str] = {}
+
+    def fake_generate_growth_strategy(
+        brief: AdvertiserBrief,
+        *,
+        settings: Settings,
+        run_context,
+    ):
+        response = generate_mock_growth_strategy(brief)
+        captured["tenant_id"] = settings.tenant_id
+        captured["advertiser_id"] = brief.advertiser_id
+        captured["run_id"] = run_context.run_id
+        captured["strategy_id"] = run_context.strategy_id
+        captured["trace_id"] = run_context.trace_id
+        return response.model_copy(
+            update={
+                "run_metadata": response.run_metadata.model_copy(
+                    update={
+                        "run_id": run_context.run_id,
+                        "execution_id": run_context.run_id,
+                        "strategy_id": run_context.strategy_id,
+                        "trace_id": run_context.trace_id,
+                    }
+                )
+            }
+        )
+
+    monkeypatch.setattr(api_module, "generate_growth_strategy", fake_generate_growth_strategy)
+    _override_api_dependencies(
+        settings=Settings(run_persistence_backend="postgres", tenant_id="process_default"),
+        store=FakeIdempotencyStore(),
+        run_read_store=store,
+    )
+    try:
+        response = TestClient(api_app).post(
+            f"/runs/{failed_run.run_id}/resume",
+            headers={"X-Tenant-ID": "tenant_api"},
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert response.headers["x-tenant-id"] == "tenant_api"
+    assert response.headers["resumed-run-id"] == failed_run.run_id
+    assert response.headers["resume-mode"] == "same-run-replay"
+    assert store.requested_run_ids == [failed_run.run_id]
+    assert captured == {
+        "tenant_id": "tenant_api",
+        "advertiser_id": "adv_fitness_001",
+        "run_id": failed_run.run_id,
+        "strategy_id": failed_run.strategy_id,
+        "trace_id": failed_run.trace_id,
+    }
+    assert payload["run_metadata"]["run_id"] == failed_run.run_id
+    assert payload["run_metadata"]["strategy_id"] == failed_run.strategy_id
+    assert payload["run_metadata"]["trace_id"] == failed_run.trace_id
+
+
+def test_resume_agent_run_api_rejects_completed_run() -> None:
+    completed_response = generate_mock_growth_strategy(
+        AdvertiserBrief.model_validate(_brief_payload())
+    )
+    completed_run = _run_detail_from_growth_response(completed_response)
+    _override_api_dependencies(
+        settings=Settings(run_persistence_backend="postgres"),
+        store=FakeIdempotencyStore(),
+        run_read_store=FakeRunReadStore(completed_run),
+    )
+    try:
+        response = TestClient(api_app).post(f"/runs/{completed_run.run_id}/resume")
+    finally:
+        api_app.dependency_overrides.clear()
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["error_code"] == "RUN_NOT_RESUMABLE"
+
+
+def test_resume_agent_run_api_rejects_run_without_stored_brief() -> None:
+    original_response = generate_mock_growth_strategy(
+        AdvertiserBrief.model_validate(_brief_payload())
+    )
+    failed_run = _run_detail_from_growth_response(
+        original_response,
+        status="failed",
+        metadata={"execution_id": original_response.run_metadata.run_id},
+    )
+    _override_api_dependencies(
+        settings=Settings(run_persistence_backend="postgres"),
+        store=FakeIdempotencyStore(),
+        run_read_store=FakeRunReadStore(failed_run),
+    )
+    try:
+        response = TestClient(api_app).post(f"/runs/{failed_run.run_id}/resume")
+    finally:
+        api_app.dependency_overrides.clear()
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["error_code"] == "RUN_BRIEF_NOT_AVAILABLE"
+
+
+def test_resume_agent_run_api_rejects_strategy_identity_mismatch() -> None:
+    original_response = generate_mock_growth_strategy(
+        AdvertiserBrief.model_validate(_brief_payload())
+    )
+    failed_run = _run_detail_from_growth_response(
+        original_response,
+        status="failed",
+        metadata={
+            "execution_id": original_response.run_metadata.run_id,
+            "advertiser_brief": {
+                **_brief_payload(),
+                "product_name": "Different Fitness App",
+            },
+        },
+    )
+    _override_api_dependencies(
+        settings=Settings(run_persistence_backend="postgres"),
+        store=FakeIdempotencyStore(),
+        run_read_store=FakeRunReadStore(failed_run),
+    )
+    try:
+        response = TestClient(api_app).post(f"/runs/{failed_run.run_id}/resume")
+    finally:
+        api_app.dependency_overrides.clear()
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["error_code"] == "RUN_BRIEF_MISMATCH"
+
+
 def test_retry_agent_run_api_retries_failed_run_as_new_execution(monkeypatch) -> None:
     original_response = generate_mock_growth_strategy(
         AdvertiserBrief.model_validate(_brief_payload())
@@ -497,10 +633,19 @@ def _run_detail_from_growth_response(
     growth_response,
     *,
     status: str = "completed",
+    metadata: dict[str, object] | None = None,
 ) -> AgentRunDetailResponse:
     created_at = datetime.now(UTC)
     final_strategy = growth_response.strategy if status == "completed" else None
     completed_at = created_at if status in {"completed", "failed"} else None
+    run_metadata = (
+        metadata
+        if metadata is not None
+        else {
+            "execution_id": growth_response.run_metadata.run_id,
+            "advertiser_brief": _brief_payload(),
+        }
+    )
     return AgentRunDetailResponse(
         run_id=growth_response.run_metadata.run_id,
         execution_id=growth_response.run_metadata.run_id,
@@ -512,7 +657,7 @@ def _run_detail_from_growth_response(
         node_path=growth_response.node_path,
         final_strategy=final_strategy,
         error_summary=[] if status == "completed" else ["original run failed"],
-        metadata={"execution_id": growth_response.run_metadata.run_id},
+        metadata=run_metadata,
         steps=[
             AgentRunStepRecord(
                 step_index=0,

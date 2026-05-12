@@ -22,13 +22,14 @@ def create_run_context(
     *,
     run_id: str | None = None,
     strategy_id: str | None = None,
+    trace_id: str | None = None,
     settings: Settings | None = None,
 ) -> RunContext:
     settings = settings or get_settings()
     return RunContext(
         run_id=run_id or f"run_{uuid4().hex[:16]}",
         strategy_id=strategy_id,
-        trace_id=f"trace_{uuid4().hex}",
+        trace_id=trace_id or f"trace_{uuid4().hex}",
         langsmith_project=settings.langsmith_project,
         tracing_enabled=settings.langsmith_tracing,
     )

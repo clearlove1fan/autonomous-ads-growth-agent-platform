@@ -198,7 +198,16 @@ curl -X POST http://localhost:8000/runs/run_failed_abc/retry \
   -d '{"brief":{"advertiser_id":"adv_fitness_001","product_name":"FitTrack Pro","product_category":"fitness app","objective":"registrations","budget":"2000.00","currency":"USD","duration_days":14,"target_market":"United States","primary_kpi":"trial registrations"}}'
 ```
 
-Retry is intentionally not resume in v0.1: the original failed run remains unchanged, and the retry creates a fresh `run_metadata.run_id` under the same stable strategy identity. Only failed runs are retryable, and the retry brief must match the original run's advertiser and objective.
+Retry is intentionally separate from resume: the original failed run remains unchanged, and the retry creates a fresh `run_metadata.run_id` under the same stable strategy identity. Only failed runs are retryable, and the retry brief must match the original run's advertiser and objective.
+
+Failed or running persisted runs can also be resumed under the same execution ID:
+
+```bash
+curl -X POST http://localhost:8000/runs/run_failed_abc/resume \
+  -H "X-Tenant-ID: tenant_demo"
+```
+
+Resume uses the original `advertiser_brief` stored in `agent_runs.metadata`, rejects completed runs, and returns the normal `GrowthStrategyResponse` with `Resumed-Run-ID` and `Resume-Mode` headers. If `GRAPH_CHECKPOINTER_BACKEND=postgres`, the same LangGraph checkpoint thread is reused; otherwise v0.1 resume is same-run replay with honest API semantics.
 
 Campaign draft persistence is separately opt-in. Set `CAMPAIGN_DRAFT_PERSISTENCE_BACKEND=postgres` to store the `create_campaign_draft` tool output in `campaign_drafts`:
 

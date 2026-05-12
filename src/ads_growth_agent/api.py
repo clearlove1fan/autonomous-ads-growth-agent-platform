@@ -2,17 +2,20 @@ import re
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from ads_growth_agent import __version__
 from ads_growth_agent.config import Settings, get_settings
 from ads_growth_agent.contracts import (
+    AdvertiserBrief,
     AgentRunDetailResponse,
     GrowthStrategyRequest,
     GrowthStrategyResponse,
 )
+from ads_growth_agent.graph import strategy_id_for_brief
 from ads_growth_agent.idempotency_store_factory import build_configured_idempotency_store
 from ads_growth_agent.logging_config import configure_logging
+from ads_growth_agent.observability import RunContext, create_run_context
 from ads_growth_agent.persistence.idempotency_store import (
     IdempotencyConflictError,
     IdempotencyStore,
@@ -139,6 +142,69 @@ def get_agent_run(
     return run
 
 
+@app.post("/runs/{run_id}/resume", response_model=GrowthStrategyResponse)
+def resume_agent_run(
+    run_id: str,
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    run_read_store: Annotated[
+        AgentRunReadStore,
+        Depends(get_runtime_run_read_store),
+    ],
+) -> GrowthStrategyResponse:
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    response.headers["Resumed-Run-ID"] = run_id
+    response.headers["Resume-Mode"] = (
+        "postgres-checkpoint"
+        if settings.graph_checkpointer_backend == "postgres"
+        else "same-run-replay"
+    )
+    original_run = run_read_store.get_run(run_id)
+    if original_run is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": "Run was not found for the effective tenant.",
+                "error_code": "RUN_NOT_FOUND",
+                "run_id": run_id,
+            },
+        )
+    if original_run.status == "completed":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Completed runs cannot be resumed.",
+                "error_code": "RUN_NOT_RESUMABLE",
+                "run_id": run_id,
+                "status": original_run.status,
+            },
+        )
+
+    brief = _brief_from_run_metadata(original_run)
+    if strategy_id_for_brief(brief) != original_run.strategy_id:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Stored run brief does not match the original strategy identity.",
+                "error_code": "RUN_BRIEF_MISMATCH",
+                "run_id": run_id,
+                "strategy_id": original_run.strategy_id,
+            },
+        )
+
+    run_context = create_run_context(
+        run_id=original_run.run_id,
+        strategy_id=original_run.strategy_id,
+        trace_id=original_run.trace_id,
+        settings=settings,
+    )
+    return _generate_growth_strategy_response(
+        GrowthStrategyRequest(brief=brief),
+        settings=settings,
+        run_context=run_context,
+    )
+
+
 @app.post("/runs/{run_id}/retry", response_model=GrowthStrategyResponse)
 def retry_agent_run(
     run_id: str,
@@ -250,9 +316,16 @@ def _generate_growth_strategy_response(
     request: GrowthStrategyRequest,
     *,
     settings: Settings,
+    run_context: RunContext | None = None,
 ) -> GrowthStrategyResponse:
     try:
-        return generate_growth_strategy(request.brief, settings=settings)
+        if run_context is None:
+            return generate_growth_strategy(request.brief, settings=settings)
+        return generate_growth_strategy(
+            request.brief,
+            settings=settings,
+            run_context=run_context,
+        )
     except StrategyGenerationError as exc:
         error = exc.tool_result.error
         raise HTTPException(
@@ -264,6 +337,30 @@ def _generate_growth_strategy_response(
                 "run_metadata": (
                     exc.run_metadata.model_dump(mode="json") if exc.run_metadata else None
                 ),
+            },
+        ) from exc
+
+
+def _brief_from_run_metadata(run: AgentRunDetailResponse) -> AdvertiserBrief:
+    brief_json = run.metadata.get("advertiser_brief")
+    if not isinstance(brief_json, dict):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Run does not contain a stored advertiser brief.",
+                "error_code": "RUN_BRIEF_NOT_AVAILABLE",
+                "run_id": run.run_id,
+            },
+        )
+    try:
+        return AdvertiserBrief.model_validate(brief_json)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Stored advertiser brief is no longer valid.",
+                "error_code": "RUN_BRIEF_NOT_AVAILABLE",
+                "run_id": run.run_id,
             },
         ) from exc
 

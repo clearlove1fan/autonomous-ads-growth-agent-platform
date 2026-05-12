@@ -57,7 +57,7 @@ def test_strategy_generation_persists_agent_run_and_steps(monkeypatch) -> None:
             run = connection.execute(
                 sa.text(
                     "SELECT run_id, strategy_id, advertiser_id, status, trace_id, node_path, "
-                    "final_strategy_json, error_summary, partition_bucket "
+                    "final_strategy_json, error_summary, metadata, partition_bucket "
                     "FROM agent_runs WHERE run_id = :run_id"
                 ),
                 {"run_id": response_again.run_metadata.run_id},
@@ -103,6 +103,8 @@ def test_strategy_generation_persists_agent_run_and_steps(monkeypatch) -> None:
         assert run["node_path"] == response_again.node_path
         assert run["final_strategy_json"]["strategy_id"] == response.strategy.strategy_id
         assert run["error_summary"] == []
+        assert run["metadata"]["advertiser_brief"]["advertiser_id"] == "adv_fitness_001"
+        assert run["metadata"]["advertiser_brief"]["objective"] == "registrations"
         assert 0 <= run["partition_bucket"] < 128
 
         assert [step["node_name"] for step in steps] == response.node_path
@@ -173,6 +175,39 @@ def test_strategy_generation_persists_agent_run_and_steps(monkeypatch) -> None:
             ).scalar_one()
 
         assert retry_run_status == "completed"
+
+        resume = client.post(f"/runs/{failed_context.run_id}/resume")
+        resume_payload = resume.json()
+
+        assert resume.status_code == 200
+        assert resume.headers["resumed-run-id"] == failed_context.run_id
+        assert resume.headers["resume-mode"] == "same-run-replay"
+        assert resume_payload["run_metadata"]["run_id"] == failed_context.run_id
+        assert resume_payload["run_metadata"]["strategy_id"] == response.strategy.strategy_id
+        assert resume_payload["run_metadata"]["trace_id"] == failed_context.trace_id
+
+        with engine.connect() as connection:
+            resumed_run = connection.execute(
+                sa.text(
+                    "SELECT status, final_strategy_json, error_summary, metadata "
+                    "FROM agent_runs WHERE run_id = :run_id"
+                ),
+                {"run_id": failed_context.run_id},
+            ).mappings().one()
+            resumed_steps = connection.execute(
+                sa.text(
+                    "SELECT node_name, status FROM agent_run_steps "
+                    "WHERE run_id = :run_id ORDER BY step_index ASC"
+                ),
+                {"run_id": failed_context.run_id},
+            ).mappings().all()
+
+        assert resumed_run["status"] == "completed"
+        assert resumed_run["final_strategy_json"]["strategy_id"] == response.strategy.strategy_id
+        assert resumed_run["error_summary"] == []
+        assert resumed_run["metadata"]["advertiser_brief"]["advertiser_id"] == "adv_fitness_001"
+        assert [step["node_name"] for step in resumed_steps] == resume_payload["node_path"]
+        assert {step["status"] for step in resumed_steps} == {"completed"}
     finally:
         api_app.dependency_overrides.clear()
         dispose_cached_run_store_engines()
