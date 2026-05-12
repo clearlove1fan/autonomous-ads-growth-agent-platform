@@ -7,11 +7,11 @@ This roadmap defines the order in which the Autonomous Ads Growth Agent Platform
 | Dimension | Current Estimate | Target Before Moving On | Status |
 |---|---:|---:|---|
 | Interview-quality technical project | 65-70% | 85-90% | In progress |
-| Engineering workflow and quality gates | 35-40% | 75%+ | Basic CI exists; incomplete |
+| Engineering workflow and quality gates | 65-70% | 75%+ | CI split and lock added; branch protection still external |
 | Production architecture skeleton | 50-55% | 75-80% | In progress |
 | True production-ready system | 15-20% | 60%+ for this repo | Early |
 
-These numbers are intentionally conservative. The project now has a credible agent-runtime and production-skeleton foundation, including persistence, tenant scoping, retry/resume, checkpointing, async strategy jobs, and event feedback. A basic GitHub Actions workflow exists, but dependency locking, branch protection, release gates, and explicit end-to-end CI smoke coverage are still incomplete. The project should still not claim production-grade availability, security, or distributed-system readiness yet.
+These numbers are intentionally conservative. The project now has a credible agent-runtime and production-skeleton foundation, including persistence, tenant scoping, retry/resume, checkpointing, async strategy jobs, event feedback, dependency locking, and explicit CI quality gates. Branch protection remains a GitHub repository setting, and the project should still not claim production-grade availability, security, or distributed-system readiness yet.
 
 ## Phase 1: Interview-Quality Technical Project
 
@@ -60,7 +60,7 @@ Remaining:
 - Add agent-eval cases for planner, retrieval grounding, critic, and revision behavior.
 - Add a resume/interview mapping section that ties project features to the TikTok JD.
 - Add negative demo cases that show safe failure rather than silent bad output.
-- Expand the existing CI plan so it includes deterministic E2E smoke coverage, dependency locking, and branch/release gates.
+- Configure GitHub branch protection so the implemented quality gates are enforced before merge.
 
 Exit criteria:
 
@@ -84,20 +84,17 @@ Completion standard:
 
 Current state:
 
-- `.github/workflows/ci.yml` runs package install, `ruff check .`, and `pytest` on pull requests and pushes to `main`.
-- There is no committed dependency lock file.
+- `.github/workflows/ci.yml` now separates lint, unit, deterministic E2E smoke, Postgres integration, and release-readiness jobs.
+- `requirements-lock.txt` is committed for reproducible v0.1 CI and demo installs.
 - Branch protection and required PR approval are not verified.
-- Tests exist across unit and integration areas, but a distinct seeded API/CLI end-to-end CI smoke gate is not yet defined.
-- Release tagging and changelog discipline are not yet planned as executable steps.
+- Deterministic product smoke coverage exists for direct API, async job, and CLI boundaries.
+- Release tagging and changelog expectations are documented, with `CHANGELOG.md` started.
 
 Planned work:
 
 - Add a DevOps and quality gates ExecPlan under `.agent/plans/`.
-- Generate and commit a reproducible dependency lock file for CI/demo installs.
-- Expand CI into explicit lint, unit, deterministic E2E smoke, and integration/release jobs.
-- Add a seeded API or CLI E2E smoke test that validates final strategy schema, run metadata, budget consistency, retrieval/source behavior where available, and draft-only safety.
-- Document branch strategy, PR review expectations, required checks, and release tagging in the RFC and README.
 - Configure GitHub branch protection for `main` once repository settings are available.
+- Keep dependency lock refreshes deliberate and tied to full verification.
 
 Exit criteria:
 

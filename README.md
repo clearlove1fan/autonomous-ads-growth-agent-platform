@@ -53,6 +53,14 @@ source .venv/bin/activate
 python -m pip install -e ".[dev]"
 ```
 
+For reproducible CI-style installs, use the committed lock file and then install
+the local package without resolving dependencies again:
+
+```bash
+python -m pip install -r requirements-lock.txt
+python -m pip install -e . --no-deps --no-build-isolation
+```
+
 Run the local API:
 
 ```bash
@@ -72,6 +80,12 @@ Run tests:
 
 ```bash
 pytest
+```
+
+Run the deterministic product smoke tests:
+
+```bash
+pytest -m e2e
 ```
 
 Run live PostgreSQL integration tests:
@@ -342,3 +356,14 @@ docker compose down -v
 - Tool execution goes through typed internal registries, not raw model authority.
 - Recommendations must be grounded in retrieved sources, tool outputs, or explicit assumptions.
 - v0.1 creates drafts and recommendations only; it does not launch live campaigns or change spend.
+
+## Quality Gates
+
+GitHub Actions runs separate checks for lint, unit tests, deterministic product
+smoke tests, live PostgreSQL integration tests, and release-readiness checks.
+The Postgres job uses `pgvector/pgvector:pg16` and runs with
+`RUN_POSTGRES_INTEGRATION=1`.
+
+Branch, PR, release, and changelog expectations are documented in
+[CONTRIBUTING.md](./CONTRIBUTING.md). Meaningful release notes live in
+[CHANGELOG.md](./CHANGELOG.md).

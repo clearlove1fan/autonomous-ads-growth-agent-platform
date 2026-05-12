@@ -45,6 +45,7 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
+  "e2e: deterministic product boundary smoke tests",
   "integration: tests that require external services such as PostgreSQL"
 ]
 

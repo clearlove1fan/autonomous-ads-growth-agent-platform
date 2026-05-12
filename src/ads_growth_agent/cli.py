@@ -14,7 +14,10 @@ from ads_growth_agent.logging_config import configure_logging
 from ads_growth_agent.persistence.knowledge_seed import seed_default_knowledge
 from ads_growth_agent.strategy import StrategyGenerationError, generate_growth_strategy
 
-app = typer.Typer(help="Autonomous Ads Growth Agent Platform CLI.")
+app = typer.Typer(
+    help="Autonomous Ads Growth Agent Platform CLI.",
+    no_args_is_help=True,
+)
 BRIEF_FILE_ARGUMENT = typer.Argument(
     ...,
     exists=True,
@@ -114,7 +117,7 @@ def _safe_database_url(database_url: str) -> str:
     return make_url(database_url).render_as_string(hide_password=True)
 
 
-@app.callback()
+@app.callback(invoke_without_command=True)
 def main(version: bool = typer.Option(False, "--version", help="Show version and exit.")) -> None:
     configure_logging()
     if version:

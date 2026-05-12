@@ -516,12 +516,12 @@ These decisions close a gap in the original RFC: v0.1 had a technical test plan,
 
 | Component | Decision | Rationale | Status |
 |---|---|---|---|
-| VCS | GitHub with a stable `main` branch | Primary collaboration surface and natural host for PR checks | Partially implemented |
-| CI tool | GitHub Actions | Native GitHub integration and simple enough for v0.1 | Basic workflow exists |
-| Required PR checks | `ruff`, unit tests, deterministic end-to-end smoke test, and selected integration tests | Prevent broken or unvalidated changes from merging | Partially implemented; E2E gate pending |
-| Dependency lock | Commit `requirements-lock.txt` generated from project dependencies | Keeps v0.1 reproducible without forcing a packaging migration to Poetry | Not implemented |
-| Branch strategy | `main` for stable work, `feature/*` or `codex/*` for implementation branches | Keeps reviewable changes isolated from the stable demo branch | Planned |
-| PR reviews | Require one approval before merge | Adds a lightweight human quality gate | Planned |
+| VCS | GitHub with a stable `main` branch | Primary collaboration surface and natural host for PR checks | Documented |
+| CI tool | GitHub Actions | Native GitHub integration and simple enough for v0.1 | Implemented |
+| Required PR checks | `ruff`, unit tests, deterministic end-to-end smoke test, and selected integration tests | Prevent broken or unvalidated changes from merging | Implemented in workflow; branch protection setting still external |
+| Dependency lock | Commit `requirements-lock.txt` generated from project dependencies | Keeps v0.1 reproducible without forcing a packaging migration to Poetry | Implemented |
+| Branch strategy | `main` for stable work, `feature/*` or `codex/*` for implementation branches | Keeps reviewable changes isolated from the stable demo branch | Documented |
+| PR reviews | Require one approval before merge | Adds a lightweight human quality gate | Documented; repository setting pending |
 | Secrets | GitHub encrypted secrets for external service credentials | Prevents API keys or provider tokens from entering the repository | Planned |
 | Deployment | No automatic production deployment in v0.1 | The project is still draft-only and local-stack oriented; production deploy should wait for auth, rate limits, and stronger safety gates | Planned |
 | Dependency updates | Manual monthly review in v0.1; Dependabot or Renovate in v0.2+ | Reduces surprise breakage while the architecture is still changing | Planned |
@@ -650,13 +650,15 @@ These decisions close a gap in the original RFC: v0.1 had a technical test plan,
 
 ### 14.3 Automated Test Execution Plan
 
-This plan is not fully implemented yet. It defines the minimum automation required before v0.1 launch readiness can be claimed.
+This plan is implemented in the repository workflow except for GitHub branch
+protection, which must be configured as a repository setting.
 
 | Trigger | Required Checks | Blocking? | Notes |
 |---|---|---|---|
 | Pull request | `ruff`, unit tests, deterministic end-to-end smoke test | Yes, once branch protection is configured | Must run without external model keys |
 | Push to `main` | Same as PR checks plus migration/schema smoke where practical | Yes | Protects the stable branch |
-| Manual integration run | Docker Postgres integration tests and readiness health checks | Required for release sign-off | May be too slow for every PR until optimized |
+| Pull request | PostgreSQL integration tests against `pgvector/pgvector:pg16` | Yes, once branch protection is configured | Exercises migrations, stores, checkpointing, readiness, and tenant-scoped persistence |
+| Manual integration run | Docker Postgres integration tests and readiness health checks | Optional release cross-check | Useful when debugging local Docker behavior |
 | Release tag | Full test suite, lock-file freshness check, end-to-end demo smoke, release notes check | Yes | Required before publishing a demo or release milestone |
 
 ## 15. Risks and Mitigations
@@ -677,10 +679,10 @@ This plan is not fully implemented yet. It defines the minimum automation requir
 | In-process background jobs can be lost on process crash | Accepted local v0.1 limitation; not production durable | Persist job state and replace executor with an external queue/worker before production launch |
 | Partition-aware schema is mistaken for implemented partitioning | Overstated scalability claims | Document native partitioning and replica routing as future production hardening work |
 | Event feedback recommendations are mistaken for autonomous execution | Unapproved spend or targeting changes | Keep v0.1 recommendations draft-only and require human approval for execute-category tools |
-| CI exists but is too generic | Regressions can merge even when the local test plan is broader than the automated gate | Expand GitHub Actions into explicit lint, unit, E2E smoke, and integration/release jobs |
-| Unlocked dependencies introduce non-reproducible installs | New dependency releases can break demos or CI unexpectedly | Commit a generated lock file and refresh it deliberately with test verification |
+| CI exists but is too generic | Regressions can merge even when the local test plan is broader than the automated gate | Mitigated with explicit lint, unit, E2E smoke, integration, and release-readiness jobs |
+| Unlocked dependencies introduce non-reproducible installs | New dependency releases can break demos or CI unexpectedly | Mitigated with `requirements-lock.txt`; refresh deliberately with test verification |
 | Unprotected branch workflow allows unreviewed changes | Stable demo branch can drift or break without visibility | Protect `main`, require PR review, and document branch strategy |
-| Lack of true end-to-end tests hides integration failures | Mock-heavy tests can pass while the product workflow is broken | Add a seeded API/CLI E2E smoke test that validates a real full workflow boundary |
+| Lack of true end-to-end tests hides integration failures | Mock-heavy tests can pass while the product workflow is broken | Mitigated with deterministic API, async job, and CLI smoke tests |
 
 ## 16. Launch Readiness Checklist
 

@@ -5,6 +5,7 @@ from decimal import Decimal
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
+from ads_growth_agent import __version__
 from ads_growth_agent import api as api_module
 from ads_growth_agent.api import app as api_app
 from ads_growth_agent.api import (
@@ -506,6 +507,13 @@ def test_plan_cli_accepts_brief_file(tmp_path) -> None:
     assert payload["strategy"]["advertiser_id"] == "adv_fitness_001"
     assert payload["strategy"]["actions"]
     assert payload["run_metadata"]["tool_count"] == 5
+
+
+def test_cli_version_option_works_without_subcommand() -> None:
+    result = CliRunner().invoke(cli_app, ["--version"])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == __version__
 
 
 def test_seed_knowledge_cli_uses_configured_database_and_tenant(monkeypatch) -> None:
