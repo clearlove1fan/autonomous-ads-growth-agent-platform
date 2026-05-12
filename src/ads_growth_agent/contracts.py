@@ -1,3 +1,4 @@
+from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import Any, Literal
@@ -273,6 +274,38 @@ class FinalGrowthStrategy(BaseModel):
     success_metrics: list[SuccessMetric] = Field(min_length=1)
     critique: CritiqueReport
     sources: list[SourceCitation] = Field(default_factory=list)
+
+
+class AgentRunStepRecord(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    step_index: int = Field(ge=0)
+    node_name: str = Field(min_length=1, max_length=120)
+    status: Literal["started", "completed", "failed"]
+    input_json: dict[str, Any] = Field(default_factory=dict)
+    output_json: dict[str, Any] = Field(default_factory=dict)
+    error_json: dict[str, Any] | None = None
+    latency_ms: int = Field(ge=0)
+    created_at: datetime
+
+
+class AgentRunDetailResponse(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    run_id: str = Field(min_length=1, max_length=128)
+    execution_id: str = Field(min_length=1, max_length=128)
+    strategy_id: str = Field(min_length=1, max_length=128)
+    advertiser_id: str = Field(min_length=1, max_length=128)
+    objective: CampaignObjective
+    status: Literal["running", "completed", "failed"]
+    trace_id: str = Field(min_length=1, max_length=128)
+    node_path: list[str] = Field(default_factory=list)
+    final_strategy: FinalGrowthStrategy | None = None
+    error_summary: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    steps: list[AgentRunStepRecord] = Field(default_factory=list)
+    created_at: datetime
+    completed_at: datetime | None = None
 
 
 class GrowthStrategyRequest(BaseModel):

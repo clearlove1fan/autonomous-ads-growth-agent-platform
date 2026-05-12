@@ -4,6 +4,11 @@ import sqlalchemy as sa
 from sqlalchemy.engine import Engine
 
 from ads_growth_agent.config import Settings
+from ads_growth_agent.persistence.run_read_store import (
+    AgentRunReadStore,
+    NoopAgentRunReadStore,
+    PostgresAgentRunReadStore,
+)
 from ads_growth_agent.persistence.run_store import (
     AgentRunStore,
     NoopAgentRunStore,
@@ -19,6 +24,17 @@ def build_configured_run_store(settings: Settings) -> AgentRunStore:
         return NoopAgentRunStore()
     if settings.run_persistence_backend == "postgres":
         return PostgresAgentRunStore(
+            _engine_for_url(settings.database_url),
+            tenant_id=settings.tenant_id,
+        )
+    raise ValueError(f"Unsupported run persistence backend: {settings.run_persistence_backend}")
+
+
+def build_configured_run_read_store(settings: Settings) -> AgentRunReadStore:
+    if settings.run_persistence_backend == "none":
+        return NoopAgentRunReadStore()
+    if settings.run_persistence_backend == "postgres":
+        return PostgresAgentRunReadStore(
             _engine_for_url(settings.database_url),
             tenant_id=settings.tenant_id,
         )

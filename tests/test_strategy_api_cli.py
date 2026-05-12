@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from fastapi.testclient import TestClient
@@ -6,10 +7,19 @@ from typer.testing import CliRunner
 
 from ads_growth_agent import api as api_module
 from ads_growth_agent.api import app as api_app
-from ads_growth_agent.api import get_runtime_idempotency_store, get_runtime_settings
+from ads_growth_agent.api import (
+    get_runtime_idempotency_store,
+    get_runtime_run_read_store,
+    get_runtime_settings,
+)
 from ads_growth_agent.cli import app as cli_app
 from ads_growth_agent.config import Settings
-from ads_growth_agent.contracts import AdvertiserBrief, GrowthStrategyRequest
+from ads_growth_agent.contracts import (
+    AdvertiserBrief,
+    AgentRunDetailResponse,
+    AgentRunStepRecord,
+    GrowthStrategyRequest,
+)
 from ads_growth_agent.persistence.idempotency_store import (
     IdempotencyConflictError,
     IdempotencyStart,
@@ -198,6 +208,63 @@ def test_growth_strategy_api_idempotency_rejects_conflicting_key() -> None:
     assert store.completed == []
 
 
+def test_get_agent_run_api_returns_tenant_scoped_detail(monkeypatch) -> None:
+    growth_response = generate_mock_growth_strategy(
+        AdvertiserBrief.model_validate(_brief_payload())
+    )
+    run_detail = _run_detail_from_growth_response(growth_response)
+    store = FakeRunReadStore(run_detail)
+    captured: dict[str, str] = {}
+
+    def fake_build_configured_run_read_store(settings: Settings) -> FakeRunReadStore:
+        captured["tenant_id"] = settings.tenant_id
+        return store
+
+    monkeypatch.setattr(
+        api_module,
+        "build_configured_run_read_store",
+        fake_build_configured_run_read_store,
+    )
+    api_app.dependency_overrides[get_runtime_settings] = lambda: Settings(
+        run_persistence_backend="postgres",
+        tenant_id="process_default",
+    )
+    try:
+        response = TestClient(api_app).get(
+            f"/runs/{run_detail.run_id}",
+            headers={"X-Tenant-ID": "tenant_api"},
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert response.headers["x-tenant-id"] == "tenant_api"
+    assert captured == {"tenant_id": "tenant_api"}
+    assert store.requested_run_ids == [run_detail.run_id]
+    assert payload["run_id"] == run_detail.run_id
+    assert payload["execution_id"] == run_detail.run_id
+    assert payload["strategy_id"] == growth_response.strategy.strategy_id
+    assert payload["status"] == "completed"
+    assert payload["final_strategy"]["strategy_id"] == growth_response.strategy.strategy_id
+    assert payload["steps"][0]["node_name"] == "planner"
+
+
+def test_get_agent_run_api_returns_404_when_run_is_missing() -> None:
+    _override_api_dependencies(
+        settings=Settings(run_persistence_backend="none"),
+        store=FakeIdempotencyStore(),
+        run_read_store=FakeRunReadStore(None),
+    )
+    try:
+        response = TestClient(api_app).get("/runs/missing_run")
+    finally:
+        api_app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["error_code"] == "RUN_NOT_FOUND"
+
+
 def test_plan_cli_accepts_brief_file(tmp_path) -> None:
     brief_file = tmp_path / "brief.json"
     brief_file.write_text(json.dumps(_brief_payload()))
@@ -250,9 +317,16 @@ def test_seed_knowledge_cli_uses_configured_database_and_tenant(monkeypatch) -> 
     assert calls["disposed"] is True
 
 
-def _override_api_dependencies(*, settings: Settings, store: object) -> None:
+def _override_api_dependencies(
+    *,
+    settings: Settings,
+    store: object,
+    run_read_store: object | None = None,
+) -> None:
     api_app.dependency_overrides[get_runtime_settings] = lambda: settings
     api_app.dependency_overrides[get_runtime_idempotency_store] = lambda: store
+    if run_read_store is not None:
+        api_app.dependency_overrides[get_runtime_run_read_store] = lambda: run_read_store
 
 
 class FakeIdempotencyStore:
@@ -311,6 +385,48 @@ class FakeIdempotencyStore:
                 "ttl_seconds": ttl_seconds,
             }
         )
+
+
+class FakeRunReadStore:
+    def __init__(self, run_detail: AgentRunDetailResponse | None) -> None:
+        self._run_detail = run_detail
+        self.requested_run_ids: list[str] = []
+
+    def get_run(self, run_id: str) -> AgentRunDetailResponse | None:
+        self.requested_run_ids.append(run_id)
+        if self._run_detail is None or self._run_detail.run_id != run_id:
+            return None
+        return self._run_detail
+
+
+def _run_detail_from_growth_response(growth_response) -> AgentRunDetailResponse:
+    created_at = datetime.now(UTC)
+    return AgentRunDetailResponse(
+        run_id=growth_response.run_metadata.run_id,
+        execution_id=growth_response.run_metadata.run_id,
+        strategy_id=growth_response.strategy.strategy_id,
+        advertiser_id=growth_response.strategy.advertiser_id,
+        objective=growth_response.strategy.objective,
+        status="completed",
+        trace_id=growth_response.run_metadata.trace_id,
+        node_path=growth_response.node_path,
+        final_strategy=growth_response.strategy,
+        error_summary=[],
+        metadata={"execution_id": growth_response.run_metadata.run_id},
+        steps=[
+            AgentRunStepRecord(
+                step_index=0,
+                node_name="planner",
+                status="completed",
+                input_json={"run_id": growth_response.run_metadata.run_id},
+                output_json={"node_name": "planner"},
+                latency_ms=0,
+                created_at=created_at,
+            )
+        ],
+        created_at=created_at,
+        completed_at=created_at,
+    )
 
 
 def _brief_payload() -> dict[str, object]:

@@ -6,7 +6,11 @@ from pydantic import BaseModel
 
 from ads_growth_agent import __version__
 from ads_growth_agent.config import Settings, get_settings
-from ads_growth_agent.contracts import GrowthStrategyRequest, GrowthStrategyResponse
+from ads_growth_agent.contracts import (
+    AgentRunDetailResponse,
+    GrowthStrategyRequest,
+    GrowthStrategyResponse,
+)
 from ads_growth_agent.idempotency_store_factory import build_configured_idempotency_store
 from ads_growth_agent.logging_config import configure_logging
 from ads_growth_agent.persistence.idempotency_store import (
@@ -14,6 +18,8 @@ from ads_growth_agent.persistence.idempotency_store import (
     IdempotencyStore,
     hash_growth_strategy_request,
 )
+from ads_growth_agent.persistence.run_read_store import AgentRunReadStore
+from ads_growth_agent.run_store_factory import build_configured_run_read_store
 from ads_growth_agent.strategy import StrategyGenerationError, generate_growth_strategy
 
 
@@ -67,6 +73,12 @@ def get_runtime_idempotency_store(
     return build_configured_idempotency_store(settings)
 
 
+def get_runtime_run_read_store(
+    settings: Annotated[Settings, Depends(get_request_settings)],
+) -> AgentRunReadStore:
+    return build_configured_run_read_store(settings)
+
+
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     settings = get_runtime_settings()
@@ -101,6 +113,30 @@ def create_growth_strategy(
         )
 
     return _generate_growth_strategy_response(request, settings=settings)
+
+
+@app.get("/runs/{run_id}", response_model=AgentRunDetailResponse)
+def get_agent_run(
+    run_id: str,
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    run_read_store: Annotated[
+        AgentRunReadStore,
+        Depends(get_runtime_run_read_store),
+    ],
+) -> AgentRunDetailResponse:
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    run = run_read_store.get_run(run_id)
+    if run is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": "Run was not found for the effective tenant.",
+                "error_code": "RUN_NOT_FOUND",
+                "run_id": run_id,
+            },
+        )
+    return run
 
 
 def _create_growth_strategy_with_idempotency(

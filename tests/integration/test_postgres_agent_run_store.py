@@ -5,8 +5,11 @@ import pytest
 import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
+from fastapi.testclient import TestClient
 from sqlalchemy.engine import URL, make_url
 
+from ads_growth_agent.api import app as api_app
+from ads_growth_agent.api import get_runtime_settings
 from ads_growth_agent.config import Settings
 from ads_growth_agent.contracts import AdvertiserBrief, CampaignObjective
 from ads_growth_agent.observability import build_run_metadata, create_run_context
@@ -109,7 +112,28 @@ def test_strategy_generation_persists_agent_run_and_steps(monkeypatch) -> None:
         assert steps[0]["input_json"]["execution_id"] == response_again.run_metadata.run_id
         assert steps[0]["input_json"]["strategy_id"] == response.strategy.strategy_id
         assert steps[-1]["output_json"]["strategy_id"] == response.strategy.strategy_id
+
+        api_app.dependency_overrides[get_runtime_settings] = lambda: settings
+        client = TestClient(api_app)
+        detail = client.get(f"/runs/{response_again.run_metadata.run_id}")
+        missing_from_other_tenant = client.get(
+            f"/runs/{response_again.run_metadata.run_id}",
+            headers={"X-Tenant-ID": "tenant_other"},
+        )
+
+        assert detail.status_code == 200
+        assert detail.headers["x-tenant-id"] == "default"
+        detail_payload = detail.json()
+        assert detail_payload["run_id"] == response_again.run_metadata.run_id
+        assert detail_payload["execution_id"] == response_again.run_metadata.run_id
+        assert detail_payload["strategy_id"] == response.strategy.strategy_id
+        assert detail_payload["status"] == "completed"
+        assert detail_payload["final_strategy"]["strategy_id"] == response.strategy.strategy_id
+        assert [step["node_name"] for step in detail_payload["steps"]] == response.node_path
+        assert missing_from_other_tenant.status_code == 404
+        assert missing_from_other_tenant.json()["detail"]["error_code"] == "RUN_NOT_FOUND"
     finally:
+        api_app.dependency_overrides.clear()
         dispose_cached_run_store_engines()
         engine.dispose()
         _drop_temporary_database(test_url)

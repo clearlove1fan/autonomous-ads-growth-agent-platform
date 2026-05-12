@@ -10,8 +10,13 @@ from ads_growth_agent.contracts import (
 )
 from ads_growth_agent.graph import StrategyGenerationError
 from ads_growth_agent.observability import build_run_metadata
+from ads_growth_agent.persistence.run_read_store import (
+    NoopAgentRunReadStore,
+    PostgresAgentRunReadStore,
+)
 from ads_growth_agent.persistence.run_store import NoopAgentRunStore, PostgresAgentRunStore
 from ads_growth_agent.run_store_factory import (
+    build_configured_run_read_store,
     build_configured_run_store,
     dispose_cached_run_store_engines,
 )
@@ -19,8 +24,10 @@ from ads_growth_agent.run_store_factory import (
 
 def test_run_store_factory_defaults_to_noop_store() -> None:
     store = build_configured_run_store(Settings(run_persistence_backend="none"))
+    read_store = build_configured_run_read_store(Settings(run_persistence_backend="none"))
 
     assert isinstance(store, NoopAgentRunStore)
+    assert isinstance(read_store, NoopAgentRunReadStore)
 
 
 def test_run_store_factory_builds_cached_postgres_store(monkeypatch) -> None:
@@ -47,9 +54,11 @@ def test_run_store_factory_builds_cached_postgres_store(monkeypatch) -> None:
     )
     first = build_configured_run_store(settings)
     second = build_configured_run_store(settings)
+    read_store = build_configured_run_read_store(settings)
 
     assert isinstance(first, PostgresAgentRunStore)
     assert isinstance(second, PostgresAgentRunStore)
+    assert isinstance(read_store, PostgresAgentRunReadStore)
     assert created == [
         (
             "postgresql+psycopg://ads_growth:ads_growth@localhost:5432/ads_growth",

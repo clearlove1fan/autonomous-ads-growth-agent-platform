@@ -180,6 +180,15 @@ RUN_PERSISTENCE_BACKEND=postgres ads-growth-agent plan examples/fitness_app_brie
 
 When run persistence is enabled, each execution is first recorded as `running` before LangGraph starts. The same row is then updated to `completed` or `failed`, with node-level rows written to `agent_run_steps` once terminal state is reached. This lifecycle is the foundation for later resume and retry endpoints.
 
+Persisted runs can be queried through the API:
+
+```bash
+curl http://localhost:8000/runs/run_abc123 \
+  -H "X-Tenant-ID: tenant_demo"
+```
+
+The response includes lifecycle status, `strategy_id`, `execution_id`, trace metadata, the final strategy when completed, error summaries when failed, and ordered node step records.
+
 Campaign draft persistence is separately opt-in. Set `CAMPAIGN_DRAFT_PERSISTENCE_BACKEND=postgres` to store the `create_campaign_draft` tool output in `campaign_drafts`:
 
 ```bash
