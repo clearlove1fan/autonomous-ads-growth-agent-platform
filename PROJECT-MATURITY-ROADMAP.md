@@ -7,10 +7,11 @@ This roadmap defines the order in which the Autonomous Ads Growth Agent Platform
 | Dimension | Current Estimate | Target Before Moving On | Status |
 |---|---:|---:|---|
 | Interview-quality technical project | 65-70% | 85-90% | In progress |
+| Engineering workflow and quality gates | 35-40% | 75%+ | Basic CI exists; incomplete |
 | Production architecture skeleton | 50-55% | 75-80% | In progress |
 | True production-ready system | 15-20% | 60%+ for this repo | Early |
 
-These numbers are intentionally conservative. The project now has a credible agent-runtime and production-skeleton foundation, including persistence, tenant scoping, retry/resume, checkpointing, and event feedback. It should still not claim production-grade availability, security, or distributed-system readiness yet.
+These numbers are intentionally conservative. The project now has a credible agent-runtime and production-skeleton foundation, including persistence, tenant scoping, retry/resume, checkpointing, async strategy jobs, and event feedback. A basic GitHub Actions workflow exists, but dependency locking, branch protection, release gates, and explicit end-to-end CI smoke coverage are still incomplete. The project should still not claim production-grade availability, security, or distributed-system readiness yet.
 
 ## Phase 1: Interview-Quality Technical Project
 
@@ -24,6 +25,7 @@ Completion standard:
 - The workflow is explainable from input brief to final strategy.
 - The README, HLD, ADRs, and demo commands are interview-ready.
 - Tests cover the major workflow contracts and failure paths.
+- Basic engineering quality gates are documented honestly, including what is implemented and what is still missing.
 
 Completed:
 
@@ -58,6 +60,7 @@ Remaining:
 - Add agent-eval cases for planner, retrieval grounding, critic, and revision behavior.
 - Add a resume/interview mapping section that ties project features to the TikTok JD.
 - Add negative demo cases that show safe failure rather than silent bad output.
+- Expand the existing CI plan so it includes deterministic E2E smoke coverage, dependency locking, and branch/release gates.
 
 Exit criteria:
 
@@ -65,6 +68,7 @@ Exit criteria:
 - A reviewer can run a deterministic demo without external model keys.
 - A reviewer can optionally enable LLM planner/critic through LiteLLM.
 - The project clearly shows agent-platform engineering rather than a prompt demo.
+- A reviewer can see which checks run automatically and which launch gates are still pending.
 
 ## Phase 2: Production Architecture Skeleton
 

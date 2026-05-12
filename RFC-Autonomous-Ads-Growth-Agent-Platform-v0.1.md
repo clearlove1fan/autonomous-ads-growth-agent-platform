@@ -792,6 +792,36 @@ The first version should prioritize a complete, traceable, and recoverable end-t
 | Rationale | Replaying the same event preserves stable audit output, while returning `409` for changed payloads prevents event identity reuse from hiding data conflicts |
 | Consequences | The first version stores the event hash in metadata; high-volume production deployments may promote it to an indexed column |
 
+### ADR-008: GitHub Actions Quality Gates
+
+| Field | Value |
+|---|---|
+| Status | Accepted for v0.1 plan; implementation partially complete |
+| Decision | Use GitHub Actions for PR and `main` branch quality gates |
+| Context | The original RFC listed test areas but did not define automated execution or merge-blocking checks |
+| Rationale | GitHub Actions is the simplest CI path for a GitHub-hosted project and can run deterministic checks without external model keys |
+| Consequences | The existing workflow must be expanded with explicit E2E smoke and release/integration gates before launch readiness is claimed |
+
+### ADR-009: Reproducible Dependency Locking
+
+| Field | Value |
+|---|---|
+| Status | Accepted for v0.1 plan; implementation pending |
+| Decision | Commit a generated `requirements-lock.txt` for CI and demo installs while keeping `pyproject.toml` as the package metadata source |
+| Context | The current dependency ranges use lower bounds such as `>=`, which is appropriate for package metadata but unsafe as the only install contract |
+| Rationale | A lock file pins transitive versions for reproducible local demos and CI without forcing an immediate migration to Poetry |
+| Consequences | Dependency update work must refresh the lock file and rerun the relevant test gates |
+
+### ADR-010: Protected Main and PR Review Workflow
+
+| Field | Value |
+|---|---|
+| Status | Accepted for v0.1 plan; implementation pending |
+| Decision | Use a stable protected `main` branch, implementation branches, and at least one required PR approval once collaboration begins |
+| Context | RACI defines ownership, but the original RFC did not define the code collaboration workflow |
+| Rationale | Branch protection and PR review provide a lightweight quality gate appropriate for a small project |
+| Consequences | Launch readiness now depends on repository settings as well as code and test status |
+
 ## 20. Decision Log
 
 | Date | Decision | Rationale | Status |
@@ -808,3 +838,6 @@ The first version should prioritize a complete, traceable, and recoverable end-t
 | 2026-05-12 | Separate retry from resume | Retry creates a new execution for auditability; resume preserves the original run identity and checkpoint thread when available | Accepted |
 | 2026-05-12 | Add performance event idempotency | Duplicate campaign telemetry should replay stored analysis and conflicting telemetry should be rejected | Accepted |
 | 2026-05-12 | Select first demo vertical | Fitness app selected because the existing sample brief, budget math, and conversion KPIs are concrete and easy to evaluate | Accepted |
+| 2026-05-12 | Add DevOps and engineering quality gates to the v0.1 plan | CI/CD, branch strategy, dependency locking, and true E2E automation were not explicit enough in the original RFC and should be launch blockers | Accepted |
+| 2026-05-12 | Select GitHub Actions for v0.1 CI | Native GitHub integration is sufficient for lint, unit, integration, and deterministic E2E checks | Accepted |
+| 2026-05-12 | Select committed dependency lock for v0.1 reproducibility | Lower-bound dependency ranges alone do not protect local demos or CI from upstream breakage | Accepted |
