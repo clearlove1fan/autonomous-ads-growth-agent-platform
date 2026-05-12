@@ -11,7 +11,7 @@ from sqlalchemy.engine import URL, make_url
 from ads_growth_agent.api import app as api_app
 from ads_growth_agent.api import get_runtime_settings
 from ads_growth_agent.config import Settings
-from ads_growth_agent.contracts import AdvertiserBrief, CampaignObjective
+from ads_growth_agent.contracts import AdvertiserBrief, CampaignObjective, ToolError, ToolResult
 from ads_growth_agent.observability import build_run_metadata, create_run_context
 from ads_growth_agent.persistence.run_store import PostgresAgentRunStore
 from ads_growth_agent.run_store_factory import dispose_cached_run_store_engines
@@ -132,6 +132,47 @@ def test_strategy_generation_persists_agent_run_and_steps(monkeypatch) -> None:
         assert [step["node_name"] for step in detail_payload["steps"]] == response.node_path
         assert missing_from_other_tenant.status_code == 404
         assert missing_from_other_tenant.json()["detail"]["error_code"] == "RUN_NOT_FOUND"
+
+        failure_result = ToolResult(
+            tool_name="llm_planner",
+            success=False,
+            payload={},
+            error=ToolError(code="PLANNER_FAILED", message="planner failed", retryable=False),
+            latency_ms=0,
+        )
+        failed_context = create_run_context(
+            strategy_id=response.strategy.strategy_id,
+            settings=settings,
+        )
+        PostgresAgentRunStore(engine, tenant_id="default").record_failed(
+            _fitness_brief(),
+            build_run_metadata(
+                failed_context,
+                node_path=["planner"],
+                tool_results=[failure_result],
+                error_summary=["planner failed"],
+            ),
+            tool_results=[failure_result],
+            error_message="planner failed",
+        )
+        retry = client.post(
+            f"/runs/{failed_context.run_id}/retry",
+            json={"brief": _brief_payload()},
+        )
+        retry_payload = retry.json()
+
+        assert retry.status_code == 200
+        assert retry.headers["retried-run-id"] == failed_context.run_id
+        assert retry_payload["run_metadata"]["run_id"] != failed_context.run_id
+        assert retry_payload["run_metadata"]["strategy_id"] == response.strategy.strategy_id
+
+        with engine.connect() as connection:
+            retry_run_status = connection.execute(
+                sa.text("SELECT status FROM agent_runs WHERE run_id = :run_id"),
+                {"run_id": retry_payload["run_metadata"]["run_id"]},
+            ).scalar_one()
+
+        assert retry_run_status == "completed"
     finally:
         api_app.dependency_overrides.clear()
         dispose_cached_run_store_engines()
@@ -154,6 +195,23 @@ def _fitness_brief() -> AdvertiserBrief:
         constraints=["Avoid unrealistic body transformation claims"],
         known_audiences=["Home workout beginners"],
     )
+
+
+def _brief_payload() -> dict[str, object]:
+    return {
+        "advertiser_id": "adv_fitness_001",
+        "product_name": "FitTrack Pro",
+        "product_category": "fitness app",
+        "objective": "registrations",
+        "budget": "2000.00",
+        "currency": "USD",
+        "duration_days": 14,
+        "target_market": "United States",
+        "primary_kpi": "trial registrations",
+        "brand_voice": "motivational and practical",
+        "constraints": ["Avoid unrealistic body transformation claims"],
+        "known_audiences": ["Home workout beginners"],
+    }
 
 
 def _integration_database_url() -> URL:

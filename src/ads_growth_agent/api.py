@@ -139,6 +139,57 @@ def get_agent_run(
     return run
 
 
+@app.post("/runs/{run_id}/retry", response_model=GrowthStrategyResponse)
+def retry_agent_run(
+    run_id: str,
+    request: GrowthStrategyRequest,
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    run_read_store: Annotated[
+        AgentRunReadStore,
+        Depends(get_runtime_run_read_store),
+    ],
+) -> GrowthStrategyResponse:
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    response.headers["Retried-Run-ID"] = run_id
+    original_run = run_read_store.get_run(run_id)
+    if original_run is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": "Run was not found for the effective tenant.",
+                "error_code": "RUN_NOT_FOUND",
+                "run_id": run_id,
+            },
+        )
+    if original_run.status != "failed":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Only failed runs can be retried.",
+                "error_code": "RUN_NOT_RETRYABLE",
+                "run_id": run_id,
+                "status": original_run.status,
+            },
+        )
+    if (
+        request.brief.advertiser_id != original_run.advertiser_id
+        or request.brief.objective != original_run.objective
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Retry brief must match the original run advertiser and objective.",
+                "error_code": "RETRY_BRIEF_MISMATCH",
+                "run_id": run_id,
+                "advertiser_id": original_run.advertiser_id,
+                "objective": original_run.objective.value,
+            },
+        )
+
+    return _generate_growth_strategy_response(request, settings=settings)
+
+
 def _create_growth_strategy_with_idempotency(
     request: GrowthStrategyRequest,
     *,

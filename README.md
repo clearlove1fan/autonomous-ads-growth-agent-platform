@@ -189,6 +189,17 @@ curl http://localhost:8000/runs/run_abc123 \
 
 The response includes lifecycle status, `strategy_id`, `execution_id`, trace metadata, the final strategy when completed, error summaries when failed, and ordered node step records.
 
+Failed runs can be retried as a new execution:
+
+```bash
+curl -X POST http://localhost:8000/runs/run_failed_abc/retry \
+  -H "Content-Type: application/json" \
+  -H "X-Tenant-ID: tenant_demo" \
+  -d '{"brief":{"advertiser_id":"adv_fitness_001","product_name":"FitTrack Pro","product_category":"fitness app","objective":"registrations","budget":"2000.00","currency":"USD","duration_days":14,"target_market":"United States","primary_kpi":"trial registrations"}}'
+```
+
+Retry is intentionally not resume in v0.1: the original failed run remains unchanged, and the retry creates a fresh `run_metadata.run_id` under the same stable strategy identity. Only failed runs are retryable, and the retry brief must match the original run's advertiser and objective.
+
 Campaign draft persistence is separately opt-in. Set `CAMPAIGN_DRAFT_PERSISTENCE_BACKEND=postgres` to store the `create_campaign_draft` tool output in `campaign_drafts`:
 
 ```bash
