@@ -11,6 +11,7 @@ from ads_growth_agent.persistence.schema import (
     knowledge_documents,
     metadata,
     retrieval_events,
+    strategy_jobs,
 )
 
 
@@ -20,6 +21,7 @@ def test_core_schema_tables_are_defined() -> None:
         "advertisers",
         "campaign_drafts",
         "campaign_performance_events",
+        "strategy_jobs",
         "knowledge_documents",
         "knowledge_chunks",
         "advertiser_memories",
@@ -97,4 +99,24 @@ def test_campaign_performance_events_support_feedback_loop_access_patterns() -> 
     assert {
         foreign_key.column.table.name
         for foreign_key in campaign_performance_events.foreign_keys
+    } == {"advertisers"}
+
+
+def test_strategy_jobs_support_async_workflow_access_patterns() -> None:
+    columns = strategy_jobs.c
+    index_names = {index.name for index in strategy_jobs.indexes}
+
+    assert "job_id" in columns
+    assert "strategy_id" in columns
+    assert "run_id" in columns
+    assert "trace_id" in columns
+    assert "request_json" in columns
+    assert "response_json" in columns
+    assert "error_json" in columns
+    assert "completed_at" in columns
+    assert "ix_strategy_jobs_status_created" in index_names
+    assert "ix_strategy_jobs_advertiser_created" in index_names
+    assert "ix_strategy_jobs_run_id" in index_names
+    assert {
+        foreign_key.column.table.name for foreign_key in strategy_jobs.foreign_keys
     } == {"advertisers"}

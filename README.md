@@ -125,6 +125,18 @@ curl -X POST http://localhost:8000/growth-strategies \
   -d '{"brief":{"advertiser_id":"adv_fitness_001","product_name":"FitTrack Pro","product_category":"fitness app","objective":"registrations","budget":"2000.00","currency":"USD","duration_days":14,"target_market":"United States","primary_kpi":"trial registrations","target_cpa":"20.00"}}'
 ```
 
+Submit a strategy generation job and poll it:
+
+```bash
+curl -i -X POST http://localhost:8000/growth-strategies/jobs \
+  -H "Content-Type: application/json" \
+  -d '{"brief":{"advertiser_id":"adv_fitness_001","product_name":"FitTrack Pro","product_category":"fitness app","objective":"registrations","budget":"2000.00","currency":"USD","duration_days":14,"target_market":"United States","primary_kpi":"trial registrations","target_cpa":"20.00"}}'
+
+curl http://localhost:8000/growth-strategies/jobs/job_abc123
+```
+
+The v0.1 job executor uses FastAPI background tasks for local development. Set `STRATEGY_JOB_BACKEND=postgres` to persist job status and completed results in `strategy_jobs`; a production deployment should replace the in-process executor with a real queue and worker pool.
+
 The current deterministic workflow runs through explicit LangGraph nodes:
 
 ```text

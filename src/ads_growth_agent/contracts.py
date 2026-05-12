@@ -68,6 +68,13 @@ class FeedbackActionType(StrEnum):
     INSPECT_TRACKING = "inspect_tracking"
 
 
+class StrategyJobStatus(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class AdvertiserBrief(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -340,6 +347,39 @@ class GrowthStrategyResponse(BaseModel):
     tool_results: list[ToolResult] = Field(default_factory=list)
     node_path: list[str] = Field(default_factory=list)
     run_metadata: RunMetadata
+
+
+class StrategyJobAcceptedResponse(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    job_id: str = Field(min_length=1, max_length=128)
+    status: StrategyJobStatus
+    strategy_id: str = Field(min_length=1, max_length=128)
+    advertiser_id: str = Field(min_length=1, max_length=128)
+    objective: CampaignObjective
+    run_id: str = Field(min_length=1, max_length=128)
+    trace_id: str = Field(min_length=1, max_length=128)
+    polling_url: str = Field(min_length=1, max_length=240)
+    created_at: datetime
+
+
+class StrategyJobDetailResponse(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    job_id: str = Field(min_length=1, max_length=128)
+    status: StrategyJobStatus
+    strategy_id: str = Field(min_length=1, max_length=128)
+    advertiser_id: str = Field(min_length=1, max_length=128)
+    objective: CampaignObjective
+    run_id: str = Field(min_length=1, max_length=128)
+    trace_id: str = Field(min_length=1, max_length=128)
+    request: GrowthStrategyRequest
+    result: GrowthStrategyResponse | None = None
+    error: dict[str, Any] | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None = None
 
 
 class PerformanceMetrics(BaseModel):

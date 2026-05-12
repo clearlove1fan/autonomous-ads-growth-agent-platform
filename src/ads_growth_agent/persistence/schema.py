@@ -156,6 +156,46 @@ campaign_performance_events = sa.Table(
     ),
 )
 
+strategy_jobs = sa.Table(
+    "strategy_jobs",
+    metadata,
+    tenant_column(),
+    sa.Column("job_id", sa.Text(), nullable=False),
+    sa.Column("strategy_id", sa.Text(), nullable=False),
+    sa.Column("advertiser_id", sa.Text(), nullable=False),
+    sa.Column("objective", sa.Text(), nullable=False),
+    sa.Column("status", sa.Text(), nullable=False),
+    sa.Column("run_id", sa.Text(), nullable=False),
+    sa.Column("trace_id", sa.Text(), nullable=False),
+    sa.Column("request_json", postgresql.JSONB(), nullable=False),
+    sa.Column("response_json", postgresql.JSONB(), nullable=True),
+    sa.Column("error_json", postgresql.JSONB(), nullable=True),
+    sa.Column(
+        "metadata", postgresql.JSONB(), nullable=False, server_default=sa.text("'{}'::jsonb")
+    ),
+    *partition_columns(),
+    *timestamp_columns(),
+    sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
+    sa.PrimaryKeyConstraint("tenant_id", "job_id"),
+    sa.ForeignKeyConstraint(
+        ["tenant_id", "advertiser_id"],
+        ["advertisers.tenant_id", "advertisers.advertiser_id"],
+    ),
+    sa.CheckConstraint(
+        "status in ('queued', 'running', 'completed', 'failed')",
+        name="strategy_job_status",
+    ),
+    sa.CheckConstraint(
+        "(status in ('queued', 'running') and completed_at is null) "
+        "or (status in ('completed', 'failed') and completed_at is not null)",
+        name="strategy_job_completed_at_status",
+    ),
+    sa.CheckConstraint(
+        f"partition_bucket >= 0 and partition_bucket < {PARTITION_BUCKETS}",
+        name="strategy_job_partition_bucket_range",
+    ),
+)
+
 knowledge_documents = sa.Table(
     "knowledge_documents",
     metadata,
@@ -450,6 +490,31 @@ sa.Index(
     campaign_performance_events.c.partition_bucket,
 )
 sa.Index(
+    "ix_strategy_jobs_status_created",
+    strategy_jobs.c.tenant_id,
+    strategy_jobs.c.status,
+    strategy_jobs.c.created_at,
+)
+sa.Index(
+    "ix_strategy_jobs_advertiser_created",
+    strategy_jobs.c.tenant_id,
+    strategy_jobs.c.advertiser_id,
+    strategy_jobs.c.created_at,
+)
+sa.Index(
+    "ix_strategy_jobs_strategy_created",
+    strategy_jobs.c.tenant_id,
+    strategy_jobs.c.strategy_id,
+    strategy_jobs.c.created_at,
+)
+sa.Index("ix_strategy_jobs_run_id", strategy_jobs.c.tenant_id, strategy_jobs.c.run_id)
+sa.Index(
+    "ix_strategy_jobs_partition_date",
+    strategy_jobs.c.tenant_id,
+    strategy_jobs.c.partition_date,
+    strategy_jobs.c.partition_bucket,
+)
+sa.Index(
     "ix_knowledge_documents_source_type",
     knowledge_documents.c.tenant_id,
     knowledge_documents.c.source_type,
@@ -572,6 +637,7 @@ CORE_TABLES = (
     advertisers,
     campaign_drafts,
     campaign_performance_events,
+    strategy_jobs,
     knowledge_documents,
     knowledge_chunks,
     advertiser_memories,
@@ -584,6 +650,7 @@ CORE_TABLES = (
 HIGH_VOLUME_TABLES = {
     "campaign_drafts",
     "campaign_performance_events",
+    "strategy_jobs",
     "knowledge_documents",
     "knowledge_chunks",
     "advertiser_memories",

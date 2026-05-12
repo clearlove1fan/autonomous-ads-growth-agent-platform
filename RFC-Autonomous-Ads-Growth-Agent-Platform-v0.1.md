@@ -36,6 +36,19 @@
 | Safety and policy review | Safety DRI | Safety Lead | Product, Legal/Policy | Leadership |
 | Launch readiness | Engineering DRI | Engineering Lead | Product, LLMOps | Leadership |
 
+### 1.3 Engineering Change Workflow
+
+This workflow is a planned v0.1 engineering standard. A basic GitHub Actions workflow exists, but branch protection, dependency locking, release gates, and true end-to-end automation still need to be completed before launch readiness is claimed.
+
+| Item | Standard |
+|---|---|
+| Version control | GitHub repository with a stable `main` branch |
+| Branch strategy | Keep `main` stable; use `feature/*` or `codex/*` branches for implementation work |
+| Pull requests | Require a PR for non-trivial changes and at least one approval before merge once collaboration begins |
+| Required checks | Require automated lint, unit tests, deterministic end-to-end smoke tests, and selected integration tests before merge |
+| Release discipline | Use semantic version tags and release notes for demo or release milestones |
+| Exceptions | Engineering DRI documents and approves any temporary bypass of review or CI requirements |
+
 ## 2. Executive Summary
 
 This product is an AI Agent-powered growth platform for advertisers. It helps advertisers convert a high-level business goal, such as increasing app registrations within a fixed budget, into an executable campaign strategy across audience, creative, bidding, budget, measurement, and optimization.
@@ -244,7 +257,18 @@ The product aims to create an autonomous agent workflow that can reason over adv
 | NFR-22 | Prompts should be versioned | P1 | Agent prompts include version metadata |
 | NFR-23 | Tests should cover high-risk logic | P1 | Unit tests for schemas, budget math, routing, and tool error handling |
 
-### 9.8 SLIs and SLOs
+### 9.8 Engineering Operations
+
+| ID | Requirement | Priority | Target |
+|---|---|---|---|
+| NFR-24 | CI/CD quality gates should exist before launch readiness is claimed | P0 | GitHub Actions or equivalent runs lint, unit tests, and deterministic end-to-end smoke tests on every PR and push to `main` |
+| NFR-25 | Dependency installs should be reproducible | P0 | A committed lock file pins direct and transitive dependencies for CI and demo installs |
+| NFR-26 | The stable branch should be protected | P1 | `main` requires PR review and passing required checks before merge once the repository is shared |
+| NFR-27 | End-to-end behavior should be tested through real application boundaries | P0 | At least one seeded workflow runs through the CLI or FastAPI path and validates final strategy, run metadata, and draft-only safety |
+| NFR-28 | Release changes should be traceable | P1 | Version tags and release notes identify what changed, what was tested, and known limitations |
+| NFR-29 | Dependency updates should be reviewed deliberately | P2 | Manual monthly dependency review for v0.1; Dependabot or Renovate can be introduced in v0.2+ |
+
+### 9.9 SLIs and SLOs
 
 | ID | Service Level Indicator | v0.1 Target | Measurement |
 |---|---|---|---|
@@ -256,7 +280,7 @@ The product aims to create an autonomous agent workflow that can reason over adv
 | SLO-6 | Median demo workflow latency | <= 60 seconds | End-to-end wall-clock timing |
 | SLO-7 | Trace coverage | 100% | Every workflow run has LangSmith trace ID |
 
-### 9.9 Privacy, Safety, and Autonomy Guardrails
+### 9.10 Privacy, Safety, and Autonomy Guardrails
 
 | Guardrail | v0.1 Policy |
 |---|---|
@@ -296,6 +320,11 @@ flowchart TD
     F --> DS["Campaign Draft Store"]
     F --> OUT["Validated Growth Strategy"]
 
+    A --> JQ["Strategy Job API"]
+    JQ --> BG["In-process Background Executor"]
+    BG --> G
+    JQ --> JS["Strategy Job Store"]
+
     A --> EV["Campaign Performance Event API"]
     EV --> FA["Deterministic Feedback Analyzer"]
     FA --> PES["Performance Event Store"]
@@ -306,6 +335,7 @@ flowchart TD
     DS --> DB
     PES --> DB
     CP --> DB
+    JS --> DB
 ```
 
 ### 10.1 Logical Components
@@ -321,6 +351,7 @@ flowchart TD
 | Knowledge Layer | Retrieve policy, strategy, and historical campaign context | In-memory default store plus optional PostgreSQL documents, pgvector columns, and retrieval events |
 | Memory Layer | Store in-run and advertiser-level context | LangGraph state plus PostgreSQL-backed advertiser memory and optional graph checkpoints |
 | Run Lifecycle Layer | Persist workflow executions for audit, debug, retry, and resume | Optional PostgreSQL `agent_runs` and `agent_run_steps` with running/completed/failed lifecycle |
+| Async Job Layer | Accept long-running strategy requests and expose pollable status | `POST /growth-strategies/jobs`, `GET /growth-strategies/jobs/{job_id}`, in-process background executor, memory/Postgres job store |
 | Feedback Loop Layer | Ingest campaign telemetry and return optimization recommendations | Performance event API, deterministic feedback analyzer, optional PostgreSQL persistence, and event-level idempotency |
 | Evaluation Layer | Score output quality and workflow health | Local deterministic eval suite with LangSmith-compatible run metadata |
 | Observability Layer | Trace decisions, tool calls, errors, and state transitions | LangSmith trace IDs plus structured JSON logs and persisted run/event records |
@@ -337,6 +368,7 @@ flowchart TD
 | FinalGrowthStrategy | Finalizer | User/API, LangSmith | Validated strategy, actions, assumptions, risks, sources |
 | RunMetadata | Orchestration Layer | API, CLI, persistence, observability | Run ID, execution ID, strategy ID, trace ID, node path, tool summaries |
 | AgentRunDetailResponse | Run Store | API caller | Run status, persisted final strategy or error, metadata, and ordered step records |
+| StrategyJobDetailResponse | Strategy Job Store | API caller | Job status, request, run ID, trace ID, completed strategy result, or structured failure |
 | CampaignPerformanceEventRequest | API caller | Feedback Analyzer | Campaign metrics, objective, target CPA, attribution window, and event references |
 | CampaignFeedbackAnalysis | Feedback Analyzer | API caller, Event Store | Derived metrics, health status, recommendations, guardrails, and source event ID |
 
@@ -478,6 +510,31 @@ The model is treated as a reasoning engine, not as the system authority. The LLM
 | Structured LLM output | Pydantic models | Enable validation, repair, retry, and deterministic failure behavior |
 | Final strategy | Pydantic model | Make portfolio/demo output stable, testable, and machine-readable |
 
+### 11.6 Infrastructure and DevOps Decisions
+
+These decisions close a gap in the original RFC: v0.1 had a technical test plan, but did not clearly define dependency reproducibility, branch policy, release gates, or which checks must run automatically outside a developer laptop.
+
+| Component | Decision | Rationale | Status |
+|---|---|---|---|
+| VCS | GitHub with a stable `main` branch | Primary collaboration surface and natural host for PR checks | Partially implemented |
+| CI tool | GitHub Actions | Native GitHub integration and simple enough for v0.1 | Basic workflow exists |
+| Required PR checks | `ruff`, unit tests, deterministic end-to-end smoke test, and selected integration tests | Prevent broken or unvalidated changes from merging | Partially implemented; E2E gate pending |
+| Dependency lock | Commit `requirements-lock.txt` generated from project dependencies | Keeps v0.1 reproducible without forcing a packaging migration to Poetry | Not implemented |
+| Branch strategy | `main` for stable work, `feature/*` or `codex/*` for implementation branches | Keeps reviewable changes isolated from the stable demo branch | Planned |
+| PR reviews | Require one approval before merge | Adds a lightweight human quality gate | Planned |
+| Secrets | GitHub encrypted secrets for external service credentials | Prevents API keys or provider tokens from entering the repository | Planned |
+| Deployment | No automatic production deployment in v0.1 | The project is still draft-only and local-stack oriented; production deploy should wait for auth, rate limits, and stronger safety gates | Planned |
+| Dependency updates | Manual monthly review in v0.1; Dependabot or Renovate in v0.2+ | Reduces surprise breakage while the architecture is still changing | Planned |
+
+### 11.7 Release Management
+
+| Item | v0.1 Decision | v0.2+ Direction |
+|---|---|---|
+| Version tagging | Use semantic version tags such as `v0.1.0` for demo milestones | Keep release notes attached to tags |
+| Changelog | Maintain a human-written `CHANGELOG.md` for meaningful user-facing or architecture changes | Consider automation from PR labels or conventional commits |
+| Release gate | Require passing CI checks, dependency lock freshness, deterministic end-to-end smoke verification, and release notes | Add staging deploy checks and rollback notes |
+| Production readiness | Do not claim production-ready deployment from the v0.1 local stack alone | Add deployment pipeline, auth, rate limits, monitoring, and incident response plan |
+
 ## 12. Alternatives Considered
 
 | Decision Area | Alternative | Why Not Selected |
@@ -522,15 +579,20 @@ The model is treated as a reasoning engine, not as the system authority. The LLM
 | Run detail API | Implemented | `GET /runs/{run_id}` returns status, strategy/error, metadata, and steps |
 | Retry API | Implemented | Failed runs can be retried as a new execution under the same strategy identity |
 | Resume API | Implemented with honest v0.1 semantics | Failed/running runs reuse the same run ID; Postgres checkpointer enables checkpoint-thread reuse |
+| Async strategy job API | Implemented with v0.1 in-process executor | Jobs are queued through `/growth-strategies/jobs`, executed by FastAPI background tasks, and pollable through job detail API |
 | API idempotency | Implemented as opt-in Postgres backend | Same key/body replays response; same key/different body returns conflict |
 | Campaign draft persistence | Implemented as opt-in Postgres backend | Drafts remain `status=draft` and no live spend action is executed |
 | Campaign performance feedback loop | Implemented | Performance snapshots produce metrics, health status, recommendations, and guardrails |
 | Performance event idempotency | Implemented | Same event payload replays persisted analysis; same event ID with changed payload returns `409` |
 | Dependency readiness checks | Implemented | `/health/live` is shallow; `/health/ready` checks configured Postgres and LiteLLM dependencies |
+| Basic GitHub Actions CI | Implemented but incomplete | `.github/workflows/ci.yml` runs install, `ruff check .`, and `pytest` on PRs and pushes to `main` |
+| Dependency lock file | Not implemented | `pyproject.toml` still uses lower-bound dependency ranges without a committed lock file |
+| Branch protection and PR review gate | Not verified | RFC now defines the target workflow, but repository protection settings still need to be configured |
+| Deterministic E2E CI smoke gate | Not implemented | Tests cover many contracts, but CI does not yet call out a seeded API or CLI E2E smoke test as a distinct merge gate |
 | Native table partitioning | Not implemented | Schema is partition-aware, but local migrations do not create native partitions |
 | Replica-aware query routing | Not implemented | Replica strategy is documented but runtime routing still uses one database URL |
 | Full production auth and rate limits | Not implemented | Tenant context is caller-supplied; no authentication/authorization boundary yet |
-| Async job queue / outbox / DLQ | Not implemented | Strategy generation currently runs synchronously in the API/CLI process |
+| External async queue / outbox / DLQ | Not implemented | v0.1 has pollable jobs but uses an in-process executor rather than a durable worker queue |
 
 ### 13.2 Out-of-Scope Until Later Versions
 
@@ -578,10 +640,24 @@ The model is treated as a reasoning engine, not as the system authority. The LLM
 | LangGraph workflow | Verify planner to router to specialist agents to critic to finalizer state flow |
 | Observability | Verify every workflow run produces a LangSmith trace ID and structured JSON log entries |
 | Run lifecycle | Verify running/completed/failed transitions, ordered step persistence, run detail reads, retry eligibility, and resume rejection rules |
+| Async strategy jobs | Verify job creation, polling, completed result persistence, failed job recording, and live Postgres job storage |
 | API idempotency | Verify same idempotency key and same body replays the response, while changed bodies return conflict |
 | Campaign feedback | Verify CTR/CVR/CPA/ROAS calculation, health status selection, recommendation generation, and draft-only guardrails |
 | Performance event idempotency | Verify same `event_id` and event hash replays stored analysis, while conflicting payloads return `409` |
 | Live Postgres integration | Verify Alembic migrations, Postgres stores, checkpointer setup, tenant scoping, and integration tests against Docker Postgres |
+| End-to-end API or CLI workflow | Run a seeded advertiser brief through a real application boundary and validate final strategy schema, run metadata, retrieved sources, budget consistency, and draft-only action safety |
+| CI automation | Verify the same quality gates run outside a developer laptop through GitHub Actions or equivalent CI |
+
+### 14.3 Automated Test Execution Plan
+
+This plan is not fully implemented yet. It defines the minimum automation required before v0.1 launch readiness can be claimed.
+
+| Trigger | Required Checks | Blocking? | Notes |
+|---|---|---|---|
+| Pull request | `ruff`, unit tests, deterministic end-to-end smoke test | Yes, once branch protection is configured | Must run without external model keys |
+| Push to `main` | Same as PR checks plus migration/schema smoke where practical | Yes | Protects the stable branch |
+| Manual integration run | Docker Postgres integration tests and readiness health checks | Required for release sign-off | May be too slow for every PR until optimized |
+| Release tag | Full test suite, lock-file freshness check, end-to-end demo smoke, release notes check | Yes | Required before publishing a demo or release milestone |
 
 ## 15. Risks and Mitigations
 
@@ -598,8 +674,13 @@ The model is treated as a reasoning engine, not as the system authority. The LLM
 | LiteLLM Proxy adds another service | More local setup and runtime failure modes | Use Docker Compose health checks and clear fallback/error handling |
 | Caller-supplied tenant header is spoofable | Incorrect tenant isolation in any externally exposed environment | Treat `X-Tenant-ID` as local/demo only until real auth maps callers to tenants |
 | Synchronous workflow ties API latency to graph execution | Slow or failed dependencies can hold request workers | Add async job queue, timeout budgets, and worker separation before production launch |
+| In-process background jobs can be lost on process crash | Accepted local v0.1 limitation; not production durable | Persist job state and replace executor with an external queue/worker before production launch |
 | Partition-aware schema is mistaken for implemented partitioning | Overstated scalability claims | Document native partitioning and replica routing as future production hardening work |
 | Event feedback recommendations are mistaken for autonomous execution | Unapproved spend or targeting changes | Keep v0.1 recommendations draft-only and require human approval for execute-category tools |
+| CI exists but is too generic | Regressions can merge even when the local test plan is broader than the automated gate | Expand GitHub Actions into explicit lint, unit, E2E smoke, and integration/release jobs |
+| Unlocked dependencies introduce non-reproducible installs | New dependency releases can break demos or CI unexpectedly | Commit a generated lock file and refresh it deliberately with test verification |
+| Unprotected branch workflow allows unreviewed changes | Stable demo branch can drift or break without visibility | Protect `main`, require PR review, and document branch strategy |
+| Lack of true end-to-end tests hides integration failures | Mock-heavy tests can pass while the product workflow is broken | Add a seeded API/CLI E2E smoke test that validates a real full workflow boundary |
 
 ## 16. Launch Readiness Checklist
 
@@ -614,6 +695,10 @@ The model is treated as a reasoning engine, not as the system authority. The LLM
 | Observability sign-off | LangSmith traces and error metadata verified | Run metadata and JSON logs implemented; metrics/dashboard pending |
 | Local stack readiness | Docker Compose starts FastAPI, PostgreSQL with pgvector, and LiteLLM Proxy | Implemented; local environment verification required per machine |
 | Demo readiness | End-to-end workflow runs with seeded sample advertiser cases | Partially ready; curated walkthrough and expected outputs pending |
+| CI/CD readiness | Automated CI runs lint, unit tests, and deterministic end-to-end smoke checks | Basic CI exists; E2E smoke and branch protection pending |
+| Dependency lock readiness | Reproducible lock file is committed and used by CI/demo install instructions | Planned; not implemented |
+| Branch protection readiness | `main` requires PR review and passing checks before merge | Planned; repository protection not verified |
+| Release readiness | Version tag, changelog entry, and release verification notes exist for each demo/release milestone | Planned; not implemented |
 
 ## 17. Open Questions
 
@@ -624,6 +709,10 @@ The model is treated as a reasoning engine, not as the system authority. The LLM
 | OQ-3 | Should memory be stored in JSON, SQLite, or vector store for v0.1? | TBD | Closed: PostgreSQL-backed memory and checkpoints selected |
 | OQ-4 | What minimum evaluation dataset size is enough for the portfolio demo? | TBD | Partially answered: local eval cases exist; larger regression set remains open |
 | OQ-5 | Should event-driven feedback be included in v0.1 or v0.2? | TBD | Closed: first performance event feedback loop included in v0.1 |
+| OQ-6 | What CI runner should v0.1 use? | Engineering DRI | Closed: GitHub Actions selected; basic workflow exists |
+| OQ-7 | What dependency lock strategy should v0.1 use? | Engineering DRI | Closed for v0.1: committed `requirements-lock.txt`; revisit Poetry or `uv.lock` only if packaging needs change |
+| OQ-8 | What branch and PR workflow should the project follow? | Engineering DRI | Closed: stable `main`, implementation branches, one required PR approval once collaboration begins |
+| OQ-9 | What is the minimum true end-to-end quality gate? | Engineering DRI, LLMOps DRI | Closed for v0.1: deterministic seeded API or CLI smoke test with no external model key requirement |
 
 ## 18. Initial Architecture Decision
 

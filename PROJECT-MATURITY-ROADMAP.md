@@ -50,6 +50,7 @@ Completed:
 - Performance event idempotency and conflict protection.
 - HLD implementation-sync sections with current architecture and sequence diagrams.
 - Liveness/readiness health endpoints with configured dependency checks.
+- Async strategy job API with pollable memory/Postgres job state and v0.1 background execution.
 
 Remaining:
 
@@ -100,6 +101,7 @@ Planned work:
 - Repository/service layer around persistence.
 - Run detail, retry, and resume APIs.
 - Campaign performance event persistence and idempotency.
+- Async strategy job store and API.
 
 Exit criteria:
 
@@ -108,6 +110,7 @@ Exit criteria:
 - Campaign drafts are stored as drafts only.
 - Campaign performance events are persisted, replayable, and conflict-safe.
 - Failed runs can be retried and failed/running runs can be resumed with clear semantics.
+- Strategy generation can be submitted as a pollable job with persisted status.
 - Alembic migrations create the local database from scratch.
 - Local Docker Compose can run API, Postgres + pgvector, and LiteLLM together.
 
@@ -183,7 +186,7 @@ Exit criteria:
 1. Add curated demo script and expected outputs for the fitness app scenario.
 2. Add agent-eval cases for RAG grounding and critique/revision.
 3. Add negative demo cases for safe failure, idempotency conflict, and event conflict.
-4. Add asynchronous workflow job model for long-running strategy generation.
+4. Replace in-process background jobs with a durable worker queue design and outbox/DLQ plan.
 5. Add auth boundary design and first local API key/JWT guard.
 6. Add production metrics endpoint for run latency, validation failures, tool failures, and feedback events.
 7. Add timeout budgets and circuit-breaker behavior for LLM, retrieval, and tool execution.

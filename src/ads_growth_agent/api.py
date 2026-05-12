@@ -1,8 +1,9 @@
 import re
 from collections.abc import Callable
 from typing import Annotated
+from uuid import uuid4
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Response
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Response
 from pydantic import BaseModel, ValidationError
 
 from ads_growth_agent import __version__
@@ -15,6 +16,8 @@ from ads_growth_agent.contracts import (
     CampaignPerformanceEventResponse,
     GrowthStrategyRequest,
     GrowthStrategyResponse,
+    StrategyJobAcceptedResponse,
+    StrategyJobDetailResponse,
 )
 from ads_growth_agent.feedback import analyze_campaign_performance_event
 from ads_growth_agent.graph import strategy_id_for_brief
@@ -36,8 +39,10 @@ from ads_growth_agent.persistence.performance_event_store import (
     hash_campaign_performance_event,
 )
 from ads_growth_agent.persistence.run_read_store import AgentRunReadStore
+from ads_growth_agent.persistence.strategy_job_store import StrategyJobStore
 from ads_growth_agent.run_store_factory import build_configured_run_read_store
 from ads_growth_agent.strategy import StrategyGenerationError, generate_growth_strategy
+from ads_growth_agent.strategy_job_store_factory import build_configured_strategy_job_store
 
 
 class HealthResponse(BaseModel):
@@ -106,6 +111,12 @@ def get_runtime_performance_event_store(
     return build_configured_performance_event_store(settings)
 
 
+def get_runtime_strategy_job_store(
+    settings: Annotated[Settings, Depends(get_request_settings)],
+) -> StrategyJobStore:
+    return build_configured_strategy_job_store(settings)
+
+
 @app.get("/health/live", response_model=HealthResponse)
 def health_live(
     settings: Annotated[Settings, Depends(get_runtime_settings)],
@@ -167,6 +178,84 @@ def create_growth_strategy(
         )
 
     return _generate_growth_strategy_response(request, settings=settings)
+
+
+@app.post(
+    "/growth-strategies/jobs",
+    response_model=StrategyJobAcceptedResponse,
+    status_code=202,
+)
+def create_growth_strategy_job(
+    request: GrowthStrategyRequest,
+    response: Response,
+    background_tasks: BackgroundTasks,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    job_store: Annotated[
+        StrategyJobStore,
+        Depends(get_runtime_strategy_job_store),
+    ],
+) -> StrategyJobAcceptedResponse:
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    job_id = f"job_{uuid4().hex[:16]}"
+    strategy_id = strategy_id_for_brief(request.brief)
+    run_context = create_run_context(strategy_id=strategy_id, settings=settings)
+    job = job_store.create_queued(
+        request,
+        job_id=job_id,
+        strategy_id=strategy_id,
+        run_id=run_context.run_id,
+        trace_id=run_context.trace_id,
+    )
+    polling_url = f"/growth-strategies/jobs/{job.job_id}"
+    response.headers["Location"] = polling_url
+    response.headers["Strategy-Job-ID"] = job.job_id
+    response.headers["Run-ID"] = job.run_id
+    background_tasks.add_task(
+        _execute_growth_strategy_job,
+        job.job_id,
+        request,
+        settings,
+        run_context,
+        job_store,
+    )
+    return StrategyJobAcceptedResponse(
+        job_id=job.job_id,
+        status=job.status,
+        strategy_id=job.strategy_id,
+        advertiser_id=job.advertiser_id,
+        objective=job.objective,
+        run_id=job.run_id,
+        trace_id=job.trace_id,
+        polling_url=polling_url,
+        created_at=job.created_at,
+    )
+
+
+@app.get(
+    "/growth-strategies/jobs/{job_id}",
+    response_model=StrategyJobDetailResponse,
+)
+def get_growth_strategy_job(
+    job_id: str,
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    job_store: Annotated[
+        StrategyJobStore,
+        Depends(get_runtime_strategy_job_store),
+    ],
+) -> StrategyJobDetailResponse:
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    job = job_store.get_job(job_id)
+    if job is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": "Strategy job was not found for the effective tenant.",
+                "error_code": "STRATEGY_JOB_NOT_FOUND",
+                "job_id": job_id,
+            },
+        )
+    return job
 
 
 @app.post("/campaign-events/performance", response_model=CampaignPerformanceEventResponse)
@@ -473,6 +562,47 @@ def _generate_growth_strategy_response(
                 ),
             },
         ) from exc
+
+
+def _execute_growth_strategy_job(
+    job_id: str,
+    request: GrowthStrategyRequest,
+    settings: Settings,
+    run_context: RunContext,
+    job_store: StrategyJobStore,
+) -> None:
+    job_store.mark_running(job_id)
+    try:
+        growth_response = _generate_growth_strategy_response(
+            request,
+            settings=settings,
+            run_context=run_context,
+        )
+    except HTTPException as exc:
+        job_store.mark_failed(job_id, error=_job_error_from_http_exception(exc))
+        return
+    except Exception as exc:
+        job_store.mark_failed(
+            job_id,
+            error={
+                "message": "Strategy job execution failed with an unexpected error.",
+                "error_code": "STRATEGY_JOB_EXECUTION_FAILED",
+                "exception_type": type(exc).__name__,
+                "detail": str(exc),
+            },
+        )
+        return
+
+    job_store.mark_completed(job_id, growth_response)
+
+
+def _job_error_from_http_exception(exc: HTTPException) -> dict:
+    return {
+        "message": "Strategy job execution failed.",
+        "error_code": "STRATEGY_JOB_EXECUTION_FAILED",
+        "status_code": exc.status_code,
+        "detail": exc.detail,
+    }
 
 
 def _brief_from_run_metadata(run: AgentRunDetailResponse) -> AdvertiserBrief:

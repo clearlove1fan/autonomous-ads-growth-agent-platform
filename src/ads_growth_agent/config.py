@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     campaign_draft_persistence_backend: Literal["none", "postgres"] = "none"
     performance_event_persistence_backend: Literal["none", "postgres"] = "none"
     idempotency_backend: Literal["none", "postgres"] = "none"
+    strategy_job_backend: Literal["memory", "postgres"] = "memory"
     idempotency_ttl_seconds: int = 86_400
     graph_checkpointer_backend: Literal["none", "memory", "postgres"] = "none"
     graph_checkpointer_setup: bool = True
