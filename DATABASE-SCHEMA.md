@@ -37,6 +37,7 @@ The first migration does not create native partitioned tables. Instead it create
 | `tenants` | tenant registry | lookup tenant config | small reference table |
 | `advertisers` | business data | tenant + advertiser lookup | hash by `advertiser_id` |
 | `campaign_drafts` | draft output | advertiser history, run-created drafts | advertiser hash + time range |
+| `campaign_performance_events` | feedback loop events | advertiser/run/campaign event analysis | time range + event hash |
 | `knowledge_documents` | RAG metadata | source/category/objective filters | source/type/category + document hash |
 | `knowledge_chunks` | vector RAG chunks | filtered vector search | source/category prefilter + document hash |
 | `advertiser_memories` | long-term memory | advertiser-scoped memory retrieval | advertiser hash |
@@ -56,6 +57,14 @@ The first migration does not create native partitioned tables. Instead it create
 5. `retrieval_events` records query, filters, top-k results, and latency.
 6. `campaign_drafts` stores draft output after finalization.
 7. `agent_run_steps` stores node-level execution details.
+
+### Campaign Feedback
+
+1. API receives a campaign performance event.
+2. The feedback analyzer computes CTR, CVR, CPA, and optional ROAS.
+3. The system returns draft-only recommendations such as creative refresh, audience narrowing, tracking inspection, or continued monitoring.
+4. `campaign_performance_events` stores the raw metrics and analysis when persistence is enabled.
+5. The event is indexed by advertiser, run, campaign, and occurrence time for replay and later async feedback workflows. `run_id`, `draft_id`, and `campaign_id` are soft links because telemetry can arrive from external campaign systems before this platform has a local run or draft record.
 
 ### Retrieval
 
@@ -85,6 +94,7 @@ limit :top_k
 | Traffic | Preferred Target | Consistency |
 |---|---|---|
 | campaign draft creation | primary | strong |
+| campaign performance event ingestion | primary or async writer | eventual acceptable |
 | idempotency key write/check | primary | strong |
 | agent run creation/update | primary | strong |
 | agent run history reads | read replica | eventual acceptable |
@@ -107,7 +117,8 @@ Mitigations:
 
 - Use `partition_bucket` derived from stable hash of `tenant_id + partition_key`.
 - For `agent_run_steps`, use `run_id` as the partition key so one run's trace is colocated.
-- For append-only tables like `retrieval_events`, combine `partition_date` with hash bucket.
+- For append-only tables like `retrieval_events` and `campaign_performance_events`, combine `partition_date` with hash bucket.
+- For high-write campaign performance events, use `event_id` as the partition key to avoid hot advertisers dominating a shard.
 - For vector retrieval, filter by source/category/objective before vector ranking.
 - Keep `knowledge_chunks` source/category metadata duplicated on the chunk table to avoid mandatory joins in the hot query path.
 
@@ -121,6 +132,7 @@ Mitigations:
 | knowledge document ingestion | eventual |
 | vector index availability | eventual |
 | retrieval event logging | eventual |
+| campaign performance event analysis | eventual |
 | agent trace analytics | eventual |
 
 ## v0.1 Scope
@@ -130,16 +142,14 @@ Implemented now:
 - SQLAlchemy Core metadata in `src/ads_growth_agent/persistence/schema.py`.
 - Alembic scaffold.
 - Initial migration `0001_partition_aware_core_schema`.
+- Follow-up migrations for execution identity and campaign performance events.
 - pgvector columns for `knowledge_chunks` and `advertiser_memories`.
 - Partition-ready columns and indexes.
+- PostgreSQL-backed knowledge retrieval, run persistence, campaign draft persistence, idempotency, and performance event persistence.
 - Schema tests for table coverage and partition fields.
 
 Not implemented yet:
 
-- `PostgresKnowledgeStore`.
-- Seed loader.
-- LangGraph Postgres checkpointer.
-- Runtime persistence of runs, steps, retrieval events, and campaign drafts.
 - Native partition DDL.
 - Replica-aware query routing.
 

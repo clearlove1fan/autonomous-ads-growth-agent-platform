@@ -45,6 +45,29 @@ class RiskLevel(StrEnum):
     HIGH = "high"
 
 
+class PerformanceEventType(StrEnum):
+    PERFORMANCE_SNAPSHOT = "performance_snapshot"
+    BUDGET_PACING = "budget_pacing"
+    CREATIVE_FATIGUE = "creative_fatigue"
+    CONVERSION_DROP = "conversion_drop"
+
+
+class FeedbackHealthStatus(StrEnum):
+    ON_TRACK = "on_track"
+    NEEDS_ATTENTION = "needs_attention"
+    UNDERPERFORMING = "underperforming"
+    CREATIVE_FATIGUE = "creative_fatigue"
+    INSUFFICIENT_DATA = "insufficient_data"
+
+
+class FeedbackActionType(StrEnum):
+    CONTINUE_MONITORING = "continue_monitoring"
+    REFRESH_CREATIVE = "refresh_creative"
+    ADJUST_BUDGET = "adjust_budget"
+    NARROW_AUDIENCE = "narrow_audience"
+    INSPECT_TRACKING = "inspect_tracking"
+
+
 class AdvertiserBrief(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -317,3 +340,97 @@ class GrowthStrategyResponse(BaseModel):
     tool_results: list[ToolResult] = Field(default_factory=list)
     node_path: list[str] = Field(default_factory=list)
     run_metadata: RunMetadata
+
+
+class PerformanceMetrics(BaseModel):
+    impressions: int = Field(ge=0)
+    clicks: int = Field(ge=0)
+    spend: Decimal = Field(ge=0, decimal_places=2)
+    conversions: int = Field(ge=0)
+    revenue: Decimal | None = Field(default=None, ge=0, decimal_places=2)
+
+    @model_validator(mode="after")
+    def validate_metric_order(self) -> "PerformanceMetrics":
+        if self.clicks > self.impressions:
+            raise ValueError("clicks cannot exceed impressions")
+        if self.conversions > self.clicks:
+            raise ValueError("conversions cannot exceed clicks")
+        return self
+
+
+class CampaignPerformanceEventRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    event_id: str = Field(min_length=1, max_length=128)
+    advertiser_id: str = Field(min_length=1, max_length=128)
+    run_id: str | None = Field(default=None, min_length=1, max_length=128)
+    campaign_id: str | None = Field(default=None, min_length=1, max_length=128)
+    draft_id: str | None = Field(default=None, min_length=1, max_length=128)
+    objective: CampaignObjective
+    event_type: PerformanceEventType = PerformanceEventType.PERFORMANCE_SNAPSHOT
+    occurred_at: datetime
+    metrics: PerformanceMetrics
+    target_cpa: Decimal | None = Field(default=None, gt=0, decimal_places=2)
+    attribution_window_days: int = Field(default=7, ge=1, le=90)
+    notes: str | None = Field(default=None, max_length=1_000)
+
+    @model_validator(mode="after")
+    def require_campaign_or_run_reference(self) -> "CampaignPerformanceEventRequest":
+        if not (self.run_id or self.campaign_id or self.draft_id):
+            raise ValueError("performance events require run_id, campaign_id, or draft_id")
+        return self
+
+
+class FeedbackRecommendation(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    recommendation_id: str = Field(min_length=1, max_length=160)
+    action_type: FeedbackActionType
+    title: str = Field(min_length=1, max_length=160)
+    rationale: str = Field(min_length=1, max_length=800)
+    priority: int = Field(ge=1, le=5)
+    risk_level: RiskLevel = RiskLevel.LOW
+    requires_human_approval: bool = True
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class CampaignFeedbackAnalysis(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    feedback_id: str = Field(min_length=1, max_length=160)
+    event_id: str = Field(min_length=1, max_length=128)
+    advertiser_id: str = Field(min_length=1, max_length=128)
+    run_id: str | None = Field(default=None, min_length=1, max_length=128)
+    health_status: FeedbackHealthStatus
+    metrics_summary: dict[str, Any] = Field(default_factory=dict)
+    recommendations: list[FeedbackRecommendation] = Field(min_length=1)
+    guardrails: list[str] = Field(default_factory=list)
+    created_at: datetime
+
+
+class CampaignPerformanceEventResponse(BaseModel):
+    event_id: str = Field(min_length=1, max_length=128)
+    advertiser_id: str = Field(min_length=1, max_length=128)
+    run_id: str | None = Field(default=None, min_length=1, max_length=128)
+    status: Literal["analyzed"]
+    persisted: bool
+    analysis: CampaignFeedbackAnalysis
+
+
+class CampaignPerformanceEventDetailResponse(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    event_id: str = Field(min_length=1, max_length=128)
+    advertiser_id: str = Field(min_length=1, max_length=128)
+    run_id: str | None = Field(default=None, min_length=1, max_length=128)
+    campaign_id: str | None = Field(default=None, min_length=1, max_length=128)
+    draft_id: str | None = Field(default=None, min_length=1, max_length=128)
+    objective: CampaignObjective
+    event_type: PerformanceEventType
+    occurred_at: datetime
+    metrics: PerformanceMetrics
+    status: Literal["analyzed", "ignored", "failed"]
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    analysis: CampaignFeedbackAnalysis
+    created_at: datetime
+    updated_at: datetime

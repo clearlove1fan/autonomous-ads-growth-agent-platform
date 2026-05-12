@@ -209,6 +209,24 @@ curl -X POST http://localhost:8000/runs/run_failed_abc/resume \
 
 Resume uses the original `advertiser_brief` stored in `agent_runs.metadata`, rejects completed runs, and returns the normal `GrowthStrategyResponse` with `Resumed-Run-ID` and `Resume-Mode` headers. If `GRAPH_CHECKPOINTER_BACKEND=postgres`, the same LangGraph checkpoint thread is reused; otherwise v0.1 resume is same-run replay with honest API semantics.
 
+Campaign performance events can trigger a first-pass feedback analysis loop:
+
+```bash
+curl -X POST http://localhost:8000/campaign-events/performance \
+  -H "Content-Type: application/json" \
+  -H "X-Tenant-ID: tenant_demo" \
+  -d '{"event_id":"evt_perf_001","advertiser_id":"adv_fitness_001","campaign_id":"cmp_fitness_001","objective":"registrations","event_type":"performance_snapshot","occurred_at":"2026-05-12T12:00:00Z","metrics":{"impressions":10000,"clicks":500,"spend":"1000.00","conversions":20},"target_cpa":"20.00","attribution_window_days":7}'
+```
+
+The response includes `health_status`, metric summaries such as CTR/CVR/CPA, draft-only feedback recommendations, and guardrails requiring human approval before budget or targeting changes. Set `PERFORMANCE_EVENT_PERSISTENCE_BACKEND=postgres` to persist events and analyses in `campaign_performance_events`.
+
+Persisted performance events can be queried for audit and replay:
+
+```bash
+curl http://localhost:8000/campaign-events/performance/evt_perf_001 \
+  -H "X-Tenant-ID: tenant_demo"
+```
+
 Campaign draft persistence is separately opt-in. Set `CAMPAIGN_DRAFT_PERSISTENCE_BACKEND=postgres` to store the `create_campaign_draft` tool output in `campaign_drafts`:
 
 ```bash

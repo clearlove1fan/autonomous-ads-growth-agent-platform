@@ -111,6 +111,51 @@ campaign_drafts = sa.Table(
     ),
 )
 
+campaign_performance_events = sa.Table(
+    "campaign_performance_events",
+    metadata,
+    tenant_column(),
+    sa.Column("event_id", sa.Text(), nullable=False),
+    sa.Column("advertiser_id", sa.Text(), nullable=False),
+    sa.Column("run_id", sa.Text(), nullable=True),
+    sa.Column("campaign_id", sa.Text(), nullable=True),
+    sa.Column("draft_id", sa.Text(), nullable=True),
+    sa.Column("objective", sa.Text(), nullable=False),
+    sa.Column("event_type", sa.Text(), nullable=False),
+    sa.Column("occurred_at", sa.DateTime(timezone=True), nullable=False),
+    sa.Column("metrics_json", postgresql.JSONB(), nullable=False),
+    sa.Column("analysis_json", postgresql.JSONB(), nullable=False),
+    sa.Column("status", sa.Text(), nullable=False, server_default="analyzed"),
+    sa.Column(
+        "metadata", postgresql.JSONB(), nullable=False, server_default=sa.text("'{}'::jsonb")
+    ),
+    *partition_columns(),
+    *timestamp_columns(),
+    sa.PrimaryKeyConstraint("tenant_id", "event_id"),
+    sa.ForeignKeyConstraint(
+        ["tenant_id", "advertiser_id"],
+        ["advertisers.tenant_id", "advertisers.advertiser_id"],
+    ),
+    sa.CheckConstraint(
+        "event_type in ("
+        "'performance_snapshot', 'budget_pacing', 'creative_fatigue', 'conversion_drop'"
+        ")",
+        name="campaign_performance_event_type",
+    ),
+    sa.CheckConstraint(
+        "status in ('analyzed', 'ignored', 'failed')",
+        name="campaign_performance_event_status",
+    ),
+    sa.CheckConstraint(
+        "(run_id is not null) or (campaign_id is not null) or (draft_id is not null)",
+        name="campaign_performance_event_reference_required",
+    ),
+    sa.CheckConstraint(
+        f"partition_bucket >= 0 and partition_bucket < {PARTITION_BUCKETS}",
+        name="campaign_performance_event_partition_bucket_range",
+    ),
+)
+
 knowledge_documents = sa.Table(
     "knowledge_documents",
     metadata,
@@ -381,6 +426,30 @@ sa.Index(
     campaign_drafts.c.partition_bucket,
 )
 sa.Index(
+    "ix_campaign_performance_events_advertiser_occurred",
+    campaign_performance_events.c.tenant_id,
+    campaign_performance_events.c.advertiser_id,
+    campaign_performance_events.c.occurred_at,
+)
+sa.Index(
+    "ix_campaign_performance_events_run_occurred",
+    campaign_performance_events.c.tenant_id,
+    campaign_performance_events.c.run_id,
+    campaign_performance_events.c.occurred_at,
+)
+sa.Index(
+    "ix_campaign_performance_events_campaign_occurred",
+    campaign_performance_events.c.tenant_id,
+    campaign_performance_events.c.campaign_id,
+    campaign_performance_events.c.occurred_at,
+)
+sa.Index(
+    "ix_campaign_performance_events_partition_date",
+    campaign_performance_events.c.tenant_id,
+    campaign_performance_events.c.partition_date,
+    campaign_performance_events.c.partition_bucket,
+)
+sa.Index(
     "ix_knowledge_documents_source_type",
     knowledge_documents.c.tenant_id,
     knowledge_documents.c.source_type,
@@ -502,6 +571,7 @@ CORE_TABLES = (
     tenants,
     advertisers,
     campaign_drafts,
+    campaign_performance_events,
     knowledge_documents,
     knowledge_chunks,
     advertiser_memories,
@@ -513,6 +583,7 @@ CORE_TABLES = (
 
 HIGH_VOLUME_TABLES = {
     "campaign_drafts",
+    "campaign_performance_events",
     "knowledge_documents",
     "knowledge_chunks",
     "advertiser_memories",

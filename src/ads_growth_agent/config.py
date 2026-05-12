@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     knowledge_store_backend: Literal["memory", "postgres"] = "memory"
     run_persistence_backend: Literal["none", "postgres"] = "none"
     campaign_draft_persistence_backend: Literal["none", "postgres"] = "none"
+    performance_event_persistence_backend: Literal["none", "postgres"] = "none"
     idempotency_backend: Literal["none", "postgres"] = "none"
     idempotency_ttl_seconds: int = 86_400
     graph_checkpointer_backend: Literal["none", "memory", "postgres"] = "none"

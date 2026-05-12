@@ -9,17 +9,27 @@ from ads_growth_agent.config import Settings, get_settings
 from ads_growth_agent.contracts import (
     AdvertiserBrief,
     AgentRunDetailResponse,
+    CampaignPerformanceEventDetailResponse,
+    CampaignPerformanceEventRequest,
+    CampaignPerformanceEventResponse,
     GrowthStrategyRequest,
     GrowthStrategyResponse,
 )
+from ads_growth_agent.feedback import analyze_campaign_performance_event
 from ads_growth_agent.graph import strategy_id_for_brief
 from ads_growth_agent.idempotency_store_factory import build_configured_idempotency_store
 from ads_growth_agent.logging_config import configure_logging
 from ads_growth_agent.observability import RunContext, create_run_context
+from ads_growth_agent.performance_event_store_factory import (
+    build_configured_performance_event_store,
+)
 from ads_growth_agent.persistence.idempotency_store import (
     IdempotencyConflictError,
     IdempotencyStore,
     hash_growth_strategy_request,
+)
+from ads_growth_agent.persistence.performance_event_store import (
+    CampaignPerformanceEventStore,
 )
 from ads_growth_agent.persistence.run_read_store import AgentRunReadStore
 from ads_growth_agent.run_store_factory import build_configured_run_read_store
@@ -82,6 +92,12 @@ def get_runtime_run_read_store(
     return build_configured_run_read_store(settings)
 
 
+def get_runtime_performance_event_store(
+    settings: Annotated[Settings, Depends(get_request_settings)],
+) -> CampaignPerformanceEventStore:
+    return build_configured_performance_event_store(settings)
+
+
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     settings = get_runtime_settings()
@@ -116,6 +132,58 @@ def create_growth_strategy(
         )
 
     return _generate_growth_strategy_response(request, settings=settings)
+
+
+@app.post("/campaign-events/performance", response_model=CampaignPerformanceEventResponse)
+def ingest_campaign_performance_event(
+    request: CampaignPerformanceEventRequest,
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    event_store: Annotated[
+        CampaignPerformanceEventStore,
+        Depends(get_runtime_performance_event_store),
+    ],
+) -> CampaignPerformanceEventResponse:
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    response.headers["Performance-Event-ID"] = request.event_id
+    analysis = analyze_campaign_performance_event(request)
+    event_store.record_analyzed(request, analysis)
+    response.headers["Feedback-ID"] = analysis.feedback_id
+    return CampaignPerformanceEventResponse(
+        event_id=request.event_id,
+        advertiser_id=request.advertiser_id,
+        run_id=request.run_id,
+        status="analyzed",
+        persisted=settings.performance_event_persistence_backend != "none",
+        analysis=analysis,
+    )
+
+
+@app.get(
+    "/campaign-events/performance/{event_id}",
+    response_model=CampaignPerformanceEventDetailResponse,
+)
+def get_campaign_performance_event(
+    event_id: str,
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    event_store: Annotated[
+        CampaignPerformanceEventStore,
+        Depends(get_runtime_performance_event_store),
+    ],
+) -> CampaignPerformanceEventDetailResponse:
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    event = event_store.get_event(event_id)
+    if event is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": "Campaign performance event was not found for the effective tenant.",
+                "error_code": "PERFORMANCE_EVENT_NOT_FOUND",
+                "event_id": event_id,
+            },
+        )
+    return event
 
 
 @app.get("/runs/{run_id}", response_model=AgentRunDetailResponse)

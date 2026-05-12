@@ -5,6 +5,7 @@ from ads_growth_agent.persistence.schema import (
     advertiser_memories,
     agent_run_steps,
     agent_runs,
+    campaign_performance_events,
     idempotency_keys,
     knowledge_chunks,
     knowledge_documents,
@@ -18,6 +19,7 @@ def test_core_schema_tables_are_defined() -> None:
         "tenants",
         "advertisers",
         "campaign_drafts",
+        "campaign_performance_events",
         "knowledge_documents",
         "knowledge_chunks",
         "advertiser_memories",
@@ -76,3 +78,23 @@ def test_retrieval_events_and_idempotency_support_operational_access_patterns() 
     assert "idempotency_key" in idempotency_columns
     assert "request_hash" in idempotency_columns
     assert "expires_at" in idempotency_columns
+
+
+def test_campaign_performance_events_support_feedback_loop_access_patterns() -> None:
+    columns = campaign_performance_events.c
+    index_names = {index.name for index in campaign_performance_events.indexes}
+
+    assert "event_id" in columns
+    assert "run_id" in columns
+    assert "campaign_id" in columns
+    assert "draft_id" in columns
+    assert "metrics_json" in columns
+    assert "analysis_json" in columns
+    assert "occurred_at" in columns
+    assert "ix_campaign_performance_events_advertiser_occurred" in index_names
+    assert "ix_campaign_performance_events_run_occurred" in index_names
+    assert "ix_campaign_performance_events_partition_date" in index_names
+    assert {
+        foreign_key.column.table.name
+        for foreign_key in campaign_performance_events.foreign_keys
+    } == {"advertisers"}

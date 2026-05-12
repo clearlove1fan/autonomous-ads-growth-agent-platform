@@ -12,7 +12,7 @@
 | DRI | TBD |
 | Reviewers | Product, Ads Engineering, ML Platform, Data Engineering, Privacy/Safety, LLMOps |
 | Audience | Product, Engineering, ML/LLMOps, Data, Ads Platform, Leadership |
-| Last Updated | 2026-05-10 |
+| Last Updated | 2026-05-12 |
 
 ### 1.1 Review Protocol
 
@@ -418,6 +418,7 @@ The model is treated as a reasoning engine, not as the system authority. The LLM
 | Observability | LangSmith tracing/evals plus structured JSON logs |
 | Output | Validated JSON strategy plus human-readable summary |
 | Local Packaging | Docker Compose for FastAPI, PostgreSQL with pgvector, and LiteLLM Proxy |
+| Feedback Loop | Campaign performance event ingestion, deterministic feedback analysis, and draft-only revised recommendations |
 
 ### 13.1 Out-of-Scope Until Later Versions
 
@@ -573,4 +574,5 @@ The first version should prioritize a complete, traceable, and recoverable end-t
 | 2026-05-10 | Select PostgreSQL + pgvector as unified data platform | Reduces data synchronization overhead and supports business data, memory, RAG, and checkpoints | Accepted |
 | 2026-05-10 | Select internal typed tool registry | Safer and more testable than direct model tool execution | Accepted |
 | 2026-05-10 | Select TypedDict graph state with Pydantic boundary validation | Balances LangGraph update ergonomics with strict product contract validation | Accepted |
+| 2026-05-12 | Add campaign performance event feedback loop | Moves FR-7 from design-only toward functional event-driven optimization while preserving draft-only safety | Accepted |
 | TBD | Select first demo vertical | Fitness app, ecommerce, SaaS, or local service still open | Open |

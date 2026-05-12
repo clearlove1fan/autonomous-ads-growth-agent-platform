@@ -11,8 +11,10 @@ from ads_growth_agent.contracts import (
     BudgetAllocation,
     BudgetPlan,
     CampaignObjective,
+    CampaignPerformanceEventRequest,
     CritiqueIssue,
     CritiqueReport,
+    PerformanceMetrics,
     RiskLevel,
     RunMetadata,
     ToolIntent,
@@ -114,3 +116,32 @@ def test_failed_critique_requires_issues() -> None:
     )
 
     assert report.issues[0].severity == RiskLevel.MEDIUM
+
+
+def test_performance_metrics_reject_impossible_click_count() -> None:
+    with pytest.raises(ValidationError, match="clicks cannot exceed impressions"):
+        PerformanceMetrics(
+            impressions=10,
+            clicks=11,
+            spend=Decimal("20.00"),
+            conversions=1,
+        )
+
+
+def test_performance_event_requires_campaign_or_run_reference() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="performance events require run_id, campaign_id, or draft_id",
+    ):
+        CampaignPerformanceEventRequest(
+            event_id="evt_missing_reference",
+            advertiser_id="adv_001",
+            objective=CampaignObjective.REGISTRATIONS,
+            occurred_at="2026-05-12T12:00:00Z",
+            metrics=PerformanceMetrics(
+                impressions=100,
+                clicks=10,
+                spend=Decimal("50.00"),
+                conversions=1,
+            ),
+        )
