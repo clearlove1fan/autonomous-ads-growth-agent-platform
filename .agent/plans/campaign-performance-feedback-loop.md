@@ -35,7 +35,6 @@ Add the first functional event-driven feedback loop: the platform can ingest a c
 - [x] Update README and schema documentation.
 - [x] Run targeted tests, default tests, and ruff; add skipped live integration coverage.
 - [x] Commit and push the verified slice.
-  Blocked: git staging requires writing `.git/index.lock`, and the environment rejected escalation because the current Codex usage limit was reached.
 
 ## Decisions
 

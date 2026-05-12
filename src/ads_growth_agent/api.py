@@ -30,6 +30,8 @@ from ads_growth_agent.persistence.idempotency_store import (
 )
 from ads_growth_agent.persistence.performance_event_store import (
     CampaignPerformanceEventStore,
+    PerformanceEventConflictError,
+    hash_campaign_performance_event,
 )
 from ads_growth_agent.persistence.run_read_store import AgentRunReadStore
 from ads_growth_agent.run_store_factory import build_configured_run_read_store
@@ -146,9 +148,29 @@ def ingest_campaign_performance_event(
 ) -> CampaignPerformanceEventResponse:
     response.headers["X-Tenant-ID"] = settings.tenant_id
     response.headers["Performance-Event-ID"] = request.event_id
+    request_hash = hash_campaign_performance_event(request)
+    existing_event = event_store.get_event(request.event_id)
+    if existing_event is not None:
+        if existing_event.metadata.get("event_hash") != request_hash:
+            _raise_performance_event_conflict(request.event_id)
+        response.headers["Feedback-ID"] = existing_event.analysis.feedback_id
+        response.headers["Performance-Event-Status"] = "replayed"
+        return CampaignPerformanceEventResponse(
+            event_id=existing_event.event_id,
+            advertiser_id=existing_event.advertiser_id,
+            run_id=existing_event.run_id,
+            status="analyzed",
+            persisted=True,
+            analysis=existing_event.analysis,
+        )
+
     analysis = analyze_campaign_performance_event(request)
-    event_store.record_analyzed(request, analysis)
+    try:
+        event_store.record_analyzed(request, analysis)
+    except PerformanceEventConflictError as exc:
+        _raise_performance_event_conflict(exc.event_id)
     response.headers["Feedback-ID"] = analysis.feedback_id
+    response.headers["Performance-Event-Status"] = "created"
     return CampaignPerformanceEventResponse(
         event_id=request.event_id,
         advertiser_id=request.advertiser_id,
@@ -184,6 +206,17 @@ def get_campaign_performance_event(
             },
         )
     return event
+
+
+def _raise_performance_event_conflict(event_id: str) -> None:
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "message": "Performance event ID was already used with a different payload.",
+            "error_code": "PERFORMANCE_EVENT_ID_CONFLICT",
+            "event_id": event_id,
+        },
+    )
 
 
 @app.get("/runs/{run_id}", response_model=AgentRunDetailResponse)

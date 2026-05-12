@@ -1,3 +1,5 @@
+import hashlib
+import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Protocol
@@ -19,6 +21,12 @@ from ads_growth_agent.persistence.schema import (
     campaign_performance_events,
     tenants,
 )
+
+
+class PerformanceEventConflictError(Exception):
+    def __init__(self, event_id: str) -> None:
+        super().__init__(f"Performance event ID was already used: {event_id}")
+        self.event_id = event_id
 
 
 class CampaignPerformanceEventStore(Protocol):
@@ -56,6 +64,18 @@ class PostgresCampaignPerformanceEventStore:
         analysis: CampaignFeedbackAnalysis,
     ) -> None:
         with _transaction(self._bind) as connection:
+            event_hash = hash_campaign_performance_event(event)
+            existing = _get_event_row_for_update(
+                connection,
+                event.event_id,
+                tenant_id=self._tenant_id,
+            )
+            if existing is not None:
+                existing_hash = dict(existing["metadata"] or {}).get("event_hash")
+                if existing_hash != event_hash:
+                    raise PerformanceEventConflictError(event.event_id)
+                return None
+
             _upsert_tenant_and_advertiser_from_event(
                 connection,
                 event,
@@ -75,6 +95,7 @@ class PostgresCampaignPerformanceEventStore:
                 "analysis_json": analysis.model_dump(mode="json"),
                 "status": "analyzed",
                 "metadata": {
+                    "event_hash": event_hash,
                     "target_cpa": str(event.target_cpa) if event.target_cpa else None,
                     "attribution_window_days": event.attribution_window_days,
                     "notes": event.notes,
@@ -157,6 +178,29 @@ def _connection(bind: Engine | Connection) -> Iterator[Connection]:
             yield connection
     else:
         yield bind
+
+
+def _get_event_row_for_update(
+    connection: Connection,
+    event_id: str,
+    *,
+    tenant_id: str,
+):
+    return connection.execute(
+        sa.select(campaign_performance_events)
+        .where(campaign_performance_events.c.tenant_id == tenant_id)
+        .where(campaign_performance_events.c.event_id == event_id)
+        .with_for_update()
+    ).mappings().one_or_none()
+
+
+def hash_campaign_performance_event(event: CampaignPerformanceEventRequest) -> str:
+    payload = json.dumps(
+        event.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _upsert_tenant_and_advertiser_from_event(

@@ -48,8 +48,24 @@ def test_performance_event_api_persists_analysis_to_postgres(monkeypatch) -> Non
 
         assert response.status_code == 200
         assert response.headers["performance-event-id"] == "evt_perf_integration"
+        assert response.headers["performance-event-status"] == "created"
         assert payload["persisted"] is True
         assert payload["analysis"]["health_status"] == "underperforming"
+        replay = client.post(
+            "/campaign-events/performance",
+            json=_event_payload(),
+            headers={"X-Tenant-ID": "tenant_perf"},
+        )
+        conflict_payload = _event_payload()
+        conflict_payload["metrics"] = {
+            **conflict_payload["metrics"],
+            "spend": "900.00",
+        }
+        conflict = client.post(
+            "/campaign-events/performance",
+            json=conflict_payload,
+            headers={"X-Tenant-ID": "tenant_perf"},
+        )
         detail = client.get(
             "/campaign-events/performance/evt_perf_integration",
             headers={"X-Tenant-ID": "tenant_perf"},
@@ -59,6 +75,11 @@ def test_performance_event_api_persists_analysis_to_postgres(monkeypatch) -> Non
             headers={"X-Tenant-ID": "tenant_other"},
         )
 
+        assert replay.status_code == 200
+        assert replay.headers["performance-event-status"] == "replayed"
+        assert replay.json()["analysis"]["feedback_id"] == payload["analysis"]["feedback_id"]
+        assert conflict.status_code == 409
+        assert conflict.json()["detail"]["error_code"] == "PERFORMANCE_EVENT_ID_CONFLICT"
         assert detail.status_code == 200
         detail_payload = detail.json()
         assert detail_payload["event_id"] == "evt_perf_integration"
@@ -98,6 +119,7 @@ def test_performance_event_api_persists_analysis_to_postgres(monkeypatch) -> Non
         assert event["analysis_json"]["health_status"] == "underperforming"
         assert event["status"] == "analyzed"
         assert event["metadata"]["target_cpa"] == "20.00"
+        assert len(event["metadata"]["event_hash"]) == 64
         assert event["partition_key"] == "evt_perf_integration"
         assert 0 <= event["partition_bucket"] < 128
         assert other_tenant_count == 0

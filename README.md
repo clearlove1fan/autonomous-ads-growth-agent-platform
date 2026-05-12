@@ -220,6 +220,8 @@ curl -X POST http://localhost:8000/campaign-events/performance \
 
 The response includes `health_status`, metric summaries such as CTR/CVR/CPA, draft-only feedback recommendations, and guardrails requiring human approval before budget or targeting changes. Set `PERFORMANCE_EVENT_PERSISTENCE_BACKEND=postgres` to persist events and analyses in `campaign_performance_events`.
 
+When persistence is enabled, event ingestion is idempotent by `event_id`: replaying the same normalized payload returns the already persisted analysis with `Performance-Event-Status: replayed`; reusing the same `event_id` with different metrics or metadata returns HTTP `409` with `PERFORMANCE_EVENT_ID_CONFLICT`.
+
 Persisted performance events can be queried for audit and replay:
 
 ```bash

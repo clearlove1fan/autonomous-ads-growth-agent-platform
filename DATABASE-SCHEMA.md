@@ -63,8 +63,9 @@ The first migration does not create native partitioned tables. Instead it create
 1. API receives a campaign performance event.
 2. The feedback analyzer computes CTR, CVR, CPA, and optional ROAS.
 3. The system returns draft-only recommendations such as creative refresh, audience narrowing, tracking inspection, or continued monitoring.
-4. `campaign_performance_events` stores the raw metrics and analysis when persistence is enabled.
+4. `campaign_performance_events` stores the raw metrics, normalized event hash, and analysis when persistence is enabled.
 5. The event is indexed by advertiser, run, campaign, and occurrence time for replay and later async feedback workflows. `run_id`, `draft_id`, and `campaign_id` are soft links because telemetry can arrive from external campaign systems before this platform has a local run or draft record.
+6. Replaying the same `event_id` with the same event hash returns the stored analysis; reusing the same `event_id` with a different payload is rejected as a conflict.
 
 ### Retrieval
 

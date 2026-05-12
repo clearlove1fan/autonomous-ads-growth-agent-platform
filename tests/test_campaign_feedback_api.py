@@ -9,6 +9,10 @@ from ads_growth_agent.api import (
 from ads_growth_agent.config import Settings
 from ads_growth_agent.contracts import CampaignPerformanceEventDetailResponse
 from ads_growth_agent.feedback import analyze_campaign_performance_event
+from ads_growth_agent.persistence.performance_event_store import (
+    PerformanceEventConflictError,
+    hash_campaign_performance_event,
+)
 
 
 def test_campaign_performance_event_api_returns_feedback_analysis(monkeypatch) -> None:
@@ -44,6 +48,7 @@ def test_campaign_performance_event_api_returns_feedback_analysis(monkeypatch) -
     assert response.headers["x-tenant-id"] == "tenant_api"
     assert response.headers["performance-event-id"] == "evt_perf_001"
     assert response.headers["feedback-id"].startswith("feedback_")
+    assert response.headers["performance-event-status"] == "created"
     assert payload["persisted"] is True
     assert payload["status"] == "analyzed"
     assert payload["analysis"]["health_status"] == "underperforming"
@@ -52,6 +57,7 @@ def test_campaign_performance_event_api_returns_feedback_analysis(monkeypatch) -
     assert captured == {"tenant_id": "tenant_api"}
     assert store.records[0][0] == "evt_perf_001"
     assert store.records[0][1].startswith("feedback_")
+    assert store.requested_event_ids == ["evt_perf_001"]
 
 
 def test_campaign_performance_event_api_uses_noop_persistence_by_default() -> None:
@@ -71,6 +77,7 @@ def test_campaign_performance_event_api_uses_noop_persistence_by_default() -> No
 
     assert response.status_code == 200
     assert response.json()["persisted"] is False
+    assert response.headers["performance-event-status"] == "created"
 
 
 def test_campaign_performance_event_api_rejects_orphan_event() -> None:
@@ -82,28 +89,87 @@ def test_campaign_performance_event_api_rejects_orphan_event() -> None:
     assert response.status_code == 422
 
 
+def test_campaign_performance_event_api_replays_existing_event() -> None:
+    store = CapturingPerformanceEventStore()
+    event = api_module.CampaignPerformanceEventRequest.model_validate(_event_payload())
+    analysis = analyze_campaign_performance_event(event)
+    store.detail = _event_detail(
+        event,
+        metadata={"event_hash": hash_campaign_performance_event(event)},
+    )
+    api_app.dependency_overrides[get_runtime_settings] = lambda: Settings(
+        performance_event_persistence_backend="postgres"
+    )
+    api_app.dependency_overrides[get_runtime_performance_event_store] = lambda: store
+    try:
+        response = TestClient(api_app).post(
+            "/campaign-events/performance",
+            json=_event_payload(),
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert response.headers["performance-event-status"] == "replayed"
+    assert response.headers["feedback-id"] == analysis.feedback_id
+    assert payload["analysis"]["feedback_id"] == analysis.feedback_id
+    assert store.records == []
+    assert store.requested_event_ids == ["evt_perf_001"]
+
+
+def test_campaign_performance_event_api_rejects_event_id_payload_conflict() -> None:
+    store = CapturingPerformanceEventStore()
+    event = api_module.CampaignPerformanceEventRequest.model_validate(_event_payload())
+    store.detail = _event_detail(event, metadata={"event_hash": "different_hash"})
+    api_app.dependency_overrides[get_runtime_settings] = lambda: Settings(
+        performance_event_persistence_backend="postgres"
+    )
+    api_app.dependency_overrides[get_runtime_performance_event_store] = lambda: store
+    try:
+        response = TestClient(api_app).post(
+            "/campaign-events/performance",
+            json=_event_payload(),
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["error_code"] == "PERFORMANCE_EVENT_ID_CONFLICT"
+    assert store.records == []
+    assert store.requested_event_ids == ["evt_perf_001"]
+
+
+def test_campaign_performance_event_api_maps_store_conflict_to_409() -> None:
+    store = CapturingPerformanceEventStore(
+        record_error=PerformanceEventConflictError("evt_perf_001")
+    )
+    api_app.dependency_overrides[get_runtime_settings] = lambda: Settings(
+        performance_event_persistence_backend="postgres"
+    )
+    api_app.dependency_overrides[get_runtime_performance_event_store] = lambda: store
+    try:
+        response = TestClient(api_app).post(
+            "/campaign-events/performance",
+            json=_event_payload(),
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "message": "Performance event ID was already used with a different payload.",
+        "error_code": "PERFORMANCE_EVENT_ID_CONFLICT",
+        "event_id": "evt_perf_001",
+    }
+
+
 def test_get_campaign_performance_event_api_returns_tenant_scoped_detail(
     monkeypatch,
 ) -> None:
     store = CapturingPerformanceEventStore()
     event = api_module.CampaignPerformanceEventRequest.model_validate(_event_payload())
-    analysis = analyze_campaign_performance_event(event)
-    store.detail = CampaignPerformanceEventDetailResponse(
-        event_id=event.event_id,
-        advertiser_id=event.advertiser_id,
-        run_id=event.run_id,
-        campaign_id=event.campaign_id,
-        draft_id=event.draft_id,
-        objective=event.objective,
-        event_type=event.event_type,
-        occurred_at=event.occurred_at,
-        metrics=event.metrics,
-        status="analyzed",
-        metadata={"performance_event_persistence": "postgres"},
-        analysis=analysis,
-        created_at=analysis.created_at,
-        updated_at=analysis.created_at,
-    )
+    store.detail = _event_detail(event)
     captured: dict[str, str] = {}
 
     def fake_build_configured_performance_event_store(
@@ -156,12 +222,15 @@ def test_get_campaign_performance_event_api_returns_404_when_missing() -> None:
 
 
 class CapturingPerformanceEventStore:
-    def __init__(self) -> None:
+    def __init__(self, *, record_error: Exception | None = None) -> None:
         self.records: list[tuple[str, str]] = []
         self.detail: CampaignPerformanceEventDetailResponse | None = None
         self.requested_event_ids: list[str] = []
+        self._record_error = record_error
 
     def record_analyzed(self, event, analysis) -> None:
+        if self._record_error is not None:
+            raise self._record_error
         self.records.append((event.event_id, analysis.feedback_id))
 
     def get_event(self, event_id: str) -> CampaignPerformanceEventDetailResponse | None:
@@ -169,6 +238,30 @@ class CapturingPerformanceEventStore:
         if self.detail is None or self.detail.event_id != event_id:
             return None
         return self.detail
+
+
+def _event_detail(
+    event,
+    *,
+    metadata: dict[str, object] | None = None,
+) -> CampaignPerformanceEventDetailResponse:
+    analysis = analyze_campaign_performance_event(event)
+    return CampaignPerformanceEventDetailResponse(
+        event_id=event.event_id,
+        advertiser_id=event.advertiser_id,
+        run_id=event.run_id,
+        campaign_id=event.campaign_id,
+        draft_id=event.draft_id,
+        objective=event.objective,
+        event_type=event.event_type,
+        occurred_at=event.occurred_at,
+        metrics=event.metrics,
+        status="analyzed",
+        metadata=metadata or {"performance_event_persistence": "postgres"},
+        analysis=analysis,
+        created_at=analysis.created_at,
+        updated_at=analysis.created_at,
+    )
 
 
 def _event_payload() -> dict[str, object]:
