@@ -94,6 +94,13 @@ Turn the project quality expectations into repeatable repository-level gates. Th
   Evidence: The non-escalated run failed with `Operation not permitted` when
   connecting to `localhost:5432`; the same command passed with socket access.
 
+- Discovery: The first pushed workflow passed but emitted GitHub deprecation
+  annotations for Node.js 20-backed actions.
+  Evidence: GitHub Actions warned that `actions/checkout@v4` and
+  `actions/setup-python@v5` will be forced to Node.js 24 by default starting
+  2026-06-02; official releases show `actions/checkout@v6` and
+  `actions/setup-python@v6` are available.
+
 ## Verification
 
 - [x] Targeted pytest:
@@ -109,7 +116,7 @@ Turn the project quality expectations into repeatable repository-level gates. Th
 - [x] Live PostgreSQL integration:
   Result: Docker Postgres started with `docker compose up -d postgres`; escalated `RUN_POSTGRES_INTEGRATION=1 TEST_DATABASE_URL=postgresql+psycopg://ads_growth:ads_growth@localhost:5432/ads_growth .venv/bin/python -m pytest tests/integration` passed with 11 passed. Docker stack was stopped with `docker compose down`.
 - [x] CI workflow review:
-  Result: `.github/workflows/ci.yml` now has separate `lint`, `unit`, `e2e-smoke`, `postgres-integration`, and `release-readiness` jobs; YAML parsed successfully with PyYAML.
+  Result: `.github/workflows/ci.yml` now has separate `lint`, `unit`, `e2e-smoke`, `postgres-integration`, and `release-readiness` jobs; YAML parsed successfully with PyYAML. The pushed workflow passed on GitHub Actions, then the action versions were upgraded to `actions/checkout@v6` and `actions/setup-python@v6` to avoid the Node.js 20 deprecation path.
 - [x] Branch protection review:
   Result: Required checks and one-approval policy are documented in `CONTRIBUTING.md`; enforcement remains a GitHub repository setting.
 
