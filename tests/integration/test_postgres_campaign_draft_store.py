@@ -40,6 +40,9 @@ def test_strategy_generation_persists_campaign_draft(monkeypatch) -> None:
         response_again = generate_growth_strategy(_fitness_brief(), settings=settings)
         draft_id = _draft_id(response)
 
+        assert response_again.run_metadata.run_id != response.run_metadata.run_id
+        assert response_again.strategy.strategy_id == response.strategy.strategy_id
+
         with engine.connect() as connection:
             draft = connection.execute(
                 sa.text(
@@ -63,6 +66,8 @@ def test_strategy_generation_persists_campaign_draft(monkeypatch) -> None:
         assert draft["currency"] == "USD"
         assert draft["strategy_json"]["strategy_id"] == response.strategy.strategy_id
         assert draft["created_by_run_id"] == response_again.run_metadata.run_id
+        assert draft["metadata"]["execution_id"] == response_again.run_metadata.run_id
+        assert draft["metadata"]["strategy_id"] == response.strategy.strategy_id
         assert draft["metadata"]["safety_note"].startswith("Draft only.")
         assert draft["metadata"]["draft_persistence"] == "postgres"
         assert len(draft["metadata"]["audience_segments"]) >= 1

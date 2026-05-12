@@ -130,6 +130,8 @@ planner -> retriever -> tool_executor -> critic -> finalizer
 Responses include `run_metadata` for local observability and LangSmith correlation:
 
 - `run_id`
+- `execution_id`
+- `strategy_id`
 - `trace_id`
 - `langsmith_project`
 - `tracing_enabled`
@@ -174,7 +176,7 @@ Run audit persistence is also opt-in. Set `RUN_PERSISTENCE_BACKEND=postgres` to 
 RUN_PERSISTENCE_BACKEND=postgres ads-growth-agent plan examples/fitness_app_brief.json
 ```
 
-The current v0.1 `run_id` is deterministic for a given advertiser brief, so repeated identical runs update the same `agent_runs` row and replace its derived step rows. This is deliberate for local idempotent demos; later production work can introduce per-execution run IDs and replay tooling.
+`strategy.strategy_id` is stable for a given advertiser brief, while `run_metadata.run_id` is a per-execution ID. `run_metadata.execution_id` mirrors `run_id` for clarity, and `run_metadata.strategy_id` links the execution back to the stable strategy. Repeated identical runs now create separate audit rows under the same `strategy_id`, which is closer to production replay, retry, and concurrency semantics.
 
 Campaign draft persistence is separately opt-in. Set `CAMPAIGN_DRAFT_PERSISTENCE_BACKEND=postgres` to store the `create_campaign_draft` tool output in `campaign_drafts`:
 
@@ -203,7 +205,7 @@ LangGraph checkpointing is also configurable. The default `GRAPH_CHECKPOINTER_BA
 GRAPH_CHECKPOINTER_BACKEND=postgres ads-growth-agent plan examples/fitness_app_brief.json
 ```
 
-The Postgres backend uses the official `langgraph-checkpoint-postgres` `PostgresSaver` and creates LangGraph-owned tables such as `checkpoints`, `checkpoint_blobs`, and `checkpoint_writes` when `GRAPH_CHECKPOINTER_SETUP=true`. These tables are separate from the application-owned Alembic schema. Checkpoint `thread_id` values are namespaced as `<tenant_id>:<run_id>` so deterministic run IDs do not collide across tenants.
+The Postgres backend uses the official `langgraph-checkpoint-postgres` `PostgresSaver` and creates LangGraph-owned tables such as `checkpoints`, `checkpoint_blobs`, and `checkpoint_writes` when `GRAPH_CHECKPOINTER_SETUP=true`. These tables are separate from the application-owned Alembic schema. Checkpoint `thread_id` values are namespaced as `<tenant_id>:<run_id>` so workflow executions do not collide across tenants.
 
 The LLM gateway foundation targets LiteLLM's OpenAI-compatible API and supports:
 
@@ -239,6 +241,8 @@ API and CLI runs emit structured JSON logs to stderr. CLI command payloads remai
 
 - `event`
 - `run_id`
+- `execution_id`
+- `strategy_id`
 - `trace_id`
 - `advertiser_id`
 - `node_path`

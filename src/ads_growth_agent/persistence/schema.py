@@ -266,6 +266,7 @@ agent_runs = sa.Table(
     metadata,
     tenant_column(),
     sa.Column("run_id", sa.Text(), nullable=False),
+    sa.Column("strategy_id", sa.Text(), nullable=False),
     sa.Column("advertiser_id", sa.Text(), nullable=False),
     sa.Column("objective", sa.Text(), nullable=False),
     sa.Column("status", sa.Text(), nullable=False),
@@ -305,6 +306,7 @@ agent_run_steps = sa.Table(
         server_default=sa.text("gen_random_uuid()"),
     ),
     sa.Column("run_id", sa.Text(), nullable=False),
+    sa.Column("strategy_id", sa.Text(), nullable=False),
     sa.Column("step_index", sa.Integer(), nullable=False),
     sa.Column("node_name", sa.Text(), nullable=False),
     sa.Column("status", sa.Text(), nullable=False),
@@ -459,6 +461,12 @@ sa.Index(
     agent_runs.c.advertiser_id,
     agent_runs.c.created_at,
 )
+sa.Index(
+    "ix_agent_runs_strategy_created",
+    agent_runs.c.tenant_id,
+    agent_runs.c.strategy_id,
+    agent_runs.c.created_at,
+)
 sa.Index("ix_agent_runs_trace_id", agent_runs.c.trace_id)
 sa.Index(
     "ix_agent_runs_idempotency_key",
@@ -469,6 +477,12 @@ sa.Index(
     "ix_agent_run_steps_run_index",
     agent_run_steps.c.tenant_id,
     agent_run_steps.c.run_id,
+    agent_run_steps.c.step_index,
+)
+sa.Index(
+    "ix_agent_run_steps_strategy_index",
+    agent_run_steps.c.tenant_id,
+    agent_run_steps.c.strategy_id,
     agent_run_steps.c.step_index,
 )
 sa.Index(

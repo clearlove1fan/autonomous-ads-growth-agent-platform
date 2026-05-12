@@ -104,7 +104,7 @@ def test_strategy_generation_can_use_postgres_knowledge_backend(monkeypatch) -> 
         with engine.connect() as connection:
             event_count = connection.execute(
                 sa.text("SELECT count(*) FROM retrieval_events WHERE run_id = :run_id"),
-                {"run_id": response.strategy.strategy_id},
+                {"run_id": response.run_metadata.run_id},
             ).scalar_one()
 
         assert event_count == 1

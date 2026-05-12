@@ -12,6 +12,7 @@ from ads_growth_agent.contracts import RunMetadata, ToolResult, ToolRunSummary
 @dataclass(frozen=True)
 class RunContext:
     run_id: str
+    strategy_id: str | None
     trace_id: str
     langsmith_project: str
     tracing_enabled: bool
@@ -20,11 +21,13 @@ class RunContext:
 def create_run_context(
     *,
     run_id: str | None = None,
+    strategy_id: str | None = None,
     settings: Settings | None = None,
 ) -> RunContext:
     settings = settings or get_settings()
     return RunContext(
         run_id=run_id or f"run_{uuid4().hex[:16]}",
+        strategy_id=strategy_id,
         trace_id=f"trace_{uuid4().hex}",
         langsmith_project=settings.langsmith_project,
         tracing_enabled=settings.langsmith_tracing,
@@ -39,6 +42,8 @@ def graph_tracing_context(run_context: RunContext, *, advertiser_id: str) -> Ite
         tags=["ads-growth-agent", "langgraph", "v0.1"],
         metadata={
             "run_id": run_context.run_id,
+            "execution_id": run_context.run_id,
+            "strategy_id": run_context.strategy_id,
             "trace_id": run_context.trace_id,
             "advertiser_id": advertiser_id,
         },
@@ -75,6 +80,8 @@ def build_run_metadata(
     ]
     return RunMetadata(
         run_id=run_context.run_id,
+        execution_id=run_context.run_id,
+        strategy_id=run_context.strategy_id,
         trace_id=run_context.trace_id,
         langsmith_project=run_context.langsmith_project,
         tracing_enabled=run_context.tracing_enabled,

@@ -54,11 +54,16 @@ def test_rag_tables_duplicate_hot_filter_columns_for_prefiltering() -> None:
 
 def test_runtime_tables_are_keyed_for_run_trace_access() -> None:
     assert "run_id" in agent_runs.c
+    assert "strategy_id" in agent_runs.c
     assert "run_id" in agent_run_steps.c
+    assert "strategy_id" in agent_run_steps.c
     assert "step_index" in agent_run_steps.c
 
+    run_index_names = {index.name for index in agent_runs.indexes}
     index_names = {index.name for index in agent_run_steps.indexes}
+    assert "ix_agent_runs_strategy_created" in run_index_names
     assert "ix_agent_run_steps_run_index" in index_names
+    assert "ix_agent_run_steps_strategy_index" in index_names
 
 
 def test_retrieval_events_and_idempotency_support_operational_access_patterns() -> None:

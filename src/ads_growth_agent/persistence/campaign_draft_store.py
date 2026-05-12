@@ -81,6 +81,8 @@ def _upsert_campaign_draft(
         "product_name": brief.product_name,
         "duration_days": brief.duration_days,
         "run_id": response.run_metadata.run_id,
+        "execution_id": response.run_metadata.execution_id or response.run_metadata.run_id,
+        "strategy_id": response.strategy.strategy_id,
         "draft_persistence": "postgres",
     }
     values = {

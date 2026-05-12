@@ -16,7 +16,8 @@ if TYPE_CHECKING:
 LOGGER_NAME = "ads_growth_agent"
 LOG_FORMAT = (
     "%(asctime)s %(levelname)s %(name)s %(message)s %(event)s %(service)s "
-    "%(environment)s %(run_id)s %(trace_id)s %(advertiser_id)s %(strategy_id)s "
+    "%(environment)s %(run_id)s %(execution_id)s %(trace_id)s %(advertiser_id)s "
+    "%(strategy_id)s "
     "%(node_path)s %(tool_count)s %(failed_tool_count)s %(suite_id)s %(total_cases)s "
     "%(passed_cases)s %(failed_cases)s %(pass_rate)s %(error_code)s"
 )
@@ -62,9 +63,10 @@ def log_strategy_run_completed(response: GrowthStrategyResponse) -> None:
             **_base_extra(),
             "event": "growth_strategy.run_completed",
             "run_id": metadata.run_id,
+            "execution_id": metadata.execution_id,
             "trace_id": metadata.trace_id,
             "advertiser_id": response.strategy.advertiser_id,
-            "strategy_id": response.strategy.strategy_id,
+            "strategy_id": metadata.strategy_id or response.strategy.strategy_id,
             "node_path": metadata.node_path,
             "tool_count": metadata.tool_count,
             "failed_tool_count": metadata.failed_tool_count,
@@ -85,8 +87,10 @@ def log_strategy_run_failed(
             **_base_extra(),
             "event": "growth_strategy.run_failed",
             "run_id": run_metadata.run_id if run_metadata else None,
+            "execution_id": run_metadata.execution_id if run_metadata else None,
             "trace_id": run_metadata.trace_id if run_metadata else None,
             "advertiser_id": advertiser_id,
+            "strategy_id": run_metadata.strategy_id if run_metadata else None,
             "node_path": run_metadata.node_path if run_metadata else [],
             "tool_count": run_metadata.tool_count if run_metadata else 1,
             "failed_tool_count": run_metadata.failed_tool_count if run_metadata else 1,

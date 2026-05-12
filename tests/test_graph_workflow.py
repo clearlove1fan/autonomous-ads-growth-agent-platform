@@ -32,7 +32,9 @@ def test_langgraph_workflow_runs_expected_node_path() -> None:
         "estimate_performance",
         "create_campaign_draft",
     ]
-    assert response.run_metadata.run_id == response.strategy.strategy_id
+    assert response.run_metadata.run_id.startswith("run_")
+    assert response.run_metadata.execution_id == response.run_metadata.run_id
+    assert response.run_metadata.strategy_id == response.strategy.strategy_id
     assert response.run_metadata.trace_id.startswith("trace_")
     assert response.run_metadata.tracing_enabled is False
     assert response.run_metadata.node_path == response.node_path
@@ -49,6 +51,18 @@ def test_langgraph_workflow_preserves_budget_validation() -> None:
     budget_plan = BudgetPlan.model_validate(response.strategy.budget_plan)
     assert budget_plan.allocated_budget <= Decimal("2000.00")
     assert response.strategy.success_metrics
+
+
+def test_langgraph_workflow_separates_strategy_id_from_execution_run_id() -> None:
+    first = run_growth_strategy_graph(_brief())
+    second = run_growth_strategy_graph(_brief())
+
+    assert first.strategy.strategy_id == second.strategy.strategy_id
+    assert first.run_metadata.strategy_id == first.strategy.strategy_id
+    assert second.run_metadata.strategy_id == second.strategy.strategy_id
+    assert first.run_metadata.run_id != second.run_metadata.run_id
+    assert first.run_metadata.execution_id == first.run_metadata.run_id
+    assert second.run_metadata.execution_id == second.run_metadata.run_id
 
 
 def test_langgraph_workflow_raises_structured_tool_error() -> None:

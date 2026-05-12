@@ -95,6 +95,7 @@ class StrategyGenerationError(Exception):
 
 class GrowthStrategyState(TypedDict, total=False):
     brief: AdvertiserBrief
+    run_id: str
     strategy_id: str
     tool_intents: list[ToolIntent]
     tool_results: list[ToolResult]
@@ -123,7 +124,8 @@ def run_growth_strategy_graph(
     knowledge_store: KnowledgeStore | None = None,
 ) -> GrowthStrategyResponse:
     settings = settings or get_settings()
-    run_context = create_run_context(run_id=_strategy_id(brief), settings=settings)
+    strategy_id = _strategy_id(brief)
+    run_context = create_run_context(strategy_id=strategy_id, settings=settings)
     checkpointer_context = open_configured_graph_checkpointer(settings)
     try:
         with checkpointer_context as checkpointer:
@@ -142,7 +144,7 @@ def run_growth_strategy_graph(
             with graph_tracing_context(run_context, advertiser_id=brief.advertiser_id):
                 final_state = invoke_traced_graph(
                     graph,
-                    {"brief": brief, "node_path": []},
+                    {"brief": brief, "run_id": run_context.run_id, "node_path": []},
                     config=config,
                 )
     except StrategyGenerationError as exc:
@@ -435,7 +437,7 @@ def _retriever_node(
         query = build_knowledge_query(
             brief,
             top_k=settings.knowledge_top_k,
-            run_id=state.get("strategy_id"),
+            run_id=state.get("run_id"),
         )
         retrieval = store.retrieve(query)
         artifacts: dict[str, Any] = dict(state.get("artifacts", {}))
@@ -519,10 +521,11 @@ def _tool_error_message(message: str) -> str:
 def _tool_executor_node(registry: ToolRegistry):
     def execute_tools(state: GrowthStrategyState) -> GrowthStrategyState:
         brief = state["brief"]
+        run_id = state["run_id"]
         strategy_id = state["strategy_id"]
         context = ToolExecutionContext(
             advertiser_id=brief.advertiser_id,
-            run_id=strategy_id,
+            run_id=run_id,
             allowed_tools={
                 "recommend_audience",
                 "generate_creative_brief",

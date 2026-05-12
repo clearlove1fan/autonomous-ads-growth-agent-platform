@@ -14,6 +14,7 @@ from ads_growth_agent.contracts import (
     CritiqueIssue,
     CritiqueReport,
     RiskLevel,
+    RunMetadata,
     ToolIntent,
     ToolResult,
 )
@@ -75,6 +76,21 @@ def test_high_risk_tool_intent_requires_human_approval() -> None:
 def test_failed_tool_result_requires_error() -> None:
     with pytest.raises(ValidationError, match="failed tool results must include an error"):
         ToolResult(tool_name="recommend_audience", success=False, latency_ms=0)
+
+
+def test_run_metadata_defaults_execution_id_to_run_id() -> None:
+    metadata = RunMetadata(
+        run_id="run_001",
+        strategy_id="strategy_001",
+        trace_id="trace_001",
+        langsmith_project="test",
+        tracing_enabled=False,
+        tool_count=0,
+        failed_tool_count=0,
+    )
+
+    assert metadata.execution_id == "run_001"
+    assert metadata.strategy_id == "strategy_001"
 
 
 def test_passing_critique_requires_minimum_score() -> None:

@@ -25,8 +25,10 @@ def test_strategy_run_log_is_structured_json() -> None:
 
     assert record["event"] == "growth_strategy.run_completed"
     assert record["run_id"] == response.run_metadata.run_id
+    assert record["execution_id"] == response.run_metadata.run_id
     assert record["trace_id"] == response.run_metadata.trace_id
     assert record["advertiser_id"] == "adv_logging"
+    assert record["strategy_id"] == response.strategy.strategy_id
     assert record["tool_count"] == 5
     assert "api_key" not in record
 

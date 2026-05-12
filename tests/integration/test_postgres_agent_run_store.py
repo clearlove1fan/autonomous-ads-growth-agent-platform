@@ -36,33 +36,42 @@ def test_strategy_generation_persists_agent_run_and_steps(monkeypatch) -> None:
         response = generate_growth_strategy(_fitness_brief(), settings=settings)
         response_again = generate_growth_strategy(_fitness_brief(), settings=settings)
 
-        assert response_again.run_metadata.run_id == response.run_metadata.run_id
+        assert response_again.run_metadata.run_id != response.run_metadata.run_id
+        assert response_again.strategy.strategy_id == response.strategy.strategy_id
+        assert response_again.run_metadata.strategy_id == response.strategy.strategy_id
 
         with engine.connect() as connection:
             run = connection.execute(
                 sa.text(
-                    "SELECT run_id, advertiser_id, status, trace_id, node_path, "
+                    "SELECT run_id, strategy_id, advertiser_id, status, trace_id, node_path, "
                     "final_strategy_json, error_summary, partition_bucket "
                     "FROM agent_runs WHERE run_id = :run_id"
                 ),
-                {"run_id": response.run_metadata.run_id},
+                {"run_id": response_again.run_metadata.run_id},
             ).mappings().one()
             steps = list(
                 connection.execute(
                     sa.text(
-                        "SELECT step_index, node_name, status, output_json, error_json "
+                        "SELECT step_index, node_name, status, input_json, output_json, error_json "
                         "FROM agent_run_steps WHERE run_id = :run_id "
                         "ORDER BY step_index ASC"
                     ),
-                    {"run_id": response.run_metadata.run_id},
+                    {"run_id": response_again.run_metadata.run_id},
                 ).mappings()
             )
             run_count = connection.execute(
                 sa.text("SELECT count(*) FROM agent_runs WHERE run_id = :run_id"),
-                {"run_id": response.run_metadata.run_id},
+                {"run_id": response_again.run_metadata.run_id},
+            ).scalar_one()
+            strategy_run_count = connection.execute(
+                sa.text("SELECT count(*) FROM agent_runs WHERE strategy_id = :strategy_id"),
+                {"strategy_id": response.strategy.strategy_id},
             ).scalar_one()
 
         assert run_count == 1
+        assert strategy_run_count == 2
+        assert run["run_id"] == response_again.run_metadata.run_id
+        assert run["strategy_id"] == response.strategy.strategy_id
         assert run["advertiser_id"] == "adv_fitness_001"
         assert run["status"] == "completed"
         assert run["trace_id"] == response_again.run_metadata.trace_id
@@ -75,6 +84,8 @@ def test_strategy_generation_persists_agent_run_and_steps(monkeypatch) -> None:
         assert [step["step_index"] for step in steps] == list(range(len(response.node_path)))
         assert {step["status"] for step in steps} == {"completed"}
         assert all(step["error_json"] is None for step in steps)
+        assert steps[0]["input_json"]["execution_id"] == response_again.run_metadata.run_id
+        assert steps[0]["input_json"]["strategy_id"] == response.strategy.strategy_id
         assert steps[-1]["output_json"]["strategy_id"] == response.strategy.strategy_id
     finally:
         dispose_cached_run_store_engines()

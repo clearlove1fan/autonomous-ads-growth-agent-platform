@@ -23,6 +23,7 @@ def test_graph_checkpoint_config_uses_run_id_as_thread_id() -> None:
     config = graph_checkpoint_config(
         RunContext(
             run_id="strategy_123",
+            strategy_id="strategy_stable",
             trace_id="trace_123",
             langsmith_project="test",
             tracing_enabled=False,
@@ -34,6 +35,7 @@ def test_graph_checkpoint_config_uses_run_id_as_thread_id() -> None:
     tenant_config = graph_checkpoint_config(
         RunContext(
             run_id="strategy_123",
+            strategy_id="strategy_stable",
             trace_id="trace_123",
             langsmith_project="test",
             tracing_enabled=False,
@@ -45,6 +47,7 @@ def test_graph_checkpoint_config_uses_run_id_as_thread_id() -> None:
     assert graph_checkpoint_config(
         RunContext(
             run_id="strategy_123",
+            strategy_id="strategy_stable",
             trace_id="trace_123",
             langsmith_project="test",
             tracing_enabled=False,
@@ -72,7 +75,9 @@ def test_strategy_generation_runs_with_memory_checkpointer() -> None:
     )
 
     assert response.node_path == ["planner", "retriever", "tool_executor", "critic", "finalizer"]
-    assert response.run_metadata.run_id == response.strategy.strategy_id
+    assert response.run_metadata.run_id.startswith("run_")
+    assert response.run_metadata.execution_id == response.run_metadata.run_id
+    assert response.run_metadata.strategy_id == response.strategy.strategy_id
 
 
 def _fitness_brief() -> AdvertiserBrief:

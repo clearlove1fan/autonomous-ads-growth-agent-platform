@@ -135,6 +135,8 @@ class RunMetadata(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     run_id: str = Field(min_length=1, max_length=128)
+    execution_id: str | None = Field(default=None, min_length=1, max_length=128)
+    strategy_id: str | None = Field(default=None, min_length=1, max_length=128)
     trace_id: str = Field(min_length=1, max_length=128)
     langsmith_project: str = Field(min_length=1, max_length=200)
     tracing_enabled: bool
@@ -143,6 +145,12 @@ class RunMetadata(BaseModel):
     failed_tool_count: int = Field(ge=0)
     tool_summaries: list[ToolRunSummary] = Field(default_factory=list)
     error_summary: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def default_execution_id(self) -> "RunMetadata":
+        if self.execution_id is None:
+            self.execution_id = self.run_id
+        return self
 
 
 class BudgetAllocation(BaseModel):

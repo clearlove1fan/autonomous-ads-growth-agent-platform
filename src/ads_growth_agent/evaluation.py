@@ -299,7 +299,8 @@ def evaluate_observability_metadata(
 ) -> EvaluationScore:
     metadata = response.run_metadata
     checks = {
-        "run_id_matches_strategy_id": metadata.run_id == response.strategy.strategy_id,
+        "execution_id_matches_run_id": metadata.execution_id == metadata.run_id,
+        "strategy_id_matches_response": metadata.strategy_id == response.strategy.strategy_id,
         "trace_id_present": metadata.trace_id.startswith("trace_"),
         "node_path_matches_response": metadata.node_path == response.node_path,
         "node_path_matches_expected": metadata.node_path == case.expectations.required_node_path,
@@ -316,6 +317,8 @@ def evaluate_observability_metadata(
         else "Run metadata is missing or inconsistent.",
         details={
             "run_id": metadata.run_id,
+            "execution_id": metadata.execution_id,
+            "strategy_id": metadata.strategy_id,
             "trace_id": metadata.trace_id,
             "node_path": metadata.node_path,
             "checks": checks,

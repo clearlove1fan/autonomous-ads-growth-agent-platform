@@ -71,9 +71,12 @@ def test_growth_strategy_api_isolates_postgres_state_by_request_tenant(
         assert second.headers["x-tenant-id"] == "tenant_b"
         assert first.headers["idempotency-status"] == "created"
         assert second.headers["idempotency-status"] == "created"
-        assert first.json()["run_metadata"]["run_id"] == second.json()["run_metadata"]["run_id"]
+        assert first.json()["run_metadata"]["run_id"] != second.json()["run_metadata"]["run_id"]
+        assert first.json()["strategy"]["strategy_id"] == second.json()["strategy"]["strategy_id"]
 
-        run_id = first.json()["run_metadata"]["run_id"]
+        first_run_id = first.json()["run_metadata"]["run_id"]
+        second_run_id = second.json()["run_metadata"]["run_id"]
+        strategy_id = first.json()["strategy"]["strategy_id"]
         with engine.connect() as connection:
             idempotency_rows = connection.execute(
                 sa.text(
@@ -86,30 +89,35 @@ def test_growth_strategy_api_isolates_postgres_state_by_request_tenant(
             ).mappings().all()
             run_rows = connection.execute(
                 sa.text(
-                    "SELECT tenant_id, run_id, status "
+                    "SELECT tenant_id, run_id, strategy_id, status "
                     "FROM agent_runs "
-                    "WHERE run_id = :run_id "
+                    "WHERE strategy_id = :strategy_id "
                     "ORDER BY tenant_id"
                 ),
-                {"run_id": run_id},
+                {"strategy_id": strategy_id},
             ).mappings().all()
             draft_rows = connection.execute(
                 sa.text(
                     "SELECT tenant_id, created_by_run_id "
                     "FROM campaign_drafts "
-                    "WHERE created_by_run_id = :run_id "
+                    "WHERE metadata ->> 'strategy_id' = :strategy_id "
                     "ORDER BY tenant_id"
                 ),
-                {"run_id": run_id},
+                {"strategy_id": strategy_id},
             ).mappings().all()
 
         assert [row["tenant_id"] for row in idempotency_rows] == ["tenant_a", "tenant_b"]
         assert [row["status"] for row in idempotency_rows] == ["completed", "completed"]
-        assert [row["run_id"] for row in idempotency_rows] == [run_id, run_id]
+        assert [row["run_id"] for row in idempotency_rows] == [first_run_id, second_run_id]
         assert [row["tenant_id"] for row in run_rows] == ["tenant_a", "tenant_b"]
+        assert [row["run_id"] for row in run_rows] == [first_run_id, second_run_id]
+        assert [row["strategy_id"] for row in run_rows] == [strategy_id, strategy_id]
         assert [row["status"] for row in run_rows] == ["completed", "completed"]
         assert [row["tenant_id"] for row in draft_rows] == ["tenant_a", "tenant_b"]
-        assert [row["created_by_run_id"] for row in draft_rows] == [run_id, run_id]
+        assert [row["created_by_run_id"] for row in draft_rows] == [
+            first_run_id,
+            second_run_id,
+        ]
     finally:
         api_app.dependency_overrides.clear()
         dispose_cached_campaign_draft_store_engines()

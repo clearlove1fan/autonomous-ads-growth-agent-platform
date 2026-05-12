@@ -133,7 +133,10 @@ def _upsert_agent_run(
     final_strategy_json: dict[str, Any] | None,
     error_summary: list[str],
 ) -> None:
+    strategy_id = _strategy_id(run_metadata)
     metadata = {
+        "strategy_id": strategy_id,
+        "execution_id": run_metadata.execution_id,
         "langsmith_project": run_metadata.langsmith_project,
         "tracing_enabled": run_metadata.tracing_enabled,
         "tool_count": run_metadata.tool_count,
@@ -146,6 +149,7 @@ def _upsert_agent_run(
     values = {
         "tenant_id": tenant_id,
         "run_id": run_metadata.run_id,
+        "strategy_id": strategy_id,
         "advertiser_id": brief.advertiser_id,
         "objective": brief.objective.value,
         "status": status,
@@ -167,6 +171,7 @@ def _upsert_agent_run(
                 "advertiser_id": values["advertiser_id"],
                 "objective": values["objective"],
                 "status": values["status"],
+                "strategy_id": values["strategy_id"],
                 "trace_id": values["trace_id"],
                 "node_path": values["node_path"],
                 "final_strategy_json": values["final_strategy_json"],
@@ -198,6 +203,7 @@ def _replace_run_steps(
             agent_run_steps.insert().values(
                 tenant_id=tenant_id,
                 run_id=run_metadata.run_id,
+                strategy_id=_strategy_id(run_metadata),
                 step_index=index,
                 node_name=step["node_name"],
                 status=step["status"],
@@ -232,7 +238,7 @@ def _completed_steps(response: GrowthStrategyResponse) -> list[dict[str, Any]]:
             {
                 "node_name": node_name,
                 "status": "completed",
-                "input_json": {"run_id": response.run_metadata.run_id},
+                "input_json": _step_input_json(response.run_metadata),
                 "output_json": output_json,
                 "latency_ms": latency_ms,
             }
@@ -253,7 +259,7 @@ def _failed_steps(
             {
                 "node_name": node_name,
                 "status": "failed" if is_failed_step else "completed",
-                "input_json": {"run_id": run_metadata.run_id},
+                "input_json": _step_input_json(run_metadata),
                 "output_json": {
                     "tool_summaries": [
                         summary.model_dump(mode="json")
@@ -282,4 +288,16 @@ def _failure_error_json(tool_results: list[ToolResult], error_message: str) -> d
         "error": latest_failure.error.model_dump(mode="json")
         if latest_failure and latest_failure.error
         else None,
+    }
+
+
+def _strategy_id(run_metadata: RunMetadata) -> str:
+    return run_metadata.strategy_id or run_metadata.run_id
+
+
+def _step_input_json(run_metadata: RunMetadata) -> dict[str, Any]:
+    return {
+        "run_id": run_metadata.run_id,
+        "execution_id": run_metadata.execution_id or run_metadata.run_id,
+        "strategy_id": run_metadata.strategy_id,
     }
