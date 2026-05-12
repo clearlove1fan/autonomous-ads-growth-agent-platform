@@ -34,6 +34,10 @@ class EvalExpectations(BaseModel):
     required_node_path: list[str] = Field(default_factory=lambda: list(REQUIRED_NODE_PATH))
     max_budget: Decimal | None = Field(default=None, gt=0, decimal_places=2)
     require_draft_only: bool = True
+    min_retrieved_source_count: int = Field(default=1, ge=0)
+    min_retrieval_relevance: float = Field(default=0.3, ge=0, le=1)
+    required_retrieved_source_ids: list[str] = Field(default_factory=list)
+    required_retrieved_source_types: list[str] = Field(default_factory=list)
 
 
 class EvalCase(BaseModel):
@@ -226,25 +230,59 @@ def evaluate_retrieval_grounding(
     case: EvalCase,
     response: GrowthStrategyResponse,
 ) -> EvaluationScore:
-    del case
     retrieved_sources = [
         source
         for source in response.strategy.sources
         if source.source_type in {"rag_document", "historical_case", "advertiser_memory"}
     ]
+    relevant_sources = [
+        source
+        for source in retrieved_sources
+        if source.relevance >= case.expectations.min_retrieval_relevance
+    ]
+    relevant_source_ids = {source.source_id for source in relevant_sources}
+    relevant_source_types = {source.source_type for source in relevant_sources}
+    duplicate_source_ids = sorted(
+        source_id
+        for source_id in relevant_source_ids
+        if [source.source_id for source in relevant_sources].count(source_id) > 1
+    )
+    missing_source_ids = sorted(
+        set(case.expectations.required_retrieved_source_ids) - relevant_source_ids
+    )
+    missing_source_types = sorted(
+        set(case.expectations.required_retrieved_source_types) - relevant_source_types
+    )
     source_types = sorted({source.source_type for source in retrieved_sources})
-    passed = bool(retrieved_sources)
+    checks = {
+        "has_min_retrieved_sources": len(relevant_sources)
+        >= case.expectations.min_retrieved_source_count,
+        "required_source_ids_present": not missing_source_ids,
+        "required_source_types_present": not missing_source_types,
+        "no_duplicate_source_ids": not duplicate_source_ids,
+    }
+    passed = all(checks.values())
+    score = sum(1 for value in checks.values() if value) / len(checks)
     return EvaluationScore(
         name="retrieval_grounding",
         passed=passed,
-        score=1.0 if passed else 0.0,
-        message="Strategy cites retrieved RAG, historical, or advertiser-memory sources."
+        score=score,
+        message="Strategy cites expected, relevant retrieved sources."
         if passed
-        else "Strategy does not cite retrieved knowledge sources.",
+        else "Strategy is missing expected retrieved sources or cites weak grounding.",
         details={
             "retrieved_source_count": len(retrieved_sources),
+            "relevant_retrieved_source_count": len(relevant_sources),
+            "min_retrieved_source_count": case.expectations.min_retrieved_source_count,
+            "min_retrieval_relevance": case.expectations.min_retrieval_relevance,
             "retrieved_source_types": source_types,
+            "relevant_source_types": sorted(relevant_source_types),
             "source_ids": [source.source_id for source in retrieved_sources],
+            "relevant_source_ids": sorted(relevant_source_ids),
+            "missing_source_ids": missing_source_ids,
+            "missing_source_types": missing_source_types,
+            "duplicate_source_ids": duplicate_source_ids,
+            "checks": checks,
         },
     )
 

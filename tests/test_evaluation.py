@@ -10,6 +10,7 @@ from ads_growth_agent.evaluation import (
     EvalCase,
     evaluate_budget_consistency,
     evaluate_growth_strategy,
+    evaluate_retrieval_grounding,
     load_eval_cases,
     run_local_eval_suite,
 )
@@ -68,6 +69,25 @@ def test_budget_evaluator_fails_when_case_budget_is_lower_than_strategy_budget()
     assert score.passed is False
     assert score.score == 0
     assert score.details["max_budget"] == "100.00"
+
+
+def test_retrieval_evaluator_requires_expected_source_ids() -> None:
+    case = EvalCase(
+        case_id="missing_source_case",
+        description="Require a source that the generated strategy will not cite.",
+        brief=_brief(budget=Decimal("2000.00")),
+        expectations={
+            "required_retrieved_source_ids": ["rag:missing:source"],
+            "required_retrieved_source_types": ["rag_document"],
+        },
+    )
+    response = generate_mock_growth_strategy(case.brief)
+
+    score = evaluate_retrieval_grounding(case, response)
+
+    assert score.passed is False
+    assert score.details["missing_source_ids"] == ["rag:missing:source"]
+    assert score.details["checks"]["required_source_ids_present"] is False
 
 
 def test_eval_cli_outputs_suite_report() -> None:

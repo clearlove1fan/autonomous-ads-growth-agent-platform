@@ -29,6 +29,7 @@ def test_build_knowledge_query_can_carry_run_id_for_retrieval_events() -> None:
     query = build_knowledge_query(_fitness_brief(), run_id="strategy_123")
 
     assert query.run_id == "strategy_123"
+    assert query.min_relevance == 0.3
 
 
 def test_default_seed_documents_are_public_for_postgres_seeding() -> None:
@@ -79,6 +80,17 @@ def test_in_memory_store_penalizes_other_advertiser_memory() -> None:
     assert result.results[0].relevance > result.results[1].relevance
 
 
+def test_in_memory_store_filters_low_relevance_lexical_noise() -> None:
+    result = build_default_knowledge_store().retrieve(
+        build_knowledge_query(_skincare_brief(), top_k=3)
+    )
+
+    assert [item.source_id for item in result.results] == [
+        "rag:playbook:purchase_growth:v1"
+    ]
+    assert all(item.relevance >= result.query.min_relevance for item in result.results)
+
+
 def _fitness_brief() -> AdvertiserBrief:
     return AdvertiserBrief(
         advertiser_id="adv_fitness_001",
@@ -93,4 +105,22 @@ def _fitness_brief() -> AdvertiserBrief:
         brand_voice="motivational and practical",
         constraints=["Avoid unrealistic body transformation claims"],
         known_audiences=["Home workout beginners"],
+    )
+
+
+def _skincare_brief() -> AdvertiserBrief:
+    return AdvertiserBrief(
+        advertiser_id="adv_skincare_002",
+        product_name="GlowLab Barrier Serum",
+        product_category="skincare",
+        objective=CampaignObjective.PURCHASES,
+        budget="3500.00",
+        currency="USD",
+        duration_days=21,
+        target_market="United States",
+        primary_kpi="first purchases",
+        target_cpa="35.00",
+        brand_voice="clinical and trustworthy",
+        constraints=["Avoid medical cure claims"],
+        known_audiences=["Sensitive skin shoppers"],
     )

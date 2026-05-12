@@ -181,7 +181,7 @@ The local suite currently evaluates:
 - budget consistency
 - tool use correctness
 - strategy completeness
-- retrieval grounding
+- retrieval grounding, including expected source IDs/types and minimum relevance
 - draft-only safety
 - observability metadata
 

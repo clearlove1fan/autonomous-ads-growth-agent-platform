@@ -74,6 +74,48 @@ def test_postgres_knowledge_store_retrieves_seeded_sources_and_records_event(
         _drop_temporary_database(test_url)
 
 
+def test_postgres_knowledge_store_filters_low_relevance_lexical_noise(
+    monkeypatch,
+) -> None:
+    base_url = _integration_database_url()
+    test_url = _create_temporary_database(base_url)
+    engine = sa.create_engine(test_url)
+
+    try:
+        monkeypatch.setenv("DATABASE_URL", test_url.render_as_string(hide_password=False))
+        command.upgrade(Config("alembic.ini"), "head")
+        seed_default_knowledge(engine)
+
+        query = build_knowledge_query(
+            _skincare_brief(),
+            top_k=3,
+            run_id="strategy_test_run_skincare",
+        )
+        result = PostgresKnowledgeStore(engine).retrieve(query)
+
+        assert [item.source_id for item in result.results] == [
+            "rag:playbook:purchase_growth:v1"
+        ]
+        assert all(item.relevance >= query.min_relevance for item in result.results)
+
+        with engine.connect() as connection:
+            event = connection.execute(
+                sa.text(
+                    "SELECT filters, results "
+                    "FROM retrieval_events WHERE run_id = :run_id"
+                ),
+                {"run_id": "strategy_test_run_skincare"},
+            ).mappings().one()
+
+        assert event["filters"]["min_relevance"] == 0.3
+        assert [item["source_id"] for item in event["results"]] == [
+            "rag:playbook:purchase_growth:v1"
+        ]
+    finally:
+        engine.dispose()
+        _drop_temporary_database(test_url)
+
+
 def test_strategy_generation_can_use_postgres_knowledge_backend(monkeypatch) -> None:
     base_url = _integration_database_url()
     test_url = _create_temporary_database(base_url)
@@ -128,6 +170,24 @@ def _fitness_brief() -> AdvertiserBrief:
         brand_voice="motivational and practical",
         constraints=["Avoid unrealistic body transformation claims"],
         known_audiences=["Home workout beginners"],
+    )
+
+
+def _skincare_brief() -> AdvertiserBrief:
+    return AdvertiserBrief(
+        advertiser_id="adv_skincare_002",
+        product_name="GlowLab Barrier Serum",
+        product_category="skincare",
+        objective=CampaignObjective.PURCHASES,
+        budget="3500.00",
+        currency="USD",
+        duration_days=21,
+        target_market="United States",
+        primary_kpi="first purchases",
+        target_cpa="35.00",
+        brand_voice="clinical and trustworthy",
+        constraints=["Avoid medical cure claims"],
+        known_audiences=["Sensitive skin shoppers"],
     )
 
 

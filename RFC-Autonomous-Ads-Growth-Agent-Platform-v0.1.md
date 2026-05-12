@@ -636,7 +636,7 @@ These decisions close a gap in the original RFC: v0.1 had a technical test plan,
 | Budget correctness | Ensure budget allocations do not exceed advertiser budget and remain internally consistent |
 | Tool registry | Cover unknown tool, invalid parameters, permission denied, tool timeout, and structured tool failure |
 | Structured output fallback | Simulate unsupported native structured output, invalid JSON, schema-invalid JSON, repair success, and repair failure |
-| RAG | Validate pgvector retrieval, metadata filtering, Postgres full-text fallback, hybrid ranking, and source attribution |
+| RAG | Validate pgvector retrieval, metadata filtering, Postgres full-text fallback, hybrid ranking, source attribution, minimum relevance filtering, and expected source IDs/types in eval cases |
 | LangGraph workflow | Verify planner to router to specialist agents to critic to finalizer state flow |
 | Observability | Verify every workflow run produces a LangSmith trace ID and structured JSON log entries |
 | Run lifecycle | Verify running/completed/failed transitions, ordered step persistence, run detail reads, retry eligibility, and resume rejection rules |

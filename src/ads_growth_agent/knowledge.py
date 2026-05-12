@@ -31,6 +31,7 @@ class KnowledgeQuery(BaseModel):
     objective: CampaignObjective
     target_market: str = Field(min_length=1, max_length=120)
     top_k: int = Field(default=3, ge=1, le=10)
+    min_relevance: float = Field(default=0.3, ge=0, le=1)
 
 
 class RetrievedKnowledge(BaseModel):
@@ -67,7 +68,11 @@ class InMemoryKnowledgeStore:
             for document in self._documents
         ]
         ranked = sorted(
-            ((document, score) for document, score in scored if score > 0),
+            (
+                (document, score)
+                for document, score in scored
+                if score >= query.min_relevance
+            ),
             key=lambda item: (-item[1], item[0].source_id),
         )
         results = [
@@ -85,6 +90,7 @@ def build_knowledge_query(
     brief: AdvertiserBrief,
     *,
     top_k: int = 3,
+    min_relevance: float = 0.3,
     run_id: str | None = None,
 ) -> KnowledgeQuery:
     query_parts = [
@@ -106,6 +112,7 @@ def build_knowledge_query(
         objective=brief.objective,
         target_market=brief.target_market,
         top_k=top_k,
+        min_relevance=min_relevance,
     )
 
 

@@ -23,6 +23,19 @@
           "Home workout beginners",
           "Wearable fitness tracker users"
         ]
+      },
+      "expectations": {
+        "min_retrieved_source_count": 3,
+        "required_retrieved_source_types": [
+          "advertiser_memory",
+          "historical_case",
+          "rag_document"
+        ],
+        "required_retrieved_source_ids": [
+          "memory:adv_fitness_001:profile:v1",
+          "case:fitness:trial_registration_creative_loop:v1",
+          "rag:playbook:app_registration_learning:v1"
+        ]
       }
     },
     {
@@ -48,6 +61,15 @@
           "Sensitive skin shoppers",
           "Beauty routine content engagers"
         ]
+      },
+      "expectations": {
+        "min_retrieved_source_count": 1,
+        "required_retrieved_source_types": [
+          "rag_document"
+        ],
+        "required_retrieved_source_ids": [
+          "rag:playbook:purchase_growth:v1"
+        ]
       }
     },
     {
@@ -71,6 +93,15 @@
         "known_audiences": [
           "Sales operations managers",
           "CRM software comparison viewers"
+        ]
+      },
+      "expectations": {
+        "min_retrieved_source_count": 1,
+        "required_retrieved_source_types": [
+          "rag_document"
+        ],
+        "required_retrieved_source_ids": [
+          "rag:playbook:b2b_lead_quality:v1"
         ]
       }
     }

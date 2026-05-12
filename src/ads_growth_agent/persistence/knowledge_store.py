@@ -31,7 +31,11 @@ class PostgresKnowledgeStore:
                 *_retrieve_memories(connection, query, tenant_id=self._tenant_id),
                 *_retrieve_documents(connection, query, tenant_id=self._tenant_id),
             ]
-            results = _rank_candidates(candidates, top_k=query.top_k)
+            results = _rank_candidates(
+                candidates,
+                top_k=query.top_k,
+                min_relevance=query.min_relevance,
+            )
             retrieval = KnowledgeRetrievalResult(query=query, results=results)
             latency_ms = int((perf_counter() - started) * 1000)
             _record_retrieval_event(
@@ -98,9 +102,10 @@ def _rank_candidates(
     candidates: list[RetrievedKnowledge],
     *,
     top_k: int,
+    min_relevance: float,
 ) -> list[RetrievedKnowledge]:
     return sorted(
-        candidates,
+        (candidate for candidate in candidates if candidate.relevance >= min_relevance),
         key=lambda item: (-item.relevance, item.source_type, item.source_id),
     )[:top_k]
 
@@ -190,6 +195,7 @@ def _record_retrieval_event(
         "product_category": query.product_category,
         "objective": query.objective.value,
         "target_market": query.target_market,
+        "min_relevance": query.min_relevance,
     }
     connection.execute(
         retrieval_events.insert().values(
