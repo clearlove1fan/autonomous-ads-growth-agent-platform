@@ -40,7 +40,7 @@ finishes after cancellation.
 - [x] Add CLI `cancel-strategy-job`.
 - [x] Add unit and live Postgres integration tests.
 - [x] Update README.
-- [~] Run verification, commit, push, and watch CI.
+- [x] Run verification, commit, push, and watch CI.
 
 ## Decisions
 
@@ -80,11 +80,13 @@ finishes after cancellation.
 - [x] Live Postgres integration:
   `RUN_POSTGRES_INTEGRATION=1 .venv/bin/python -m pytest tests/integration/test_migrations_postgres.py tests/integration/test_postgres_strategy_jobs.py`
   Result: 7 passed.
-- [ ] CI:
+- [x] CI: `gh run watch 25796455310 --exit-status`
+  Result: Passed. Jobs: lint, unit, e2e-smoke, postgres-integration, and
+  release-readiness.
 
 ## Final Status
 
-Implementation complete locally. Manual cancellation is available through API
-and CLI, includes a migration for terminal `cancelled` status, and prevents late
-worker completion from overwriting cancellation. Commit, push, and CI watch
-remain.
+Complete. Manual cancellation is available through API and CLI, includes a
+migration for terminal `cancelled` status, and prevents late worker completion
+from overwriting cancellation. Local tests, live PostgreSQL integration, and
+GitHub CI all passed. Docker was stopped after local live integration.
