@@ -12,6 +12,8 @@ from ads_growth_agent.knowledge import (
     KnowledgeRetrievalResult,
     RetrievedKnowledge,
 )
+from ads_growth_agent.outbox import enqueue_advertiser_memory_retrieved
+from ads_growth_agent.persistence.outbox_store import PostgresOutboxStore
 from ads_growth_agent.persistence.partitioning import partition_bucket
 from ads_growth_agent.persistence.schema import retrieval_events
 
@@ -20,9 +22,16 @@ _DOCUMENT_SOURCE_TYPES = ["rag_document", "historical_case"]
 
 
 class PostgresKnowledgeStore:
-    def __init__(self, bind: Engine | Connection, *, tenant_id: str = DEFAULT_TENANT_ID) -> None:
+    def __init__(
+        self,
+        bind: Engine | Connection,
+        *,
+        tenant_id: str = DEFAULT_TENANT_ID,
+        track_memory_usage: bool = False,
+    ) -> None:
         self._bind = bind
         self._tenant_id = tenant_id
+        self.track_memory_usage = track_memory_usage
 
     def retrieve(self, query: KnowledgeQuery) -> KnowledgeRetrievalResult:
         started = perf_counter()
@@ -45,6 +54,13 @@ class PostgresKnowledgeStore:
                 tenant_id=self._tenant_id,
                 latency_ms=latency_ms,
             )
+            if self.track_memory_usage:
+                _enqueue_memory_usage_events(
+                    connection,
+                    query,
+                    retrieval,
+                    tenant_id=self._tenant_id,
+                )
             return retrieval
 
 
@@ -211,6 +227,27 @@ def _record_retrieval_event(
             partition_bucket=partition_bucket(run_id),
         )
     )
+
+
+def _enqueue_memory_usage_events(
+    connection: Connection,
+    query: KnowledgeQuery,
+    retrieval: KnowledgeRetrievalResult,
+    *,
+    tenant_id: str,
+) -> None:
+    outbox_store = PostgresOutboxStore(connection, tenant_id=tenant_id)
+    for result in retrieval.results:
+        if result.source_type != "advertiser_memory":
+            continue
+        enqueue_advertiser_memory_retrieved(
+            outbox_store,
+            source_id=result.source_id,
+            advertiser_id=query.advertiser_id,
+            run_id=query.run_id,
+            query=query.query,
+            relevance=result.relevance,
+        )
 
 
 _ARRAY_TEXT = postgresql.ARRAY(sa.Text())

@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     performance_event_persistence_backend: Literal["none", "postgres"] = "none"
     advertiser_memory_persistence_backend: Literal["none", "postgres"] = "none"
     outbox_backend: Literal["none", "postgres"] = "none"
+    memory_usage_tracking_backend: Literal["none", "outbox"] = "none"
     idempotency_backend: Literal["none", "postgres"] = "none"
     strategy_job_backend: Literal["memory", "postgres"] = "memory"
     idempotency_ttl_seconds: int = 86_400

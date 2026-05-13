@@ -40,6 +40,7 @@ def test_knowledge_store_factory_builds_cached_postgres_store(monkeypatch) -> No
 
     assert isinstance(first, PostgresKnowledgeStore)
     assert isinstance(second, PostgresKnowledgeStore)
+    assert first.track_memory_usage is False
     assert created == [
         (
             "postgresql+psycopg://ads_growth:ads_growth@localhost:5432/ads_growth",
@@ -48,3 +49,44 @@ def test_knowledge_store_factory_builds_cached_postgres_store(monkeypatch) -> No
     ]
 
     dispose_cached_knowledge_store_engines()
+
+
+def test_knowledge_store_factory_enables_memory_usage_tracking(monkeypatch) -> None:
+    class FakeEngine:
+        def dispose(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        "ads_growth_agent.knowledge_store_factory.sa.create_engine",
+        lambda database_url, **kwargs: FakeEngine(),
+    )
+    dispose_cached_knowledge_store_engines()
+
+    store = build_configured_knowledge_store(
+        Settings(
+            database_url="postgresql+psycopg://ads_growth:ads_growth@localhost:5432/ads_growth",
+            knowledge_store_backend="postgres",
+            outbox_backend="postgres",
+            memory_usage_tracking_backend="outbox",
+        )
+    )
+
+    assert isinstance(store, PostgresKnowledgeStore)
+    assert store.track_memory_usage is True
+
+    dispose_cached_knowledge_store_engines()
+
+
+def test_knowledge_store_factory_rejects_outbox_tracking_without_outbox() -> None:
+    try:
+        build_configured_knowledge_store(
+            Settings(
+                knowledge_store_backend="postgres",
+                outbox_backend="none",
+                memory_usage_tracking_backend="outbox",
+            )
+        )
+    except ValueError as exc:
+        assert "requires OUTBOX_BACKEND=postgres" in str(exc)
+    else:
+        raise AssertionError("expected memory usage tracking configuration to fail")

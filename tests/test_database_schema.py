@@ -49,6 +49,8 @@ def test_high_volume_tables_have_partition_ready_columns() -> None:
 def test_vector_retrieval_tables_have_expected_embedding_dimension() -> None:
     assert knowledge_chunks.c.embedding.type.dim == EMBEDDING_DIMENSIONS
     assert advertiser_memories.c.embedding.type.dim == EMBEDDING_DIMENSIONS
+    assert "last_used_at" in advertiser_memories.c
+    assert "usage_count" in advertiser_memories.c
 
 
 def test_rag_tables_duplicate_hot_filter_columns_for_prefiltering() -> None:

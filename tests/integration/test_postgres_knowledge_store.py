@@ -11,6 +11,8 @@ from ads_growth_agent.config import Settings
 from ads_growth_agent.contracts import AdvertiserBrief, CampaignObjective
 from ads_growth_agent.knowledge import build_knowledge_query
 from ads_growth_agent.knowledge_store_factory import dispose_cached_knowledge_store_engines
+from ads_growth_agent.outbox import process_configured_outbox
+from ads_growth_agent.outbox_store_factory import dispose_cached_outbox_store_engines
 from ads_growth_agent.persistence.knowledge_seed import seed_default_knowledge
 from ads_growth_agent.persistence.knowledge_store import PostgresKnowledgeStore
 from ads_growth_agent.strategy import generate_growth_strategy
@@ -129,9 +131,17 @@ def test_strategy_generation_can_use_postgres_knowledge_backend(monkeypatch) -> 
         settings = Settings(
             database_url=test_url.render_as_string(hide_password=False),
             knowledge_store_backend="postgres",
+            advertiser_memory_persistence_backend="postgres",
+            outbox_backend="postgres",
+            memory_usage_tracking_backend="outbox",
             tenant_id="default",
         )
         response = generate_growth_strategy(_fitness_brief(), settings=settings)
+        worker_report = process_configured_outbox(
+            settings,
+            limit=10,
+            worker_id="worker_memory_usage",
+        )
 
         source_types = {source.source_type for source in response.strategy.sources}
         assert response.node_path == [
@@ -148,10 +158,30 @@ def test_strategy_generation_can_use_postgres_knowledge_backend(monkeypatch) -> 
                 sa.text("SELECT count(*) FROM retrieval_events WHERE run_id = :run_id"),
                 {"run_id": response.run_metadata.run_id},
             ).scalar_one()
+            outbox_count = connection.execute(
+                sa.text(
+                    "SELECT count(*) FROM outbox_events "
+                    "WHERE event_type = 'advertiser_memory_retrieved' "
+                    "AND status = 'completed'"
+                )
+            ).scalar_one()
+            memory_usage = connection.execute(
+                sa.text(
+                    "SELECT usage_count, last_used_at FROM advertiser_memories "
+                    "WHERE metadata ->> 'source_id' = :source_id"
+                ),
+                {"source_id": "memory:adv_fitness_001:profile:v1"},
+            ).mappings().one()
 
         assert event_count == 1
+        assert worker_report.claimed == 1
+        assert worker_report.completed == 1
+        assert outbox_count == 1
+        assert memory_usage["usage_count"] == 1
+        assert memory_usage["last_used_at"] is not None
     finally:
         dispose_cached_knowledge_store_engines()
+        dispose_cached_outbox_store_engines()
         engine.dispose()
         _drop_temporary_database(test_url)
 

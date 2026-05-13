@@ -1,5 +1,6 @@
+from datetime import UTC, datetime
 from typing import Any
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -13,13 +14,16 @@ from ads_growth_agent.contracts import (
 )
 from ads_growth_agent.outbox_store_factory import build_configured_outbox_store
 from ads_growth_agent.persistence.advertiser_memory_store import (
+    AdvertiserMemoryUsageResult,
     AdvertiserMemoryWriteResult,
     feedback_memory_source_id,
 )
 from ads_growth_agent.persistence.outbox_store import OutboxEventRecord, OutboxStore
 
 CAMPAIGN_PERFORMANCE_ANALYZED_EVENT = "campaign_performance_analyzed"
+ADVERTISER_MEMORY_RETRIEVED_EVENT = "advertiser_memory_retrieved"
 ADVERTISER_MEMORY_HANDLER = "advertiser_memory_write"
+ADVERTISER_MEMORY_USAGE_HANDLER = "advertiser_memory_usage"
 
 
 class OutboxProcessingReport(BaseModel):
@@ -56,6 +60,40 @@ def enqueue_advertiser_memory_write(
     return _write_result_from_outbox_record(record, source_id=source_id)
 
 
+def enqueue_advertiser_memory_retrieved(
+    outbox_store: OutboxStore,
+    *,
+    source_id: str,
+    advertiser_id: str,
+    run_id: str | None,
+    query: str,
+    relevance: float,
+    retrieved_at: datetime | None = None,
+) -> OutboxEventRecord:
+    effective_retrieved_at = retrieved_at or datetime.now(UTC)
+    return outbox_store.enqueue(
+        event_type=ADVERTISER_MEMORY_RETRIEVED_EVENT,
+        aggregate_type="advertiser_memory",
+        aggregate_id=source_id,
+        idempotency_key=_usage_idempotency_key(run_id=run_id, source_id=source_id),
+        payload={
+            "source_id": source_id,
+            "advertiser_id": advertiser_id,
+            "run_id": run_id,
+            "query": query,
+            "relevance": relevance,
+            "retrieved_at": effective_retrieved_at.isoformat(),
+        },
+        metadata={
+            "handler": ADVERTISER_MEMORY_USAGE_HANDLER,
+            "advertiser_id": advertiser_id,
+            "run_id": run_id,
+        },
+        partition_key=source_id,
+        partition_date=effective_retrieved_at,
+    )
+
+
 def process_configured_outbox(
     settings: Settings,
     *,
@@ -84,9 +122,12 @@ def process_outbox_events(
     events: list[dict[str, Any]] = []
     for record in claimed:
         try:
-            if record.event_type != CAMPAIGN_PERFORMANCE_ANALYZED_EVENT:
+            if record.event_type == CAMPAIGN_PERFORMANCE_ANALYZED_EVENT:
+                result = _handle_campaign_performance_analyzed(record, advertiser_memory_store)
+            elif record.event_type == ADVERTISER_MEMORY_RETRIEVED_EVENT:
+                result = _handle_advertiser_memory_retrieved(record, advertiser_memory_store)
+            else:
                 raise ValueError(f"unsupported outbox event type: {record.event_type}")
-            result = _handle_campaign_performance_analyzed(record, advertiser_memory_store)
         except Exception as exc:
             failed += 1
             outbox_store.mark_failed(
@@ -113,7 +154,7 @@ def process_outbox_events(
                 "outbox_event_id": record.outbox_event_id,
                 "event_type": record.event_type,
                 "status": "completed",
-                "advertiser_memory_source_id": result.source_id,
+                "advertiser_memory_source_id": getattr(result, "source_id", None),
             }
         )
 
@@ -136,6 +177,21 @@ def _handle_campaign_performance_analyzed(
     except (KeyError, TypeError, ValidationError) as exc:
         raise ValueError("invalid campaign performance analyzed payload") from exc
     return advertiser_memory_store.record_feedback_memory(event, analysis)
+
+
+def _handle_advertiser_memory_retrieved(
+    record: OutboxEventRecord,
+    advertiser_memory_store,
+) -> AdvertiserMemoryUsageResult:
+    try:
+        source_id = str(record.payload["source_id"])
+        retrieved_at = datetime.fromisoformat(str(record.payload["retrieved_at"]))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("invalid advertiser memory retrieved payload") from exc
+    return advertiser_memory_store.record_retrieval_usage(
+        source_id=source_id,
+        retrieved_at=retrieved_at,
+    )
 
 
 def _write_result_from_outbox_record(
@@ -171,3 +227,9 @@ def _write_result_from_outbox_record(
 
 def _memory_idempotency_key(event: CampaignPerformanceEventRequest) -> str:
     return f"advertiser-memory:{event.advertiser_id}:{event.event_id}:v1"
+
+
+def _usage_idempotency_key(*, run_id: str | None, source_id: str) -> str:
+    run_component = run_id or f"ad-hoc:{uuid4().hex}"
+    fingerprint = uuid5(NAMESPACE_URL, f"{run_component}:{source_id}").hex[:20]
+    return f"advertiser-memory-usage:{fingerprint}:v1"

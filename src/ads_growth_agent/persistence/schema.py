@@ -329,6 +329,7 @@ advertiser_memories = sa.Table(
     sa.Column("embedding", Vector(EMBEDDING_DIMENSIONS), nullable=True),
     sa.Column("importance_score", sa.Numeric(4, 3), nullable=False, server_default="0.500"),
     sa.Column("last_used_at", sa.DateTime(timezone=True), nullable=True),
+    sa.Column("usage_count", sa.Integer(), nullable=False, server_default="0"),
     sa.Column(
         "metadata", postgresql.JSONB(), nullable=False, server_default=sa.text("'{}'::jsonb")
     ),
@@ -348,6 +349,7 @@ advertiser_memories = sa.Table(
         "importance_score >= 0 and importance_score <= 1",
         name="advertiser_memory_importance_range",
     ),
+    sa.CheckConstraint("usage_count >= 0", name="advertiser_memory_usage_count_nonnegative"),
     sa.CheckConstraint(
         f"partition_bucket >= 0 and partition_bucket < {PARTITION_BUCKETS}",
         name="advertiser_memory_partition_bucket_range",

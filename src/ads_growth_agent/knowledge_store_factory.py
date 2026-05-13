@@ -15,9 +15,17 @@ def build_configured_knowledge_store(settings: Settings) -> KnowledgeStore:
     if settings.knowledge_store_backend == "memory":
         return build_default_knowledge_store()
     if settings.knowledge_store_backend == "postgres":
+        if (
+            settings.memory_usage_tracking_backend == "outbox"
+            and settings.outbox_backend != "postgres"
+        ):
+            raise ValueError(
+                "memory usage tracking backend 'outbox' requires OUTBOX_BACKEND=postgres"
+            )
         return PostgresKnowledgeStore(
             _engine_for_url(settings.database_url),
             tenant_id=settings.tenant_id,
+            track_memory_usage=settings.memory_usage_tracking_backend == "outbox",
         )
     raise ValueError(f"Unsupported knowledge store backend: {settings.knowledge_store_backend}")
 

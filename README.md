@@ -258,6 +258,8 @@ OUTBOX_BACKEND=postgres ADVERTISER_MEMORY_PERSISTENCE_BACKEND=postgres ads-growt
 
 After the worker completes, replaying the same event returns `Advertiser-Memory-Status: recorded`, and later strategy-generation runs with `KNOWLEDGE_STORE_BACKEND=postgres` can retrieve that memory as an `advertiser_memory` citation. If `OUTBOX_BACKEND=none`, the service keeps the simpler synchronous memory-write fallback for local demos.
 
+Memory retrieval usage tracking is also asynchronous. Set `MEMORY_USAGE_TRACKING_BACKEND=outbox` together with `KNOWLEDGE_STORE_BACKEND=postgres` and `OUTBOX_BACKEND=postgres` to enqueue `advertiser_memory_retrieved` events whenever Postgres RAG cites advertiser memory. `ads-growth-agent process-outbox` updates `advertiser_memories.last_used_at` and `usage_count` outside the retrieval path.
+
 When persistence is enabled, event ingestion is idempotent by `event_id`: replaying the same normalized payload returns the already persisted analysis with `Performance-Event-Status: replayed`; reusing the same `event_id` with different metrics or metadata returns HTTP `409` with `PERFORMANCE_EVENT_ID_CONFLICT`.
 
 Persisted performance events can be queried for audit and replay:

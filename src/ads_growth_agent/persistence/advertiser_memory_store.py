@@ -1,5 +1,6 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Literal, Protocol
 from uuid import NAMESPACE_URL, uuid5
@@ -47,6 +48,13 @@ class AdvertiserMemoryWriteResult(BaseModel):
     memory_type: AdvertiserMemoryType | None = None
 
 
+class AdvertiserMemoryUsageResult(BaseModel):
+    recorded: bool
+    source_id: str = Field(min_length=1, max_length=160)
+    usage_count: int | None = Field(default=None, ge=0)
+    last_used_at: datetime | None = None
+
+
 class AdvertiserMemoryStore(Protocol):
     def record_feedback_memory(
         self,
@@ -54,6 +62,14 @@ class AdvertiserMemoryStore(Protocol):
         analysis: CampaignFeedbackAnalysis,
     ) -> AdvertiserMemoryWriteResult:
         """Persist derived long-term memory from campaign feedback."""
+
+    def record_retrieval_usage(
+        self,
+        *,
+        source_id: str,
+        retrieved_at: datetime | None = None,
+    ) -> AdvertiserMemoryUsageResult:
+        """Record that a memory source was retrieved."""
 
 
 class NoopAdvertiserMemoryStore:
@@ -63,6 +79,14 @@ class NoopAdvertiserMemoryStore:
         analysis: CampaignFeedbackAnalysis,
     ) -> AdvertiserMemoryWriteResult:
         return AdvertiserMemoryWriteResult(persisted=False, status="disabled")
+
+    def record_retrieval_usage(
+        self,
+        *,
+        source_id: str,
+        retrieved_at: datetime | None = None,
+    ) -> AdvertiserMemoryUsageResult:
+        return AdvertiserMemoryUsageResult(recorded=False, source_id=source_id)
 
 
 class PostgresAdvertiserMemoryStore:
@@ -126,6 +150,38 @@ class PostgresAdvertiserMemoryStore:
             status="recorded",
             source_id=source_id,
             memory_type="historical_performance",
+        )
+
+    def record_retrieval_usage(
+        self,
+        *,
+        source_id: str,
+        retrieved_at: datetime | None = None,
+    ) -> AdvertiserMemoryUsageResult:
+        effective_retrieved_at = retrieved_at or datetime.now(UTC)
+        with _transaction(self._bind) as connection:
+            row = connection.execute(
+                advertiser_memories.update()
+                .where(advertiser_memories.c.tenant_id == self._tenant_id)
+                .where(advertiser_memories.c.metadata["source_id"].astext == source_id)
+                .values(
+                    last_used_at=effective_retrieved_at,
+                    usage_count=advertiser_memories.c.usage_count + 1,
+                    updated_at=sa.func.now(),
+                )
+                .returning(
+                    advertiser_memories.c.usage_count,
+                    advertiser_memories.c.last_used_at,
+                )
+            ).mappings().one_or_none()
+
+        if row is None:
+            return AdvertiserMemoryUsageResult(recorded=False, source_id=source_id)
+        return AdvertiserMemoryUsageResult(
+            recorded=True,
+            source_id=source_id,
+            usage_count=row["usage_count"],
+            last_used_at=row["last_used_at"],
         )
 
 
@@ -214,6 +270,7 @@ def _memory_values(
         "content": _memory_content(event, analysis, action_types=action_types),
         "summary": f"{health_status} {event.objective.value} performance feedback",
         "importance_score": _importance_score(analysis.health_status),
+        "usage_count": 0,
         "metadata": metadata,
         "partition_key": event.advertiser_id,
         "partition_bucket": partition_bucket(event.advertiser_id),

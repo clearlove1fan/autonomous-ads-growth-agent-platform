@@ -3,7 +3,9 @@ from datetime import UTC, datetime
 from ads_growth_agent.config import Settings
 from ads_growth_agent.feedback import analyze_campaign_performance_event
 from ads_growth_agent.outbox import (
+    ADVERTISER_MEMORY_RETRIEVED_EVENT,
     CAMPAIGN_PERFORMANCE_ANALYZED_EVENT,
+    enqueue_advertiser_memory_retrieved,
     enqueue_advertiser_memory_write,
     process_outbox_events,
 )
@@ -12,6 +14,7 @@ from ads_growth_agent.outbox_store_factory import (
     dispose_cached_outbox_store_engines,
 )
 from ads_growth_agent.persistence.advertiser_memory_store import (
+    AdvertiserMemoryUsageResult,
     AdvertiserMemoryWriteResult,
 )
 from ads_growth_agent.persistence.outbox_store import (
@@ -80,6 +83,27 @@ def test_enqueue_advertiser_memory_write_returns_queued_result() -> None:
     assert outbox_store.enqueued[0]["payload"]["analysis"]["event_id"] == "evt_perf_001"
 
 
+def test_enqueue_advertiser_memory_retrieved_records_usage_event() -> None:
+    outbox_store = FakeOutboxStore(status="pending")
+
+    record = enqueue_advertiser_memory_retrieved(
+        outbox_store,
+        source_id="memory:adv_fitness_001:profile:v1",
+        advertiser_id="adv_fitness_001",
+        run_id="run_usage_001",
+        query="fitness registrations",
+        relevance=0.8,
+    )
+
+    assert record.status == "pending"
+    assert outbox_store.enqueued[0]["event_type"] == ADVERTISER_MEMORY_RETRIEVED_EVENT
+    assert outbox_store.enqueued[0]["aggregate_type"] == "advertiser_memory"
+    assert outbox_store.enqueued[0]["payload"]["source_id"] == (
+        "memory:adv_fitness_001:profile:v1"
+    )
+    assert outbox_store.enqueued[0]["payload"]["run_id"] == "run_usage_001"
+
+
 def test_process_outbox_events_writes_advertiser_memory_and_marks_completed() -> None:
     event = _event_request()
     analysis = analyze_campaign_performance_event(event)
@@ -106,6 +130,37 @@ def test_process_outbox_events_writes_advertiser_memory_and_marks_completed() ->
     assert memory_store.records == [("evt_perf_001", analysis.feedback_id)]
     assert outbox_store.completed == [record.outbox_event_id]
     assert outbox_store.failed == []
+
+
+def test_process_outbox_events_records_memory_usage_and_marks_completed() -> None:
+    record = _outbox_record(
+        event_type=ADVERTISER_MEMORY_RETRIEVED_EVENT,
+        aggregate_type="advertiser_memory",
+        aggregate_id="memory:adv_fitness_001:profile:v1",
+        payload={
+            "source_id": "memory:adv_fitness_001:profile:v1",
+            "advertiser_id": "adv_fitness_001",
+            "run_id": "run_usage_001",
+            "query": "fitness registrations",
+            "relevance": 0.8,
+            "retrieved_at": "2026-05-13T01:30:00+00:00",
+        },
+    )
+    outbox_store = FakeOutboxStore(claimed=[record])
+    memory_store = FakeAdvertiserMemoryStore()
+
+    report = process_outbox_events(
+        outbox_store,
+        memory_store,
+        limit=10,
+        worker_id="worker_unit",
+    )
+
+    assert report.claimed == 1
+    assert report.completed == 1
+    assert report.failed == 0
+    assert memory_store.usage_records == ["memory:adv_fitness_001:profile:v1"]
+    assert outbox_store.completed == [record.outbox_event_id]
 
 
 def test_process_outbox_events_marks_invalid_payload_failed() -> None:
@@ -164,6 +219,7 @@ class FakeOutboxStore:
 class FakeAdvertiserMemoryStore:
     def __init__(self) -> None:
         self.records: list[tuple[str, str]] = []
+        self.usage_records: list[str] = []
 
     def record_feedback_memory(self, event, analysis) -> AdvertiserMemoryWriteResult:
         self.records.append((event.event_id, analysis.feedback_id))
@@ -174,19 +230,31 @@ class FakeAdvertiserMemoryStore:
             memory_type="historical_performance",
         )
 
+    def record_retrieval_usage(self, *, source_id: str, retrieved_at=None):
+        self.usage_records.append(source_id)
+        return AdvertiserMemoryUsageResult(
+            recorded=True,
+            source_id=source_id,
+            usage_count=1,
+            last_used_at=retrieved_at,
+        )
+
 
 def _outbox_record(
     *,
     status: str = "pending",
     payload: dict,
+    event_type: str = CAMPAIGN_PERFORMANCE_ANALYZED_EVENT,
+    aggregate_type: str = "campaign_performance_event",
+    aggregate_id: str = "evt_perf_001",
     metadata: dict[str, object] | None = None,
 ) -> OutboxEventRecord:
     now = datetime.now(UTC)
     return OutboxEventRecord(
         outbox_event_id="outbox_test",
-        event_type=CAMPAIGN_PERFORMANCE_ANALYZED_EVENT,
-        aggregate_type="campaign_performance_event",
-        aggregate_id="evt_perf_001",
+        event_type=event_type,
+        aggregate_type=aggregate_type,
+        aggregate_id=aggregate_id,
         idempotency_key="advertiser-memory:adv_fitness_001:evt_perf_001:v1",
         status=status,
         payload=payload,
