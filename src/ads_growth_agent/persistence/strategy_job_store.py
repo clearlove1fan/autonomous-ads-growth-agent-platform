@@ -79,6 +79,15 @@ class StrategyJobStore(Protocol):
     def get_job(self, job_id: str) -> StrategyJobDetailResponse | None:
         """Return one strategy job for the configured tenant."""
 
+    def retry_failed(
+        self,
+        job_id: str,
+        *,
+        max_attempts: int,
+        requested_by: str,
+    ) -> StrategyJobDetailResponse | None:
+        """Requeue a terminal failed job with a fresh attempt budget."""
+
     def list_jobs(
         self,
         *,
@@ -266,6 +275,42 @@ class InMemoryStrategyJobStore:
     def get_job(self, job_id: str) -> StrategyJobDetailResponse | None:
         with self._lock:
             return self._jobs.get(job_id)
+
+    def retry_failed(
+        self,
+        job_id: str,
+        *,
+        max_attempts: int,
+        requested_by: str,
+    ) -> StrategyJobDetailResponse | None:
+        now = datetime.now(UTC)
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job.status != StrategyJobStatus.FAILED:
+                return None
+            metadata = _manual_retry_metadata(
+                job.metadata,
+                previous_error=job.error,
+                requested_by=requested_by,
+                requested_at=now,
+            )
+            updated = job.model_copy(
+                update={
+                    "status": StrategyJobStatus.QUEUED,
+                    "result": None,
+                    "error": None,
+                    "metadata": metadata,
+                    "attempt_count": 0,
+                    "max_attempts": max_attempts,
+                    "next_attempt_at": now,
+                    "locked_by": None,
+                    "locked_until": None,
+                    "completed_at": None,
+                    "updated_at": now,
+                }
+            )
+            self._jobs[job_id] = updated
+            return updated
 
     def list_jobs(
         self,
@@ -542,6 +587,46 @@ class PostgresStrategyJobStore:
         with _connection(self._bind) as connection:
             return _fetch_job(connection, job_id, tenant_id=self._tenant_id)
 
+    def retry_failed(
+        self,
+        job_id: str,
+        *,
+        max_attempts: int,
+        requested_by: str,
+    ) -> StrategyJobDetailResponse | None:
+        now = datetime.now(UTC)
+        with _transaction(self._bind) as connection:
+            row = _fetch_job_row_for_update(connection, job_id, tenant_id=self._tenant_id)
+            if row is None or row["status"] != StrategyJobStatus.FAILED.value:
+                return None
+            metadata = _manual_retry_metadata(
+                dict(row["metadata"] or {}),
+                previous_error=(
+                    dict(row["error_json"]) if row["error_json"] is not None else None
+                ),
+                requested_by=requested_by,
+                requested_at=now,
+            )
+            connection.execute(
+                strategy_jobs.update()
+                .where(strategy_jobs.c.tenant_id == self._tenant_id)
+                .where(strategy_jobs.c.job_id == job_id)
+                .values(
+                    status=StrategyJobStatus.QUEUED.value,
+                    response_json=None,
+                    error_json=None,
+                    metadata=metadata,
+                    attempt_count=0,
+                    max_attempts=max_attempts,
+                    next_attempt_at=now,
+                    locked_by=None,
+                    locked_until=None,
+                    completed_at=None,
+                    updated_at=sa.func.now(),
+                )
+            )
+            return _fetch_job(connection, job_id, tenant_id=self._tenant_id)
+
     def list_jobs(
         self,
         *,
@@ -696,6 +781,23 @@ def _row_to_job(row) -> StrategyJobDetailResponse:
         updated_at=row["updated_at"],
         completed_at=row["completed_at"],
     )
+
+
+def _manual_retry_metadata(
+    metadata: dict[str, Any],
+    *,
+    previous_error: dict[str, Any] | None,
+    requested_by: str,
+    requested_at: datetime,
+) -> dict[str, Any]:
+    retry_count = int(metadata.get("manual_retry_count") or 0) + 1
+    return {
+        **metadata,
+        "manual_retry_count": retry_count,
+        "last_manual_retry_by": requested_by,
+        "last_manual_retry_at": requested_at.isoformat(),
+        "previous_error": previous_error,
+    }
 
 
 def _fetch_job_row_for_update(

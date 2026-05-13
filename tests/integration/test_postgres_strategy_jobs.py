@@ -251,6 +251,59 @@ def test_postgres_strategy_job_failure_retries_until_attempts_exhausted(
         _drop_temporary_database(test_url)
 
 
+def test_postgres_failed_strategy_job_can_be_manually_retried(monkeypatch) -> None:
+    base_url = _integration_database_url()
+    test_url = _create_temporary_database(base_url)
+    engine = sa.create_engine(test_url)
+
+    try:
+        monkeypatch.setenv("DATABASE_URL", test_url.render_as_string(hide_password=False))
+        command.upgrade(Config("alembic.ini"), "head")
+
+        store = PostgresStrategyJobStore(engine, tenant_id="tenant_jobs")
+        request = GrowthStrategyRequest.model_validate({"brief": _brief_payload()})
+        created = store.create_queued(
+            request,
+            job_id="job_manual_retry_pg",
+            strategy_id="strategy_manual_retry_pg",
+            run_id="run_manual_retry_pg",
+            trace_id="trace_manual_retry_pg",
+            max_attempts=1,
+        )
+        claimed = store.claim_queued(limit=1, worker_id="worker_retry")
+        terminal = store.mark_attempt_failed(
+            claimed[0].job_id,
+            error={"message": "permanent failure"},
+            retry_delay_seconds=0,
+        )
+
+        retried = store.retry_failed(
+            created.job_id,
+            max_attempts=4,
+            requested_by="integration_test",
+        )
+        claimed_again = store.claim_queued(limit=1, worker_id="worker_retry")
+
+        assert terminal is not None
+        assert terminal.status == "failed"
+        assert retried is not None
+        assert retried.status == "queued"
+        assert retried.attempt_count == 0
+        assert retried.max_attempts == 4
+        assert retried.error is None
+        assert retried.result is None
+        assert retried.completed_at is None
+        assert retried.next_attempt_at is not None
+        assert retried.metadata["manual_retry_count"] == 1
+        assert retried.metadata["last_manual_retry_by"] == "integration_test"
+        assert retried.metadata["previous_error"]["message"] == "permanent failure"
+        assert claimed_again[0].job_id == created.job_id
+        assert claimed_again[0].attempt_count == 1
+    finally:
+        engine.dispose()
+        _drop_temporary_database(test_url)
+
+
 def _brief_payload(*, advertiser_id: str = "adv_fitness_001") -> dict:
     return {
         "advertiser_id": advertiser_id,

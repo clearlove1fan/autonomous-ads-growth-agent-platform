@@ -171,6 +171,67 @@ def test_growth_strategy_jobs_list_filters_by_status_and_advertiser() -> None:
     assert payload["items"][0]["next_attempt_at"] is not None
 
 
+def test_failed_strategy_job_can_be_manually_retried_via_api(monkeypatch) -> None:
+    store = InMemoryStrategyJobStore()
+
+    def fail_generation(*args, **kwargs):
+        raise RuntimeError("planner failed")
+
+    monkeypatch.setattr(worker_module, "generate_growth_strategy", fail_generation)
+    api_app.dependency_overrides[get_runtime_settings] = lambda: Settings(
+        strategy_job_backend="memory",
+        strategy_job_max_attempts=4,
+    )
+    api_app.dependency_overrides[get_runtime_strategy_job_store] = lambda: store
+    try:
+        accepted = TestClient(api_app).post(
+            "/growth-strategies/jobs",
+            json={"brief": _brief_payload()},
+        )
+        retry_response = TestClient(api_app).post(
+            f"/growth-strategies/jobs/{accepted.json()['job_id']}/retry",
+            headers={"X-Operator-ID": "operator_api"},
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    payload = retry_response.json()
+    assert accepted.status_code == 202
+    assert retry_response.status_code == 200
+    assert retry_response.headers["strategy-job-id"] == accepted.json()["job_id"]
+    assert retry_response.headers["strategy-job-status"] == "queued"
+    assert payload["status"] == "queued"
+    assert payload["attempt_count"] == 0
+    assert payload["max_attempts"] == 4
+    assert payload["next_attempt_at"] is not None
+    assert payload["completed_at"] is None
+    assert payload["error"] is None
+    assert payload["metadata"]["manual_retry_count"] == 1
+    assert payload["metadata"]["last_manual_retry_by"] == "operator_api"
+    assert payload["metadata"]["previous_error"]["detail"] == "planner failed"
+
+
+def test_manual_retry_rejects_non_failed_strategy_job() -> None:
+    store = InMemoryStrategyJobStore()
+    settings = Settings(strategy_job_backend="memory", strategy_job_execution_mode="external")
+    api_app.dependency_overrides[get_runtime_settings] = lambda: settings
+    api_app.dependency_overrides[get_runtime_strategy_job_store] = lambda: store
+    try:
+        accepted = TestClient(api_app).post(
+            "/growth-strategies/jobs",
+            json={"brief": _brief_payload()},
+        )
+        retry_response = TestClient(api_app).post(
+            f"/growth-strategies/jobs/{accepted.json()['job_id']}/retry"
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    assert accepted.status_code == 202
+    assert retry_response.status_code == 409
+    assert retry_response.json()["detail"]["error_code"] == "STRATEGY_JOB_NOT_RETRYABLE"
+
+
 def test_external_strategy_job_execution_mode_leaves_job_queued_then_worker_completes() -> None:
     store = InMemoryStrategyJobStore()
     settings = Settings(strategy_job_backend="memory", strategy_job_execution_mode="external")
@@ -372,6 +433,49 @@ def test_list_strategy_jobs_cli_filters_jobs(monkeypatch) -> None:
     assert parsed["status"] == "queued"
     assert parsed["advertiser_id"] == "adv_fitness_001"
     assert parsed["items"][0]["job_id"] == "job_cli_001"
+
+
+def test_retry_strategy_job_cli_requeues_failed_job(monkeypatch) -> None:
+    store = InMemoryStrategyJobStore()
+    request = GrowthStrategyRequest.model_validate({"brief": _brief_payload()})
+    job = store.create_queued(
+        request,
+        job_id="job_cli_retry",
+        strategy_id="strategy_cli_retry",
+        run_id="run_cli_retry",
+        trace_id="trace_cli_retry",
+        max_attempts=1,
+    )
+    claimed = store.claim_queued(limit=1, worker_id="worker_cli")
+    store.mark_attempt_failed(
+        claimed[0].job_id,
+        error={"message": "permanent failure"},
+        retry_delay_seconds=0,
+    )
+
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.get_settings",
+        lambda: Settings(tenant_id="tenant_cli", strategy_job_max_attempts=3),
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_strategy_job_store",
+        lambda settings: store,
+    )
+
+    result = CliRunner().invoke(
+        cli_app,
+        ["retry-strategy-job", job.job_id, "--requested-by", "operator_cli"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["job_id"] == job.job_id
+    assert payload["status"] == "queued"
+    assert payload["attempt_count"] == 0
+    assert payload["max_attempts"] == 3
+    assert payload["metadata"]["manual_retry_count"] == 1
+    assert payload["metadata"]["last_manual_retry_by"] == "operator_cli"
+    assert payload["metadata"]["previous_error"]["message"] == "permanent failure"
 
 
 def test_get_growth_strategy_job_returns_404_for_missing_job() -> None:

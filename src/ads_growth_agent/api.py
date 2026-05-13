@@ -309,6 +309,67 @@ def get_growth_strategy_job(
     return job
 
 
+@app.post(
+    "/growth-strategies/jobs/{job_id}/retry",
+    response_model=StrategyJobDetailResponse,
+)
+def retry_growth_strategy_job(
+    job_id: str,
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    job_store: Annotated[
+        StrategyJobStore,
+        Depends(get_runtime_strategy_job_store),
+    ],
+    x_operator_id: Annotated[str | None, Header(alias="X-Operator-ID")] = None,
+) -> StrategyJobDetailResponse:
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    job = job_store.get_job(job_id)
+    if job is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": "Strategy job was not found for the effective tenant.",
+                "error_code": "STRATEGY_JOB_NOT_FOUND",
+                "job_id": job_id,
+            },
+        )
+    if job.status != StrategyJobStatus.FAILED:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Only failed strategy jobs can be retried manually.",
+                "error_code": "STRATEGY_JOB_NOT_RETRYABLE",
+                "job_id": job_id,
+                "status": job.status.value,
+            },
+        )
+    retried = job_store.retry_failed(
+        job_id,
+        max_attempts=settings.strategy_job_max_attempts,
+        requested_by=_operator_id_or_default(x_operator_id, default="api"),
+    )
+    if retried is None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Strategy job could not be retried in its current state.",
+                "error_code": "STRATEGY_JOB_NOT_RETRYABLE",
+                "job_id": job_id,
+            },
+        )
+    response.headers["Strategy-Job-ID"] = retried.job_id
+    response.headers["Strategy-Job-Status"] = retried.status.value
+    return retried
+
+
+def _operator_id_or_default(operator_id: str | None, *, default: str) -> str:
+    if operator_id is None:
+        return default
+    normalized = operator_id.strip()
+    return normalized or default
+
+
 @app.post("/campaign-events/performance", response_model=CampaignPerformanceEventResponse)
 def ingest_campaign_performance_event(
     request: CampaignPerformanceEventRequest,
