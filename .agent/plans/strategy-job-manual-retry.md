@@ -33,7 +33,7 @@ attempt budget, visible audit metadata, and no direct database edits required.
 - [x] Add CLI `retry-strategy-job`.
 - [x] Add unit and live Postgres integration tests.
 - [x] Update README.
-- [~] Run verification, commit, push, and watch CI.
+- [x] Run verification, commit, push, and watch CI.
 
 ## Decisions
 
@@ -68,10 +68,12 @@ attempt budget, visible audit metadata, and no direct database edits required.
 - [x] Live Postgres integration:
   `RUN_POSTGRES_INTEGRATION=1 .venv/bin/python -m pytest tests/integration/test_postgres_strategy_jobs.py`
   Result: 5 passed.
-- [ ] CI:
+- [x] CI: `gh run watch 25790168738 --exit-status`
+  Result: Passed. Jobs: lint, unit, e2e-smoke, postgres-integration, and
+  release-readiness.
 
 ## Final Status
 
-Implementation complete locally. Manual retry is available through API and CLI,
-covered by unit tests and live PostgreSQL integration. Commit, push, and CI
-watch remain.
+Complete. Manual retry is available through API and CLI, covered by unit tests,
+full local tests, live PostgreSQL integration, and GitHub CI. Docker was stopped
+after local live integration.
