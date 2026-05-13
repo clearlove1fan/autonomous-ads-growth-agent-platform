@@ -21,6 +21,7 @@ from ads_growth_agent.persistence.performance_event_store import (
 from ads_growth_agent.persistence.run_store import DEFAULT_TENANT_ID
 from ads_growth_agent.persistence.schema import advertiser_memories, advertisers, tenants
 
+AdvertiserMemoryWriteStatus = Literal["disabled", "queued", "recorded", "failed"]
 AdvertiserMemoryType = Literal[
     "profile",
     "constraint",
@@ -40,6 +41,8 @@ class AdvertiserMemoryConflictError(Exception):
 
 class AdvertiserMemoryWriteResult(BaseModel):
     persisted: bool
+    queued: bool = False
+    status: AdvertiserMemoryWriteStatus = "disabled"
     source_id: str | None = Field(default=None, min_length=1, max_length=160)
     memory_type: AdvertiserMemoryType | None = None
 
@@ -59,7 +62,7 @@ class NoopAdvertiserMemoryStore:
         event: CampaignPerformanceEventRequest,
         analysis: CampaignFeedbackAnalysis,
     ) -> AdvertiserMemoryWriteResult:
-        return AdvertiserMemoryWriteResult(persisted=False)
+        return AdvertiserMemoryWriteResult(persisted=False, status="disabled")
 
 
 class PostgresAdvertiserMemoryStore:
@@ -120,6 +123,7 @@ class PostgresAdvertiserMemoryStore:
 
         return AdvertiserMemoryWriteResult(
             persisted=True,
+            status="recorded",
             source_id=source_id,
             memory_type="historical_performance",
         )

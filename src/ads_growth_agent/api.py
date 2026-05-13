@@ -14,6 +14,7 @@ from ads_growth_agent.config import Settings, get_settings
 from ads_growth_agent.contracts import (
     AdvertiserBrief,
     AgentRunDetailResponse,
+    CampaignFeedbackAnalysis,
     CampaignPerformanceEventDetailResponse,
     CampaignPerformanceEventRequest,
     CampaignPerformanceEventResponse,
@@ -28,6 +29,8 @@ from ads_growth_agent.health import ReadinessResponse, check_readiness
 from ads_growth_agent.idempotency_store_factory import build_configured_idempotency_store
 from ads_growth_agent.logging_config import configure_logging
 from ads_growth_agent.observability import RunContext, create_run_context
+from ads_growth_agent.outbox import enqueue_advertiser_memory_write
+from ads_growth_agent.outbox_store_factory import build_configured_outbox_store
 from ads_growth_agent.performance_event_store_factory import (
     build_configured_performance_event_store,
 )
@@ -41,6 +44,7 @@ from ads_growth_agent.persistence.idempotency_store import (
     IdempotencyStore,
     hash_growth_strategy_request,
 )
+from ads_growth_agent.persistence.outbox_store import OutboxConflictError, OutboxStore
 from ads_growth_agent.persistence.performance_event_store import (
     CampaignPerformanceEventStore,
     PerformanceEventConflictError,
@@ -123,6 +127,12 @@ def get_runtime_advertiser_memory_store(
     settings: Annotated[Settings, Depends(get_request_settings)],
 ) -> AdvertiserMemoryStore:
     return build_configured_advertiser_memory_store(settings)
+
+
+def get_runtime_outbox_store(
+    settings: Annotated[Settings, Depends(get_request_settings)],
+) -> OutboxStore:
+    return build_configured_outbox_store(settings)
 
 
 def get_runtime_strategy_job_store(
@@ -285,6 +295,10 @@ def ingest_campaign_performance_event(
         AdvertiserMemoryStore,
         Depends(get_runtime_advertiser_memory_store),
     ],
+    outbox_store: Annotated[
+        OutboxStore,
+        Depends(get_runtime_outbox_store),
+    ],
 ) -> CampaignPerformanceEventResponse:
     response.headers["X-Tenant-ID"] = settings.tenant_id
     response.headers["Performance-Event-ID"] = request.event_id
@@ -293,13 +307,13 @@ def ingest_campaign_performance_event(
     if existing_event is not None:
         if existing_event.metadata.get("event_hash") != request_hash:
             _raise_performance_event_conflict(request.event_id)
-        try:
-            memory_result = memory_store.record_feedback_memory(
-                request,
-                existing_event.analysis,
-            )
-        except AdvertiserMemoryConflictError as exc:
-            _raise_performance_event_conflict(exc.event_id)
+        memory_result = _schedule_or_record_advertiser_memory(
+            settings,
+            request,
+            existing_event.analysis,
+            memory_store=memory_store,
+            outbox_store=outbox_store,
+        )
         response.headers["Feedback-ID"] = existing_event.analysis.feedback_id
         response.headers["Performance-Event-Status"] = "replayed"
         _set_advertiser_memory_headers(response, memory_result)
@@ -310,6 +324,8 @@ def ingest_campaign_performance_event(
             status="analyzed",
             persisted=True,
             advertiser_memory_persisted=memory_result.persisted,
+            advertiser_memory_queued=memory_result.queued,
+            advertiser_memory_status=memory_result.status,
             advertiser_memory_source_id=memory_result.source_id,
             analysis=existing_event.analysis,
         )
@@ -319,10 +335,13 @@ def ingest_campaign_performance_event(
         event_store.record_analyzed(request, analysis)
     except PerformanceEventConflictError as exc:
         _raise_performance_event_conflict(exc.event_id)
-    try:
-        memory_result = memory_store.record_feedback_memory(request, analysis)
-    except AdvertiserMemoryConflictError as exc:
-        _raise_performance_event_conflict(exc.event_id)
+    memory_result = _schedule_or_record_advertiser_memory(
+        settings,
+        request,
+        analysis,
+        memory_store=memory_store,
+        outbox_store=outbox_store,
+    )
     response.headers["Feedback-ID"] = analysis.feedback_id
     response.headers["Performance-Event-Status"] = "created"
     _set_advertiser_memory_headers(response, memory_result)
@@ -333,6 +352,8 @@ def ingest_campaign_performance_event(
         status="analyzed",
         persisted=settings.performance_event_persistence_backend != "none",
         advertiser_memory_persisted=memory_result.persisted,
+        advertiser_memory_queued=memory_result.queued,
+        advertiser_memory_status=memory_result.status,
         advertiser_memory_source_id=memory_result.source_id,
         analysis=analysis,
     )
@@ -376,13 +397,32 @@ def _raise_performance_event_conflict(event_id: str) -> None:
     )
 
 
+def _schedule_or_record_advertiser_memory(
+    settings: Settings,
+    event: CampaignPerformanceEventRequest,
+    analysis: CampaignFeedbackAnalysis,
+    *,
+    memory_store: AdvertiserMemoryStore,
+    outbox_store: OutboxStore,
+) -> AdvertiserMemoryWriteResult:
+    if settings.advertiser_memory_persistence_backend == "none":
+        return AdvertiserMemoryWriteResult(persisted=False, status="disabled")
+    if settings.outbox_backend == "postgres":
+        try:
+            return enqueue_advertiser_memory_write(outbox_store, event, analysis)
+        except OutboxConflictError:
+            _raise_performance_event_conflict(event.event_id)
+    try:
+        return memory_store.record_feedback_memory(event, analysis)
+    except AdvertiserMemoryConflictError as exc:
+        _raise_performance_event_conflict(exc.event_id)
+
+
 def _set_advertiser_memory_headers(
     response: Response,
     result: AdvertiserMemoryWriteResult,
 ) -> None:
-    response.headers["Advertiser-Memory-Status"] = (
-        "recorded" if result.persisted else "disabled"
-    )
+    response.headers["Advertiser-Memory-Status"] = result.status
     if result.source_id is not None:
         response.headers["Advertiser-Memory-Source-ID"] = result.source_id
 

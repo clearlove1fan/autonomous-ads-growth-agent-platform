@@ -196,6 +196,44 @@ strategy_jobs = sa.Table(
     ),
 )
 
+outbox_events = sa.Table(
+    "outbox_events",
+    metadata,
+    tenant_column(),
+    sa.Column("outbox_event_id", sa.Text(), nullable=False),
+    sa.Column("event_type", sa.Text(), nullable=False),
+    sa.Column("aggregate_type", sa.Text(), nullable=False),
+    sa.Column("aggregate_id", sa.Text(), nullable=False),
+    sa.Column("idempotency_key", sa.Text(), nullable=False),
+    sa.Column("status", sa.Text(), nullable=False, server_default="pending"),
+    sa.Column("payload", postgresql.JSONB(), nullable=False),
+    sa.Column("result_json", postgresql.JSONB(), nullable=True),
+    sa.Column("error_json", postgresql.JSONB(), nullable=True),
+    sa.Column("attempt_count", sa.Integer(), nullable=False, server_default="0"),
+    sa.Column("max_attempts", sa.Integer(), nullable=False, server_default="3"),
+    sa.Column("next_attempt_at", sa.DateTime(timezone=True), nullable=True),
+    sa.Column("locked_by", sa.Text(), nullable=True),
+    sa.Column("locked_until", sa.DateTime(timezone=True), nullable=True),
+    sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
+    sa.Column(
+        "metadata", postgresql.JSONB(), nullable=False, server_default=sa.text("'{}'::jsonb")
+    ),
+    *partition_columns(),
+    *timestamp_columns(),
+    sa.PrimaryKeyConstraint("tenant_id", "outbox_event_id"),
+    sa.UniqueConstraint("tenant_id", "idempotency_key"),
+    sa.CheckConstraint(
+        "status in ('pending', 'processing', 'completed', 'failed')",
+        name="outbox_event_status",
+    ),
+    sa.CheckConstraint("attempt_count >= 0", name="outbox_event_attempt_count_nonnegative"),
+    sa.CheckConstraint("max_attempts > 0", name="outbox_event_max_attempts_positive"),
+    sa.CheckConstraint(
+        f"partition_bucket >= 0 and partition_bucket < {PARTITION_BUCKETS}",
+        name="outbox_event_partition_bucket_range",
+    ),
+)
+
 knowledge_documents = sa.Table(
     "knowledge_documents",
     metadata,
@@ -630,6 +668,25 @@ sa.Index(
     idempotency_keys.c.tenant_id,
     idempotency_keys.c.expires_at,
 )
+sa.Index(
+    "ix_outbox_events_status_next_attempt",
+    outbox_events.c.tenant_id,
+    outbox_events.c.status,
+    outbox_events.c.next_attempt_at,
+    outbox_events.c.created_at,
+)
+sa.Index(
+    "ix_outbox_events_aggregate",
+    outbox_events.c.tenant_id,
+    outbox_events.c.aggregate_type,
+    outbox_events.c.aggregate_id,
+)
+sa.Index(
+    "ix_outbox_events_partition_date",
+    outbox_events.c.tenant_id,
+    outbox_events.c.partition_date,
+    outbox_events.c.partition_bucket,
+)
 
 
 CORE_TABLES = (
@@ -638,6 +695,7 @@ CORE_TABLES = (
     campaign_drafts,
     campaign_performance_events,
     strategy_jobs,
+    outbox_events,
     knowledge_documents,
     knowledge_chunks,
     advertiser_memories,
@@ -651,6 +709,7 @@ HIGH_VOLUME_TABLES = {
     "campaign_drafts",
     "campaign_performance_events",
     "strategy_jobs",
+    "outbox_events",
     "knowledge_documents",
     "knowledge_chunks",
     "advertiser_memories",

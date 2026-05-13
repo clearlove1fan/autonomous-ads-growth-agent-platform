@@ -11,6 +11,7 @@ from ads_growth_agent.config import get_settings
 from ads_growth_agent.contracts import AdvertiserBrief, GrowthStrategyRequest
 from ads_growth_agent.evaluation import load_eval_cases, run_local_eval_suite
 from ads_growth_agent.logging_config import configure_logging
+from ads_growth_agent.outbox import process_configured_outbox
 from ads_growth_agent.persistence.knowledge_seed import seed_default_knowledge
 from ads_growth_agent.strategy import StrategyGenerationError, generate_growth_strategy
 
@@ -89,6 +90,17 @@ def seed_knowledge() -> None:
             indent=2,
         )
     )
+
+
+@app.command("process-outbox")
+def process_outbox(
+    limit: int = typer.Option(100, "--limit", min=1, max=1_000),
+    worker_id: str | None = typer.Option(None, "--worker-id"),
+) -> None:
+    """Process a bounded batch of durable outbox events."""
+    settings = get_settings()
+    report = process_configured_outbox(settings, limit=limit, worker_id=worker_id)
+    typer.echo(report.model_dump_json(indent=2))
 
 
 @app.command("eval")

@@ -10,6 +10,7 @@ from ads_growth_agent.persistence.schema import (
     knowledge_chunks,
     knowledge_documents,
     metadata,
+    outbox_events,
     retrieval_events,
     strategy_jobs,
 )
@@ -22,6 +23,7 @@ def test_core_schema_tables_are_defined() -> None:
         "campaign_drafts",
         "campaign_performance_events",
         "strategy_jobs",
+        "outbox_events",
         "knowledge_documents",
         "knowledge_chunks",
         "advertiser_memories",
@@ -120,3 +122,21 @@ def test_strategy_jobs_support_async_workflow_access_patterns() -> None:
     assert {
         foreign_key.column.table.name for foreign_key in strategy_jobs.foreign_keys
     } == {"advertisers"}
+
+
+def test_outbox_events_support_high_concurrency_worker_access_patterns() -> None:
+    columns = outbox_events.c
+    index_names = {index.name for index in outbox_events.indexes}
+
+    assert "outbox_event_id" in columns
+    assert "event_type" in columns
+    assert "idempotency_key" in columns
+    assert "status" in columns
+    assert "payload" in columns
+    assert "attempt_count" in columns
+    assert "max_attempts" in columns
+    assert "locked_by" in columns
+    assert "locked_until" in columns
+    assert "ix_outbox_events_status_next_attempt" in index_names
+    assert "ix_outbox_events_aggregate" in index_names
+    assert "ix_outbox_events_partition_date" in index_names

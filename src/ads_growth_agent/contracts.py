@@ -455,6 +455,8 @@ class CampaignPerformanceEventResponse(BaseModel):
     status: Literal["analyzed"]
     persisted: bool
     advertiser_memory_persisted: bool = False
+    advertiser_memory_queued: bool = False
+    advertiser_memory_status: Literal["disabled", "queued", "recorded", "failed"] = "disabled"
     advertiser_memory_source_id: str | None = Field(default=None, min_length=1, max_length=160)
     analysis: CampaignFeedbackAnalysis
 

@@ -16,6 +16,8 @@ from ads_growth_agent.api import get_runtime_settings
 from ads_growth_agent.config import Settings
 from ads_growth_agent.contracts import AdvertiserBrief, CampaignObjective
 from ads_growth_agent.knowledge_store_factory import dispose_cached_knowledge_store_engines
+from ads_growth_agent.outbox import process_configured_outbox
+from ads_growth_agent.outbox_store_factory import dispose_cached_outbox_store_engines
 from ads_growth_agent.performance_event_store_factory import (
     dispose_cached_performance_event_store_engines,
 )
@@ -41,6 +43,7 @@ def test_performance_event_api_persists_analysis_to_postgres(monkeypatch) -> Non
             database_url=test_url.render_as_string(hide_password=False),
             performance_event_persistence_backend="postgres",
             advertiser_memory_persistence_backend="postgres",
+            outbox_backend="postgres",
             tenant_id="tenant_perf",
         )
         api_app.dependency_overrides[get_runtime_settings] = lambda: settings
@@ -56,16 +59,20 @@ def test_performance_event_api_persists_analysis_to_postgres(monkeypatch) -> Non
         assert response.status_code == 200
         assert response.headers["performance-event-id"] == "evt_perf_integration"
         assert response.headers["performance-event-status"] == "created"
-        assert response.headers["advertiser-memory-status"] == "recorded"
+        assert response.headers["advertiser-memory-status"] == "queued"
         assert payload["persisted"] is True
-        assert payload["advertiser_memory_persisted"] is True
+        assert payload["advertiser_memory_persisted"] is False
+        assert payload["advertiser_memory_queued"] is True
+        assert payload["advertiser_memory_status"] == "queued"
         assert payload["advertiser_memory_source_id"].startswith("memory:performance:")
         assert payload["analysis"]["health_status"] == "underperforming"
-        replay = client.post(
-            "/campaign-events/performance",
-            json=_event_payload(),
-            headers={"X-Tenant-ID": "tenant_perf"},
+
+        worker_report = process_configured_outbox(
+            settings,
+            limit=10,
+            worker_id="worker_perf_integration",
         )
+
         conflict_payload = _event_payload()
         conflict_payload["metrics"] = {
             **conflict_payload["metrics"],
@@ -84,7 +91,15 @@ def test_performance_event_api_persists_analysis_to_postgres(monkeypatch) -> Non
             "/campaign-events/performance/evt_perf_integration",
             headers={"X-Tenant-ID": "tenant_other"},
         )
+        replay = client.post(
+            "/campaign-events/performance",
+            json=_event_payload(),
+            headers={"X-Tenant-ID": "tenant_perf"},
+        )
 
+        assert worker_report.claimed == 1
+        assert worker_report.completed == 1
+        assert worker_report.failed == 0
         assert replay.status_code == 200
         assert replay.headers["performance-event-status"] == "replayed"
         assert replay.headers["advertiser-memory-status"] == "recorded"
@@ -129,6 +144,15 @@ def test_performance_event_api_persists_analysis_to_postgres(monkeypatch) -> Non
                 ),
                 {"tenant_id": "tenant_perf", "event_id": "evt_perf_integration"},
             ).mappings().one()
+            outbox_event = connection.execute(
+                sa.text(
+                    "SELECT event_type, status, attempt_count, result_json, partition_key, "
+                    "partition_bucket FROM outbox_events "
+                    "WHERE tenant_id = :tenant_id "
+                    "AND aggregate_id = :event_id"
+                ),
+                {"tenant_id": "tenant_perf", "event_id": "evt_perf_integration"},
+            ).mappings().one()
 
         assert event["tenant_id"] == "tenant_perf"
         assert event["advertiser_id"] == "adv_fitness_001"
@@ -150,6 +174,12 @@ def test_performance_event_api_persists_analysis_to_postgres(monkeypatch) -> Non
         assert "observed CPA 50.00" in memory["content"]
         assert memory["partition_key"] == "adv_fitness_001"
         assert 0 <= memory["partition_bucket"] < 128
+        assert outbox_event["event_type"] == "campaign_performance_analyzed"
+        assert outbox_event["status"] == "completed"
+        assert outbox_event["attempt_count"] == 1
+        assert outbox_event["result_json"]["source_id"] == payload["advertiser_memory_source_id"]
+        assert outbox_event["partition_key"] == "evt_perf_integration"
+        assert 0 <= outbox_event["partition_bucket"] < 128
 
         strategy_settings = Settings(
             database_url=test_url.render_as_string(hide_password=False),
@@ -163,6 +193,7 @@ def test_performance_event_api_persists_analysis_to_postgres(monkeypatch) -> Non
         api_app.dependency_overrides.clear()
         dispose_cached_advertiser_memory_store_engines()
         dispose_cached_knowledge_store_engines()
+        dispose_cached_outbox_store_engines()
         dispose_cached_performance_event_store_engines()
         engine.dispose()
         _drop_temporary_database(test_url)

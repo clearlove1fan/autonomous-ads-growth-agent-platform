@@ -250,7 +250,13 @@ curl -X POST http://localhost:8000/campaign-events/performance \
 
 The response includes `health_status`, metric summaries such as CTR/CVR/CPA, draft-only feedback recommendations, and guardrails requiring human approval before budget or targeting changes. Set `PERFORMANCE_EVENT_PERSISTENCE_BACKEND=postgres` to persist events and analyses in `campaign_performance_events`.
 
-Set `ADVERTISER_MEMORY_PERSISTENCE_BACKEND=postgres` to also write analyzed feedback into `advertiser_memories` as `historical_performance` memory. The API returns `advertiser_memory_persisted`, `advertiser_memory_source_id`, and `Advertiser-Memory-Status`; later strategy-generation runs with `KNOWLEDGE_STORE_BACKEND=postgres` can retrieve that memory as an `advertiser_memory` citation.
+Set `ADVERTISER_MEMORY_PERSISTENCE_BACKEND=postgres` to also write analyzed feedback into `advertiser_memories` as `historical_performance` memory. For production-style/high-concurrency ingestion, also set `OUTBOX_BACKEND=postgres`; the API will enqueue a durable `campaign_performance_analyzed` event and return `Advertiser-Memory-Status: queued` instead of doing the memory write on the request path. A bounded worker can then process the queue:
+
+```bash
+OUTBOX_BACKEND=postgres ADVERTISER_MEMORY_PERSISTENCE_BACKEND=postgres ads-growth-agent process-outbox --limit 100
+```
+
+After the worker completes, replaying the same event returns `Advertiser-Memory-Status: recorded`, and later strategy-generation runs with `KNOWLEDGE_STORE_BACKEND=postgres` can retrieve that memory as an `advertiser_memory` citation. If `OUTBOX_BACKEND=none`, the service keeps the simpler synchronous memory-write fallback for local demos.
 
 When persistence is enabled, event ingestion is idempotent by `event_id`: replaying the same normalized payload returns the already persisted analysis with `Performance-Event-Status: replayed`; reusing the same `event_id` with different metrics or metadata returns HTTP `409` with `PERFORMANCE_EVENT_ID_CONFLICT`.
 

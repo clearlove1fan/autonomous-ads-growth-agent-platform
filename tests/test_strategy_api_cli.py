@@ -21,6 +21,7 @@ from ads_growth_agent.contracts import (
     AgentRunStepRecord,
     GrowthStrategyRequest,
 )
+from ads_growth_agent.outbox import OutboxProcessingReport
 from ads_growth_agent.persistence.idempotency_store import (
     IdempotencyConflictError,
     IdempotencyStart,
@@ -553,6 +554,46 @@ def test_seed_knowledge_cli_uses_configured_database_and_tenant(monkeypatch) -> 
     assert calls["engine_kwargs"] == {"pool_pre_ping": True}
     assert calls["tenant_id"] == "tenant_cli"
     assert calls["disposed"] is True
+
+
+def test_process_outbox_cli_uses_configured_worker(monkeypatch) -> None:
+    calls: dict[str, object] = {}
+
+    def fake_process_configured_outbox(settings: Settings, *, limit: int, worker_id: str):
+        calls["tenant_id"] = settings.tenant_id
+        calls["limit"] = limit
+        calls["worker_id"] = worker_id
+        return OutboxProcessingReport(
+            worker_id=worker_id,
+            claimed=1,
+            completed=1,
+            failed=0,
+        )
+
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.get_settings",
+        lambda: Settings(tenant_id="tenant_cli", outbox_backend="postgres"),
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.process_configured_outbox",
+        fake_process_configured_outbox,
+    )
+
+    result = CliRunner().invoke(
+        cli_app,
+        ["process-outbox", "--limit", "5", "--worker-id", "worker_cli"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["worker_id"] == "worker_cli"
+    assert payload["claimed"] == 1
+    assert payload["completed"] == 1
+    assert calls == {
+        "tenant_id": "tenant_cli",
+        "limit": 5,
+        "worker_id": "worker_cli",
+    }
 
 
 def _override_api_dependencies(

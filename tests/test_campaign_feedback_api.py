@@ -4,6 +4,7 @@ from ads_growth_agent import api as api_module
 from ads_growth_agent.api import app as api_app
 from ads_growth_agent.api import (
     get_runtime_advertiser_memory_store,
+    get_runtime_outbox_store,
     get_runtime_performance_event_store,
     get_runtime_settings,
 )
@@ -13,6 +14,7 @@ from ads_growth_agent.feedback import analyze_campaign_performance_event
 from ads_growth_agent.persistence.advertiser_memory_store import (
     AdvertiserMemoryWriteResult,
 )
+from ads_growth_agent.persistence.outbox_store import OutboxEventRecord
 from ads_growth_agent.persistence.performance_event_store import (
     PerformanceEventConflictError,
     hash_campaign_performance_event,
@@ -56,6 +58,8 @@ def test_campaign_performance_event_api_returns_feedback_analysis(monkeypatch) -
     assert response.headers["advertiser-memory-status"] == "disabled"
     assert payload["persisted"] is True
     assert payload["advertiser_memory_persisted"] is False
+    assert payload["advertiser_memory_queued"] is False
+    assert payload["advertiser_memory_status"] == "disabled"
     assert payload["advertiser_memory_source_id"] is None
     assert payload["status"] == "analyzed"
     assert payload["analysis"]["health_status"] == "underperforming"
@@ -132,6 +136,7 @@ def test_campaign_performance_event_api_records_advertiser_memory() -> None:
     memory_store = CapturingAdvertiserMemoryStore(
         AdvertiserMemoryWriteResult(
             persisted=True,
+            status="recorded",
             source_id="memory:performance:test:v1",
             memory_type="historical_performance",
         )
@@ -159,8 +164,54 @@ def test_campaign_performance_event_api_records_advertiser_memory() -> None:
     assert response.headers["advertiser-memory-status"] == "recorded"
     assert response.headers["advertiser-memory-source-id"] == "memory:performance:test:v1"
     assert payload["advertiser_memory_persisted"] is True
+    assert payload["advertiser_memory_queued"] is False
+    assert payload["advertiser_memory_status"] == "recorded"
     assert payload["advertiser_memory_source_id"] == "memory:performance:test:v1"
     assert memory_store.records == [("evt_perf_001", payload["analysis"]["feedback_id"])]
+
+
+def test_campaign_performance_event_api_queues_advertiser_memory_when_outbox_enabled() -> None:
+    event_store = CapturingPerformanceEventStore()
+    outbox_store = CapturingOutboxStore()
+    memory_store = CapturingAdvertiserMemoryStore(
+        AdvertiserMemoryWriteResult(
+            persisted=True,
+            source_id="memory:performance:direct:v1",
+            memory_type="historical_performance",
+            status="recorded",
+        )
+    )
+    api_app.dependency_overrides[get_runtime_settings] = lambda: Settings(
+        performance_event_persistence_backend="postgres",
+        advertiser_memory_persistence_backend="postgres",
+        outbox_backend="postgres",
+    )
+    api_app.dependency_overrides[get_runtime_performance_event_store] = (
+        lambda: event_store
+    )
+    api_app.dependency_overrides[get_runtime_advertiser_memory_store] = (
+        lambda: memory_store
+    )
+    api_app.dependency_overrides[get_runtime_outbox_store] = lambda: outbox_store
+    try:
+        response = TestClient(api_app).post(
+            "/campaign-events/performance",
+            json=_event_payload(),
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert response.headers["advertiser-memory-status"] == "queued"
+    assert response.headers["advertiser-memory-source-id"].startswith("memory:performance:")
+    assert payload["advertiser_memory_persisted"] is False
+    assert payload["advertiser_memory_queued"] is True
+    assert payload["advertiser_memory_status"] == "queued"
+    assert payload["advertiser_memory_source_id"].startswith("memory:performance:")
+    assert outbox_store.enqueued[0]["event_type"] == "campaign_performance_analyzed"
+    assert outbox_store.enqueued[0]["payload"]["event"]["event_id"] == "evt_perf_001"
+    assert memory_store.records == []
 
 
 def test_campaign_performance_event_api_rejects_event_id_payload_conflict() -> None:
@@ -293,6 +344,40 @@ class CapturingAdvertiserMemoryStore:
     def record_feedback_memory(self, event, analysis) -> AdvertiserMemoryWriteResult:
         self.records.append((event.event_id, analysis.feedback_id))
         return self.result
+
+
+class CapturingOutboxStore:
+    def __init__(self) -> None:
+        self.enqueued: list[dict] = []
+
+    def enqueue(self, **kwargs) -> OutboxEventRecord:
+        from datetime import UTC, datetime
+
+        now = datetime.now(UTC)
+        self.enqueued.append(kwargs)
+        return OutboxEventRecord(
+            outbox_event_id="outbox_api_test",
+            event_type=kwargs["event_type"],
+            aggregate_type=kwargs["aggregate_type"],
+            aggregate_id=kwargs["aggregate_id"],
+            idempotency_key=kwargs["idempotency_key"],
+            status="pending",
+            payload=kwargs["payload"],
+            attempt_count=0,
+            max_attempts=3,
+            metadata=kwargs.get("metadata") or {},
+            created_at=now,
+            updated_at=now,
+        )
+
+    def claim_pending(self, *, limit: int, worker_id: str, lock_seconds: int = 60):
+        return []
+
+    def mark_completed(self, outbox_event_id: str, *, result=None):
+        return None
+
+    def mark_failed(self, outbox_event_id: str, *, error, retry_delay_seconds: int = 5):
+        return None
 
 
 def _event_detail(
