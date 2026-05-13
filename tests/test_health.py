@@ -209,3 +209,31 @@ def test_readiness_checks_litellm_when_llm_features_are_enabled(monkeypatch) -> 
         "latency_ms": 5,
         "detail": None,
     }
+
+
+def test_readiness_checks_litellm_when_brief_intake_uses_llm(monkeypatch) -> None:
+    def fake_check_litellm(settings: Settings) -> health_module.DependencyCheck:
+        return health_module.DependencyCheck(
+            name="litellm",
+            status="ok",
+            required=True,
+            latency_ms=7,
+        )
+
+    monkeypatch.setattr(health_module, "_check_litellm", fake_check_litellm)
+    app.dependency_overrides[get_runtime_settings] = lambda: Settings(
+        use_llm_brief_intake=True,
+        use_llm_planner=False,
+        use_llm_critic=False,
+    )
+    try:
+        response = TestClient(app).get("/health/ready")
+    finally:
+        app.dependency_overrides.clear()
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["status"] == "ok"
+    assert payload["dependencies"][1]["name"] == "litellm"
+    assert payload["dependencies"][1]["status"] == "ok"
+    assert payload["dependencies"][1]["required"] is True

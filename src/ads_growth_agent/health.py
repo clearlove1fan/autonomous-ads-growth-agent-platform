@@ -65,7 +65,11 @@ def _requires_postgres(settings: Settings) -> bool:
 
 
 def _requires_litellm(settings: Settings) -> bool:
-    return settings.use_llm_planner or settings.use_llm_critic
+    return (
+        settings.use_llm_brief_intake
+        or settings.use_llm_planner
+        or settings.use_llm_critic
+    )
 
 
 def _check_postgres(settings: Settings) -> DependencyCheck:

@@ -10,14 +10,19 @@ from ads_growth_agent import __version__
 from ads_growth_agent.advertiser_memory_store_factory import (
     build_configured_advertiser_memory_store,
 )
+from ads_growth_agent.brief_intake import parse_advertiser_brief
 from ads_growth_agent.config import Settings, get_settings
 from ads_growth_agent.contracts import (
     AdvertiserBrief,
+    AdvertiserBriefIntakeRequest,
+    AdvertiserBriefIntakeResponse,
     AgentRunDetailResponse,
     CampaignFeedbackAnalysis,
     CampaignPerformanceEventDetailResponse,
     CampaignPerformanceEventRequest,
     CampaignPerformanceEventResponse,
+    GrowthStrategyFromTextRequest,
+    GrowthStrategyFromTextResponse,
     GrowthStrategyRequest,
     GrowthStrategyResponse,
     StrategyJobAcceptedResponse,
@@ -206,6 +211,39 @@ def create_growth_strategy(
         )
 
     return _generate_growth_strategy_response(request, settings=settings)
+
+
+@app.post("/advertiser-briefs/parse", response_model=AdvertiserBriefIntakeResponse)
+def parse_advertiser_brief_text(
+    request: AdvertiserBriefIntakeRequest,
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+) -> AdvertiserBriefIntakeResponse:
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    return parse_advertiser_brief(request, settings=settings)
+
+
+@app.post("/growth-strategies/from-text", response_model=GrowthStrategyFromTextResponse)
+def create_growth_strategy_from_text(
+    request: GrowthStrategyFromTextRequest,
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+) -> GrowthStrategyFromTextResponse:
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    intake = parse_advertiser_brief(
+        AdvertiserBriefIntakeRequest.model_validate(request.model_dump()),
+        settings=settings,
+    )
+    growth_strategy = _generate_growth_strategy_response(
+        GrowthStrategyRequest(brief=intake.brief),
+        settings=settings,
+    )
+    response.headers["Run-ID"] = growth_strategy.run_metadata.run_id
+    response.headers["Trace-ID"] = growth_strategy.run_metadata.trace_id
+    return GrowthStrategyFromTextResponse(
+        intake=intake,
+        growth_strategy=growth_strategy,
+    )
 
 
 @app.post(

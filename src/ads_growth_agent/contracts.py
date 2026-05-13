@@ -350,6 +350,43 @@ class GrowthStrategyResponse(BaseModel):
     run_metadata: RunMetadata
 
 
+class AdvertiserBriefIntakeRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    text: str = Field(min_length=10, max_length=5_000)
+    advertiser_id: str | None = Field(default=None, min_length=1, max_length=128)
+    default_currency: str = Field(default="USD", min_length=3, max_length=3)
+    default_target_market: str = Field(default="United States", min_length=1, max_length=120)
+    default_duration_days: int = Field(default=14, ge=1, le=365)
+
+    @field_validator("default_currency")
+    @classmethod
+    def normalize_default_currency(cls, value: str) -> str:
+        return value.upper()
+
+
+class AdvertiserBriefIntakeResponse(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    source_text: str = Field(min_length=10, max_length=5_000)
+    brief: AdvertiserBrief
+    mode: Literal["heuristic", "llm", "llm_fallback"]
+    confidence: float = Field(ge=0, le=1)
+    assumptions: list[str] = Field(default_factory=list)
+    extraction_errors: list[str] = Field(default_factory=list)
+
+
+class GrowthStrategyFromTextRequest(AdvertiserBriefIntakeRequest):
+    pass
+
+
+class GrowthStrategyFromTextResponse(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    intake: AdvertiserBriefIntakeResponse
+    growth_strategy: GrowthStrategyResponse
+
+
 class StrategyJobAcceptedResponse(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 

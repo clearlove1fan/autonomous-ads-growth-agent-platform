@@ -7,9 +7,11 @@ from pydantic import ValidationError
 from sqlalchemy.engine import make_url
 
 from ads_growth_agent import __version__
+from ads_growth_agent.brief_intake import parse_advertiser_brief
 from ads_growth_agent.config import get_settings
 from ads_growth_agent.contracts import (
     AdvertiserBrief,
+    AdvertiserBriefIntakeRequest,
     GrowthStrategyRequest,
     StrategyJobListResponse,
     StrategyJobStatus,
@@ -54,6 +56,14 @@ STRATEGY_JOB_CANCEL_REASON_OPTION = typer.Option(
     "--reason",
     help="Human-readable cancellation reason.",
 )
+BRIEF_TEXT_ARGUMENT = typer.Argument(
+    ...,
+    help="Plain-language advertiser goal or campaign brief.",
+)
+BRIEF_TEXT_ADVERTISER_ID_OPTION = typer.Option(None, "--advertiser-id")
+BRIEF_TEXT_TARGET_MARKET_OPTION = typer.Option("United States", "--target-market")
+BRIEF_TEXT_CURRENCY_OPTION = typer.Option("USD", "--currency")
+BRIEF_TEXT_DURATION_OPTION = typer.Option(14, "--duration-days", min=1, max=365)
 
 
 @app.command()
@@ -88,6 +98,74 @@ def plan(brief_file: Path = BRIEF_FILE_ARGUMENT) -> None:
         raise typer.Exit(1) from exc
 
     typer.echo(response.model_dump_json(indent=2))
+
+
+@app.command("parse-brief-text")
+def parse_brief_text(
+    text: str = BRIEF_TEXT_ARGUMENT,
+    advertiser_id: str | None = BRIEF_TEXT_ADVERTISER_ID_OPTION,
+    target_market: str = BRIEF_TEXT_TARGET_MARKET_OPTION,
+    currency: str = BRIEF_TEXT_CURRENCY_OPTION,
+    duration_days: int = BRIEF_TEXT_DURATION_OPTION,
+) -> None:
+    """Parse a plain-language advertiser request into a structured brief."""
+    try:
+        settings = get_settings()
+        response = parse_advertiser_brief(
+            AdvertiserBriefIntakeRequest(
+                text=text,
+                advertiser_id=advertiser_id,
+                default_target_market=target_market,
+                default_currency=currency,
+                default_duration_days=duration_days,
+            ),
+            settings=settings,
+        )
+    except ValidationError as exc:
+        typer.echo(json.dumps(exc.errors(include_url=False), indent=2), err=True)
+        raise typer.Exit(2) from exc
+
+    typer.echo(response.model_dump_json(indent=2))
+
+
+@app.command("plan-text")
+def plan_text(
+    text: str = BRIEF_TEXT_ARGUMENT,
+    advertiser_id: str | None = BRIEF_TEXT_ADVERTISER_ID_OPTION,
+    target_market: str = BRIEF_TEXT_TARGET_MARKET_OPTION,
+    currency: str = BRIEF_TEXT_CURRENCY_OPTION,
+    duration_days: int = BRIEF_TEXT_DURATION_OPTION,
+) -> None:
+    """Generate a growth strategy directly from a plain-language advertiser request."""
+    try:
+        settings = get_settings()
+        intake = parse_advertiser_brief(
+            AdvertiserBriefIntakeRequest(
+                text=text,
+                advertiser_id=advertiser_id,
+                default_target_market=target_market,
+                default_currency=currency,
+                default_duration_days=duration_days,
+            ),
+            settings=settings,
+        )
+        response = generate_growth_strategy(intake.brief, settings=settings)
+    except ValidationError as exc:
+        typer.echo(json.dumps(exc.errors(include_url=False), indent=2), err=True)
+        raise typer.Exit(2) from exc
+    except StrategyGenerationError as exc:
+        typer.echo(f"Strategy generation failed: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(
+        json.dumps(
+            {
+                "intake": intake.model_dump(mode="json"),
+                "growth_strategy": response.model_dump(mode="json"),
+            },
+            indent=2,
+        )
+    )
 
 
 @app.command("seed-knowledge")

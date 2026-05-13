@@ -72,6 +72,8 @@ Run the CLI:
 ```bash
 ads-growth-agent health
 ads-growth-agent plan examples/fitness_app_brief.json
+ads-growth-agent parse-brief-text "Use $2000 to promote a fitness app and improve registrations" --advertiser-id adv_fitness_001
+ads-growth-agent plan-text "Use $2000 to promote a fitness app and improve registrations" --advertiser-id adv_fitness_001
 ads-growth-agent seed-knowledge
 ads-growth-agent eval examples/eval_cases.json
 ```
@@ -113,7 +115,7 @@ Create a local environment file:
 cp .env.example .env
 ```
 
-Set `OPENAI_API_KEY` in `.env` before calling LiteLLM-backed model endpoints. Liveness does not require a model key; readiness checks LiteLLM only when LLM planner or critic features are enabled.
+Set `OPENAI_API_KEY` in `.env` before calling LiteLLM-backed model endpoints. Liveness does not require a model key; readiness checks LiteLLM only when LLM brief intake, planner, or critic features are enabled.
 
 Start the stack:
 
@@ -134,10 +136,23 @@ curl http://localhost:8000/health/ready
 Generate a draft growth strategy:
 
 ```bash
+curl -X POST http://localhost:8000/growth-strategies/from-text \
+  -H "Content-Type: application/json" \
+  -d '{"text":"I want to use a $2000 budget to promote a fitness app in the United States and increase trial registrations over 14 days.","advertiser_id":"adv_fitness_001"}'
+
+curl -X POST http://localhost:8000/advertiser-briefs/parse \
+  -H "Content-Type: application/json" \
+  -d '{"text":"I want to use a $2000 budget to promote a fitness app in the United States and increase trial registrations over 14 days.","advertiser_id":"adv_fitness_001"}'
+
 curl -X POST http://localhost:8000/growth-strategies \
   -H "Content-Type: application/json" \
   -d '{"brief":{"advertiser_id":"adv_fitness_001","product_name":"FitTrack Pro","product_category":"fitness app","objective":"registrations","budget":"2000.00","currency":"USD","duration_days":14,"target_market":"United States","primary_kpi":"trial registrations","target_cpa":"20.00"}}'
 ```
+
+Plain-language brief intake uses deterministic local heuristics by default so
+the product works without external API keys. Set `USE_LLM_BRIEF_INTAKE=true` to
+use LiteLLM-backed structured extraction; if extraction fails, the system falls
+back to heuristic parsing and records extraction errors in the intake response.
 
 Submit a strategy generation job and poll it:
 

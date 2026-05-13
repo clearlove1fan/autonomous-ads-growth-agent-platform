@@ -63,6 +63,49 @@ def test_growth_strategy_api_returns_structured_strategy() -> None:
     assert payload["tool_results"][0]["success"] is True
 
 
+def test_advertiser_brief_parse_api_accepts_plain_language_text() -> None:
+    response = TestClient(api_app).post(
+        "/advertiser-briefs/parse",
+        json={
+            "text": (
+                "I want to use a $2000 budget to promote a fitness app in the "
+                "United States and increase trial registrations over 14 days."
+            ),
+            "advertiser_id": "adv_text_api",
+        },
+    )
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["mode"] == "heuristic"
+    assert payload["brief"]["advertiser_id"] == "adv_text_api"
+    assert payload["brief"]["product_category"] == "fitness app"
+    assert payload["brief"]["objective"] == "registrations"
+    assert payload["brief"]["budget"] == "2000.00"
+
+
+def test_growth_strategy_from_text_api_returns_parsed_brief_and_strategy() -> None:
+    response = TestClient(api_app).post(
+        "/growth-strategies/from-text",
+        json={
+            "text": (
+                "I want to use a $2000 budget to promote a fitness app in the "
+                "United States and increase trial registrations over 14 days."
+            ),
+            "advertiser_id": "adv_text_strategy",
+        },
+    )
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert response.headers["run-id"].startswith("run_")
+    assert payload["intake"]["brief"]["advertiser_id"] == "adv_text_strategy"
+    assert payload["intake"]["brief"]["budget"] == "2000.00"
+    assert payload["growth_strategy"]["strategy"]["advertiser_id"] == "adv_text_strategy"
+    assert payload["growth_strategy"]["strategy"]["budget_plan"]["total_budget"] == "2000.00"
+    assert payload["growth_strategy"]["run_metadata"]["tool_count"] == 5
+
+
 def test_growth_strategy_api_idempotency_completes_new_request() -> None:
     store = FakeIdempotencyStore(IdempotencyStart(status="started"))
     _override_api_dependencies(
@@ -157,6 +200,46 @@ def test_growth_strategy_api_rejects_invalid_x_tenant_id() -> None:
 
     assert response.status_code == 400
     assert response.json()["detail"]["error_code"] == "INVALID_TENANT_ID"
+
+
+def test_parse_brief_text_cli_outputs_structured_brief() -> None:
+    result = CliRunner().invoke(
+        cli_app,
+        [
+            "parse-brief-text",
+            "Use $2000 to promote a fitness app and improve registrations.",
+            "--advertiser-id",
+            "adv_cli_text",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["mode"] == "heuristic"
+    assert payload["brief"]["advertiser_id"] == "adv_cli_text"
+    assert payload["brief"]["product_category"] == "fitness app"
+    assert payload["brief"]["budget"] == "2000.00"
+
+
+def test_plan_text_cli_generates_strategy_from_plain_language_text() -> None:
+    result = CliRunner().invoke(
+        cli_app,
+        [
+            "plan-text",
+            "Use $2000 to promote a fitness app and improve registrations.",
+            "--advertiser-id",
+            "adv_cli_text_strategy",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["intake"]["brief"]["advertiser_id"] == "adv_cli_text_strategy"
+    assert (
+        payload["growth_strategy"]["strategy"]["advertiser_id"]
+        == "adv_cli_text_strategy"
+    )
+    assert payload["growth_strategy"]["run_metadata"]["tool_count"] == 5
 
 
 def test_growth_strategy_api_idempotency_replays_completed_response() -> None:

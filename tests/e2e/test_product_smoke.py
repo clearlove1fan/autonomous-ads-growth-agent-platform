@@ -31,6 +31,32 @@ def test_direct_api_growth_strategy_product_smoke() -> None:
     _assert_strategy_smoke(GrowthStrategyResponse.model_validate(response.json()))
 
 
+def test_text_intake_api_growth_strategy_product_smoke() -> None:
+    api_app.dependency_overrides[get_runtime_settings] = _deterministic_settings
+    try:
+        response = TestClient(api_app).post(
+            "/growth-strategies/from-text",
+            json={
+                "text": (
+                    "I want to use a $2000 budget to promote a fitness app in the "
+                    "United States and increase trial registrations over 14 days."
+                ),
+                "advertiser_id": "adv_fitness_001",
+            },
+            headers={"X-Tenant-ID": "tenant_smoke"},
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert response.headers["x-tenant-id"] == "tenant_smoke"
+    assert payload["intake"]["mode"] == "heuristic"
+    _assert_strategy_smoke(
+        GrowthStrategyResponse.model_validate(payload["growth_strategy"])
+    )
+
+
 def test_async_strategy_job_product_smoke() -> None:
     clear_memory_strategy_job_store()
     api_app.dependency_overrides[get_runtime_settings] = _deterministic_settings

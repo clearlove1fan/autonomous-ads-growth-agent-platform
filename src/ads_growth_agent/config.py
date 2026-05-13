@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     litellm_api_key: str = "sk-local-dev-key"
     default_chat_model: str = "openai/gpt-4o-mini"
     default_embedding_model: str = "openai/text-embedding-3-small"
+    use_llm_brief_intake: bool = False
     use_llm_planner: bool = False
     use_llm_critic: bool = False
     llm_structured_output_max_repair_attempts: int = 1
