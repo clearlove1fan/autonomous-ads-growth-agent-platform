@@ -30,6 +30,7 @@ class StrategyJobStore(Protocol):
         strategy_id: str,
         run_id: str,
         trace_id: str,
+        max_attempts: int = 3,
     ) -> StrategyJobDetailResponse:
         """Persist a queued strategy-generation job."""
 
@@ -66,6 +67,15 @@ class StrategyJobStore(Protocol):
     ) -> StrategyJobDetailResponse | None:
         """Persist a failed job result."""
 
+    def mark_attempt_failed(
+        self,
+        job_id: str,
+        *,
+        error: dict[str, Any],
+        retry_delay_seconds: int,
+    ) -> StrategyJobDetailResponse | None:
+        """Record one failed attempt and retry while attempts remain."""
+
     def get_job(self, job_id: str) -> StrategyJobDetailResponse | None:
         """Return one strategy job for the configured tenant."""
 
@@ -83,6 +93,7 @@ class InMemoryStrategyJobStore:
         strategy_id: str,
         run_id: str,
         trace_id: str,
+        max_attempts: int = 3,
     ) -> StrategyJobDetailResponse:
         now = datetime.now(UTC)
         job = StrategyJobDetailResponse(
@@ -95,6 +106,8 @@ class InMemoryStrategyJobStore:
             trace_id=trace_id,
             request=request,
             metadata={"strategy_job_backend": "memory"},
+            max_attempts=max_attempts,
+            next_attempt_at=now,
             created_at=now,
             updated_at=now,
         )
@@ -118,6 +131,7 @@ class InMemoryStrategyJobStore:
                 update={
                     "status": StrategyJobStatus.RUNNING,
                     "attempt_count": job.attempt_count + 1,
+                    "next_attempt_at": None,
                     "locked_by": worker_id or "memory_background",
                     "locked_until": now + timedelta(seconds=lock_seconds),
                     "updated_at": now,
@@ -142,7 +156,13 @@ class InMemoryStrategyJobStore:
                     for job in self._jobs.values()
                     if job.attempt_count < job.max_attempts
                     and (
-                        job.status == StrategyJobStatus.QUEUED
+                        (
+                            job.status == StrategyJobStatus.QUEUED
+                            and (
+                                job.next_attempt_at is None
+                                or job.next_attempt_at <= now
+                            )
+                        )
                         or (
                             job.status == StrategyJobStatus.RUNNING
                             and job.locked_until is not None
@@ -157,6 +177,7 @@ class InMemoryStrategyJobStore:
                     update={
                         "status": StrategyJobStatus.RUNNING,
                         "attempt_count": job.attempt_count + 1,
+                        "next_attempt_at": None,
                         "locked_by": worker_id,
                         "locked_until": now + timedelta(seconds=lock_seconds),
                         "updated_at": now,
@@ -175,6 +196,7 @@ class InMemoryStrategyJobStore:
             job_id,
             status=StrategyJobStatus.COMPLETED,
             result=response,
+            next_attempt_at=None,
             locked_by=None,
             locked_until=None,
             completed_at=datetime.now(UTC),
@@ -190,10 +212,47 @@ class InMemoryStrategyJobStore:
             job_id,
             status=StrategyJobStatus.FAILED,
             error=error,
+            next_attempt_at=None,
             locked_by=None,
             locked_until=None,
             completed_at=datetime.now(UTC),
         )
+
+    def mark_attempt_failed(
+        self,
+        job_id: str,
+        *,
+        error: dict[str, Any],
+        retry_delay_seconds: int,
+    ) -> StrategyJobDetailResponse | None:
+        now = datetime.now(UTC)
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return None
+            has_attempts_remaining = job.attempt_count < job.max_attempts
+            updated = job.model_copy(
+                update={
+                    "status": (
+                        StrategyJobStatus.QUEUED
+                        if has_attempts_remaining
+                        else StrategyJobStatus.FAILED
+                    ),
+                    "result": None,
+                    "error": error,
+                    "next_attempt_at": (
+                        now + timedelta(seconds=retry_delay_seconds)
+                        if has_attempts_remaining
+                        else None
+                    ),
+                    "locked_by": None,
+                    "locked_until": None,
+                    "updated_at": now,
+                    "completed_at": None if has_attempts_remaining else now,
+                }
+            )
+            self._jobs[job_id] = updated
+            return updated
 
     def get_job(self, job_id: str) -> StrategyJobDetailResponse | None:
         with self._lock:
@@ -210,6 +269,7 @@ class InMemoryStrategyJobStore:
         status: StrategyJobStatus,
         result: GrowthStrategyResponse | None = None,
         error: dict[str, Any] | None = None,
+        next_attempt_at: datetime | None = None,
         locked_by: str | None = None,
         locked_until: datetime | None = None,
         completed_at: datetime | None = None,
@@ -223,6 +283,7 @@ class InMemoryStrategyJobStore:
                     "status": status,
                     "result": result if result is not None else job.result,
                     "error": error if error is not None else job.error,
+                    "next_attempt_at": next_attempt_at,
                     "locked_by": locked_by,
                     "locked_until": locked_until,
                     "updated_at": datetime.now(UTC),
@@ -246,6 +307,7 @@ class PostgresStrategyJobStore:
         strategy_id: str,
         run_id: str,
         trace_id: str,
+        max_attempts: int = 3,
     ) -> StrategyJobDetailResponse:
         with _transaction(self._bind) as connection:
             upsert_tenant_and_advertiser(
@@ -265,6 +327,7 @@ class PostgresStrategyJobStore:
                 status=StrategyJobStatus.QUEUED,
                 response_json=None,
                 error_json=None,
+                max_attempts=max_attempts,
                 completed_at=None,
             )
             stmt = (
@@ -410,6 +473,44 @@ class PostgresStrategyJobStore:
             completed_at=sa.func.now(),
         )
 
+    def mark_attempt_failed(
+        self,
+        job_id: str,
+        *,
+        error: dict[str, Any],
+        retry_delay_seconds: int,
+    ) -> StrategyJobDetailResponse | None:
+        now = datetime.now(UTC)
+        with _transaction(self._bind) as connection:
+            row = _fetch_job_row_for_update(connection, job_id, tenant_id=self._tenant_id)
+            if row is None:
+                return None
+            has_attempts_remaining = row["attempt_count"] < row["max_attempts"]
+            connection.execute(
+                strategy_jobs.update()
+                .where(strategy_jobs.c.tenant_id == self._tenant_id)
+                .where(strategy_jobs.c.job_id == job_id)
+                .values(
+                    status=(
+                        StrategyJobStatus.QUEUED.value
+                        if has_attempts_remaining
+                        else StrategyJobStatus.FAILED.value
+                    ),
+                    response_json=None,
+                    error_json=error,
+                    next_attempt_at=(
+                        now + timedelta(seconds=retry_delay_seconds)
+                        if has_attempts_remaining
+                        else None
+                    ),
+                    locked_by=None,
+                    locked_until=None,
+                    updated_at=sa.func.now(),
+                    completed_at=sa.func.now() if not has_attempts_remaining else None,
+                )
+            )
+            return _fetch_job(connection, job_id, tenant_id=self._tenant_id)
+
     def get_job(self, job_id: str) -> StrategyJobDetailResponse | None:
         with _connection(self._bind) as connection:
             return _fetch_job(connection, job_id, tenant_id=self._tenant_id)
@@ -432,6 +533,7 @@ class PostgresStrategyJobStore:
                     status=status.value,
                     response_json=response_json,
                     error_json=error_json,
+                    next_attempt_at=None,
                     locked_by=None,
                     locked_until=None,
                     updated_at=sa.func.now(),
@@ -473,6 +575,7 @@ def _job_values(
     status: StrategyJobStatus,
     response_json: dict[str, Any] | None,
     error_json: dict[str, Any] | None,
+    max_attempts: int,
     completed_at: Any,
 ) -> dict[str, Any]:
     return {
@@ -489,7 +592,7 @@ def _job_values(
         "error_json": error_json,
         "metadata": {"strategy_job_backend": "postgres"},
         "attempt_count": 0,
-        "max_attempts": 3,
+        "max_attempts": max_attempts,
         "next_attempt_at": datetime.now(UTC),
         "locked_by": None,
         "locked_until": None,
@@ -528,6 +631,7 @@ def _fetch_job(
         metadata=dict(row["metadata"] or {}),
         attempt_count=row["attempt_count"],
         max_attempts=row["max_attempts"],
+        next_attempt_at=row["next_attempt_at"],
         locked_by=row["locked_by"],
         locked_until=row["locked_until"],
         created_at=row["created_at"],

@@ -1,3 +1,4 @@
+from typing import Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -14,9 +15,13 @@ class StrategyJobWorkerReport(BaseModel):
     worker_id: str = Field(min_length=1, max_length=160)
     claimed: int = Field(ge=0)
     completed: int = Field(ge=0)
+    retry_scheduled: int = Field(ge=0)
     failed: int = Field(ge=0)
     job_ids: list[str] = Field(default_factory=list)
     failures: list[dict] = Field(default_factory=list)
+
+
+StrategyJobExecutionOutcome = Literal["completed", "retry_scheduled", "failed"]
 
 
 def process_configured_strategy_jobs(
@@ -50,19 +55,31 @@ def process_strategy_jobs(
         lock_seconds=lock_seconds,
     )
     completed = 0
+    retry_scheduled = 0
+    failed = 0
     failures: list[dict] = []
     for job in claimed_jobs:
-        result = execute_claimed_strategy_job(job_store, job, settings=settings)
-        if result:
+        outcome = execute_claimed_strategy_job(
+            job_store,
+            job,
+            settings=settings,
+            retry_failures=True,
+        )
+        if outcome == "completed":
             completed += 1
+        elif outcome == "retry_scheduled":
+            retry_scheduled += 1
+            failures.append({"job_id": job.job_id, "status": "retry_scheduled"})
         else:
+            failed += 1
             failures.append({"job_id": job.job_id, "status": "failed"})
 
     return StrategyJobWorkerReport(
         worker_id=effective_worker_id,
         claimed=len(claimed_jobs),
         completed=completed,
-        failed=len(claimed_jobs) - completed,
+        retry_scheduled=retry_scheduled,
+        failed=failed,
         job_ids=[job.job_id for job in claimed_jobs],
         failures=failures,
     )
@@ -83,7 +100,7 @@ def execute_background_strategy_job(
     )
     if job is None:
         return
-    execute_claimed_strategy_job(job_store, job, settings=settings)
+    execute_claimed_strategy_job(job_store, job, settings=settings, retry_failures=False)
 
 
 def execute_claimed_strategy_job(
@@ -91,7 +108,8 @@ def execute_claimed_strategy_job(
     job: StrategyJobDetailResponse,
     *,
     settings: Settings,
-) -> bool:
+    retry_failures: bool = False,
+) -> StrategyJobExecutionOutcome:
     run_context = create_run_context(
         run_id=job.run_id,
         strategy_id=job.strategy_id,
@@ -105,14 +123,71 @@ def execute_claimed_strategy_job(
             run_context=run_context,
         )
     except StrategyGenerationError as exc:
-        job_store.mark_failed(job.job_id, error=_job_error_from_strategy_error(exc))
-        return False
+        return _record_job_failure(
+            job_store,
+            job,
+            _job_error_from_strategy_error(exc),
+            settings=settings,
+            retry_failures=retry_failures,
+        )
     except Exception as exc:
-        job_store.mark_failed(job.job_id, error=_job_error_from_exception(exc))
-        return False
+        return _record_job_failure(
+            job_store,
+            job,
+            _job_error_from_exception(exc),
+            settings=settings,
+            retry_failures=retry_failures,
+        )
 
     job_store.mark_completed(job.job_id, growth_response)
-    return True
+    return "completed"
+
+
+def _record_job_failure(
+    job_store: StrategyJobStore,
+    job: StrategyJobDetailResponse,
+    error: dict,
+    *,
+    settings: Settings,
+    retry_failures: bool,
+) -> StrategyJobExecutionOutcome:
+    if not retry_failures:
+        job_store.mark_failed(
+            job.job_id,
+            error={
+                **error,
+                "attempt_count": job.attempt_count,
+                "max_attempts": job.max_attempts,
+                "retry_scheduled": False,
+            },
+        )
+        return "failed"
+
+    retry_delay_seconds = _retry_delay_seconds(job, settings)
+    retry_scheduled = job.attempt_count < job.max_attempts
+    updated = job_store.mark_attempt_failed(
+        job.job_id,
+        error={
+            **error,
+            "attempt_count": job.attempt_count,
+            "max_attempts": job.max_attempts,
+            "retry_delay_seconds": retry_delay_seconds if retry_scheduled else None,
+            "retry_scheduled": retry_scheduled,
+        },
+        retry_delay_seconds=retry_delay_seconds,
+    )
+    if updated is not None and updated.status == "queued":
+        return "retry_scheduled"
+    return "failed"
+
+
+def _retry_delay_seconds(job: StrategyJobDetailResponse, settings: Settings) -> int:
+    base_delay = settings.strategy_job_retry_base_delay_seconds
+    if base_delay <= 0:
+        return 0
+    attempt_index = max(1, job.attempt_count)
+    delay = base_delay * (2 ** (attempt_index - 1))
+    return min(delay, settings.strategy_job_retry_max_delay_seconds)
 
 
 def _job_error_from_strategy_error(exc: StrategyGenerationError) -> dict:

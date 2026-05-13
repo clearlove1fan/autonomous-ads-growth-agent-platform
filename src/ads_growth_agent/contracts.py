@@ -379,6 +379,7 @@ class StrategyJobDetailResponse(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     attempt_count: int = Field(default=0, ge=0)
     max_attempts: int = Field(default=3, gt=0)
+    next_attempt_at: datetime | None = None
     locked_by: str | None = Field(default=None, min_length=1, max_length=160)
     locked_until: datetime | None = None
     created_at: datetime

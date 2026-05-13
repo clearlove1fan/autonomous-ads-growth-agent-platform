@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     idempotency_backend: Literal["none", "postgres"] = "none"
     strategy_job_backend: Literal["memory", "postgres"] = "memory"
     strategy_job_execution_mode: Literal["background", "external"] = "background"
+    strategy_job_max_attempts: int = Field(default=3, ge=1, le=20)
+    strategy_job_retry_base_delay_seconds: int = Field(default=30, ge=0, le=86_400)
+    strategy_job_retry_max_delay_seconds: int = Field(default=900, ge=0, le=86_400)
     idempotency_ttl_seconds: int = 86_400
     graph_checkpointer_backend: Literal["none", "memory", "postgres"] = "none"
     graph_checkpointer_setup: bool = True

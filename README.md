@@ -159,6 +159,8 @@ STRATEGY_JOB_BACKEND=postgres STRATEGY_JOB_EXECUTION_MODE=external ads-growth-ag
 
 Worker claims use `FOR UPDATE SKIP LOCKED`, `attempt_count`, `locked_by`, and `locked_until` so multiple workers can process the same queue without claiming the same job at the same time.
 
+External workers retry failed jobs with bounded exponential backoff. Configure the retry budget with `STRATEGY_JOB_MAX_ATTEMPTS`, `STRATEGY_JOB_RETRY_BASE_DELAY_SECONDS`, and `STRATEGY_JOB_RETRY_MAX_DELAY_SECONDS`. Failed attempts return the job to `queued` with `next_attempt_at`; once attempts are exhausted the job becomes terminal `failed`.
+
 The current deterministic workflow runs through explicit LangGraph nodes:
 
 ```text

@@ -63,6 +63,7 @@ def test_growth_strategy_job_accepts_request_and_completes_in_background() -> No
     assert detail_payload["error"] is None
     assert detail_payload["completed_at"] is not None
     assert detail_payload["attempt_count"] == 1
+    assert detail_payload["next_attempt_at"] is None
     assert detail_payload["locked_by"] is None
 
 
@@ -94,7 +95,35 @@ def test_growth_strategy_job_records_failed_background_execution(monkeypatch) ->
     assert detail_payload["error"]["error_code"] == "STRATEGY_JOB_EXECUTION_FAILED"
     assert detail_payload["error"]["exception_type"] == "RuntimeError"
     assert detail_payload["error"]["detail"] == "planner failed"
+    assert detail_payload["error"]["retry_scheduled"] is False
+    assert detail_payload["next_attempt_at"] is None
     assert detail_payload["completed_at"] is not None
+
+
+def test_strategy_job_uses_configured_max_attempts_in_external_mode() -> None:
+    store = InMemoryStrategyJobStore()
+    settings = Settings(
+        strategy_job_backend="memory",
+        strategy_job_execution_mode="external",
+        strategy_job_max_attempts=5,
+    )
+    api_app.dependency_overrides[get_runtime_settings] = lambda: settings
+    api_app.dependency_overrides[get_runtime_strategy_job_store] = lambda: store
+    try:
+        accepted = TestClient(api_app).post(
+            "/growth-strategies/jobs",
+            json={"brief": _brief_payload()},
+        )
+        detail = TestClient(api_app).get(accepted.json()["polling_url"])
+    finally:
+        api_app.dependency_overrides.clear()
+
+    detail_payload = detail.json()
+    assert accepted.status_code == 202
+    assert detail_payload["status"] == "queued"
+    assert detail_payload["max_attempts"] == 5
+    assert detail_payload["attempt_count"] == 0
+    assert detail_payload["next_attempt_at"] is not None
 
 
 def test_external_strategy_job_execution_mode_leaves_job_queued_then_worker_completes() -> None:
@@ -128,10 +157,105 @@ def test_external_strategy_job_execution_mode_leaves_job_queued_then_worker_comp
 
     assert report.claimed == 1
     assert report.completed == 1
+    assert report.retry_scheduled == 0
     assert report.failed == 0
     assert completed is not None
     assert completed.status == "completed"
     assert completed.result is not None
+
+
+def test_external_strategy_job_worker_retries_then_marks_terminal_failed(
+    monkeypatch,
+) -> None:
+    store = InMemoryStrategyJobStore()
+    settings = Settings(
+        strategy_job_backend="memory",
+        strategy_job_execution_mode="external",
+        strategy_job_retry_base_delay_seconds=0,
+        strategy_job_retry_max_delay_seconds=0,
+    )
+    request = GrowthStrategyRequest.model_validate({"brief": _brief_payload()})
+    job = store.create_queued(
+        request,
+        job_id="job_retry",
+        strategy_id="strategy_retry",
+        run_id="run_retry",
+        trace_id="trace_retry",
+        max_attempts=2,
+    )
+
+    def fail_generation(*args, **kwargs):
+        raise RuntimeError("temporary planner failure")
+
+    monkeypatch.setattr(worker_module, "generate_growth_strategy", fail_generation)
+
+    first_report = process_strategy_jobs(
+        store,
+        settings=settings,
+        limit=1,
+        worker_id="worker_retry",
+    )
+    scheduled = store.get_job(job.job_id)
+
+    assert first_report.claimed == 1
+    assert first_report.completed == 0
+    assert first_report.retry_scheduled == 1
+    assert first_report.failed == 0
+    assert scheduled is not None
+    assert scheduled.status == "queued"
+    assert scheduled.attempt_count == 1
+    assert scheduled.next_attempt_at is not None
+    assert scheduled.completed_at is None
+    assert scheduled.error is not None
+    assert scheduled.error["retry_scheduled"] is True
+    assert scheduled.error["retry_delay_seconds"] == 0
+
+    second_report = process_strategy_jobs(
+        store,
+        settings=settings,
+        limit=1,
+        worker_id="worker_retry",
+    )
+    terminal = store.get_job(job.job_id)
+
+    assert second_report.claimed == 1
+    assert second_report.completed == 0
+    assert second_report.retry_scheduled == 0
+    assert second_report.failed == 1
+    assert terminal is not None
+    assert terminal.status == "failed"
+    assert terminal.attempt_count == 2
+    assert terminal.next_attempt_at is None
+    assert terminal.completed_at is not None
+    assert terminal.error is not None
+    assert terminal.error["retry_scheduled"] is False
+    assert terminal.error["retry_delay_seconds"] is None
+
+
+def test_in_memory_strategy_job_claim_respects_next_attempt_at() -> None:
+    store = InMemoryStrategyJobStore()
+    request = GrowthStrategyRequest.model_validate({"brief": _brief_payload()})
+    job = store.create_queued(
+        request,
+        job_id="job_delayed_retry",
+        strategy_id="strategy_delayed_retry",
+        run_id="run_delayed_retry",
+        trace_id="trace_delayed_retry",
+        max_attempts=2,
+    )
+    claimed = store.claim_queued(limit=1, worker_id="worker_retry")
+    scheduled = store.mark_attempt_failed(
+        claimed[0].job_id,
+        error={"message": "temporary failure"},
+        retry_delay_seconds=60,
+    )
+    immediate_retry = store.claim_queued(limit=1, worker_id="worker_retry")
+
+    assert claimed[0].job_id == job.job_id
+    assert scheduled is not None
+    assert scheduled.status == "queued"
+    assert scheduled.next_attempt_at is not None
+    assert immediate_retry == []
 
 
 def test_in_memory_strategy_job_claims_distinct_jobs_per_worker() -> None:

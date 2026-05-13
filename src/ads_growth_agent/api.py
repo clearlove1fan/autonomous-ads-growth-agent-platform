@@ -230,6 +230,7 @@ def create_growth_strategy_job(
         strategy_id=strategy_id,
         run_id=run_context.run_id,
         trace_id=run_context.trace_id,
+        max_attempts=settings.strategy_job_max_attempts,
     )
     polling_url = f"/growth-strategies/jobs/{job.job_id}"
     response.headers["Location"] = polling_url

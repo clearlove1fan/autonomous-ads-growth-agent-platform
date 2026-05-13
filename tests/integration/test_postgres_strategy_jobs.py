@@ -63,7 +63,8 @@ def test_strategy_job_api_persists_completed_job_in_postgres(monkeypatch) -> Non
                 row = connection.execute(
                     sa.text(
                         "SELECT tenant_id, job_id, status, run_id, response_json, "
-                        "attempt_count, locked_by, locked_until, partition_bucket "
+                        "attempt_count, max_attempts, next_attempt_at, locked_by, "
+                        "locked_until, partition_bucket "
                         "FROM strategy_jobs WHERE job_id = :job_id"
                     ),
                     {"job_id": accepted_payload["job_id"]},
@@ -76,6 +77,8 @@ def test_strategy_job_api_persists_completed_job_in_postgres(monkeypatch) -> Non
         assert row["run_id"] == accepted_payload["run_id"]
         assert row["response_json"]["strategy"]["advertiser_id"] == "adv_fitness_001"
         assert row["attempt_count"] == 1
+        assert row["max_attempts"] == 3
+        assert row["next_attempt_at"] is None
         assert row["locked_by"] is None
         assert row["locked_until"] is None
         assert 0 <= row["partition_bucket"] < 128
@@ -123,6 +126,77 @@ def test_postgres_strategy_jobs_claim_distinct_jobs_with_skip_locked(monkeypatch
         }
         assert worker_one[0].attempt_count == 1
         assert worker_two[0].attempt_count == 1
+    finally:
+        engine.dispose()
+        _drop_temporary_database(test_url)
+
+
+def test_postgres_strategy_job_failure_retries_until_attempts_exhausted(
+    monkeypatch,
+) -> None:
+    base_url = _integration_database_url()
+    test_url = _create_temporary_database(base_url)
+    engine = sa.create_engine(test_url)
+
+    try:
+        monkeypatch.setenv("DATABASE_URL", test_url.render_as_string(hide_password=False))
+        command.upgrade(Config("alembic.ini"), "head")
+
+        store = PostgresStrategyJobStore(engine, tenant_id="tenant_jobs")
+        request = GrowthStrategyRequest.model_validate({"brief": _brief_payload()})
+        created = store.create_queued(
+            request,
+            job_id="job_retry_pg",
+            strategy_id="strategy_retry_pg",
+            run_id="run_retry_pg",
+            trace_id="trace_retry_pg",
+            max_attempts=2,
+        )
+
+        first_claim = store.claim_queued(limit=1, worker_id="worker_retry")
+        first_failed = store.mark_attempt_failed(
+            first_claim[0].job_id,
+            error={"message": "temporary failure", "retry_scheduled": True},
+            retry_delay_seconds=60,
+        )
+        immediate_retry = store.claim_queued(limit=1, worker_id="worker_retry")
+
+        assert first_claim[0].job_id == created.job_id
+        assert first_failed is not None
+        assert first_failed.status == "queued"
+        assert first_failed.attempt_count == 1
+        assert first_failed.next_attempt_at is not None
+        assert first_failed.completed_at is None
+        assert first_failed.locked_by is None
+        assert immediate_retry == []
+
+        with engine.begin() as connection:
+            connection.execute(
+                sa.text(
+                    "UPDATE strategy_jobs "
+                    "SET next_attempt_at = now() - interval '1 second' "
+                    "WHERE tenant_id = :tenant_id AND job_id = :job_id"
+                ),
+                {"tenant_id": "tenant_jobs", "job_id": created.job_id},
+            )
+
+        second_claim = store.claim_queued(limit=1, worker_id="worker_retry")
+        terminal = store.mark_attempt_failed(
+            second_claim[0].job_id,
+            error={"message": "permanent failure", "retry_scheduled": False},
+            retry_delay_seconds=60,
+        )
+
+        assert second_claim[0].job_id == created.job_id
+        assert second_claim[0].attempt_count == 2
+        assert terminal is not None
+        assert terminal.status == "failed"
+        assert terminal.attempt_count == 2
+        assert terminal.next_attempt_at is None
+        assert terminal.completed_at is not None
+        assert terminal.locked_by is None
+        assert terminal.error is not None
+        assert terminal.error["message"] == "permanent failure"
     finally:
         engine.dispose()
         _drop_temporary_database(test_url)
