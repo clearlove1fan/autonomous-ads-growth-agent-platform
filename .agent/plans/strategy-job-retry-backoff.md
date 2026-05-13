@@ -37,7 +37,7 @@ execution should keep its simpler one-shot failure behavior.
 - [x] Expose `next_attempt_at` in job detail responses.
 - [x] Add unit and integration coverage for retry scheduling and retry
       exhaustion.
-- [~] Run verification, commit, push, and watch CI.
+- [x] Run verification, commit, push, and watch CI.
 
 ## Decisions
 
@@ -80,8 +80,13 @@ execution should keep its simpler one-shot failure behavior.
   Result: `RUN_POSTGRES_INTEGRATION=1 TEST_DATABASE_URL=postgresql+psycopg://ads_growth:ads_growth@localhost:5432/ads_growth .venv/bin/python -m pytest tests/integration/test_postgres_strategy_jobs.py` passed with 3 passed after rerunning with local network escalation.
 - [x] Docker cleanup:
   Result: `docker compose down` stopped and removed the local Postgres container.
-- [ ] CI:
+- [x] CI:
+  Result: GitHub Actions CI run `25784038410` passed, including unit, lint,
+  e2e-smoke, postgres-integration, and release-readiness.
 
 ## Final Status
 
-In progress.
+Complete. External strategy job workers now schedule retryable failures with
+bounded exponential backoff, expose retry timing through job details, and mark
+jobs terminal `failed` only after attempts are exhausted. Local and remote unit,
+lint, e2e, and PostgreSQL integration checks passed.
