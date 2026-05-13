@@ -454,6 +454,8 @@ class CampaignPerformanceEventResponse(BaseModel):
     run_id: str | None = Field(default=None, min_length=1, max_length=128)
     status: Literal["analyzed"]
     persisted: bool
+    advertiser_memory_persisted: bool = False
+    advertiser_memory_source_id: str | None = Field(default=None, min_length=1, max_length=160)
     analysis: CampaignFeedbackAnalysis
 
 

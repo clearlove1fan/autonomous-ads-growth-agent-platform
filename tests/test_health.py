@@ -28,6 +28,7 @@ def test_readiness_skips_unconfigured_dependencies() -> None:
         run_persistence_backend="none",
         campaign_draft_persistence_backend="none",
         performance_event_persistence_backend="none",
+        advertiser_memory_persistence_backend="none",
         idempotency_backend="none",
         graph_checkpointer_backend="none",
         use_llm_planner=False,
@@ -89,6 +90,38 @@ def test_readiness_fails_when_required_postgres_is_down(monkeypatch) -> None:
         "required": True,
         "latency_ms": 3,
         "detail": "OperationalError: connection refused",
+    }
+
+
+def test_readiness_requires_postgres_for_advertiser_memory_backend(monkeypatch) -> None:
+    def fake_check_postgres(settings: Settings) -> health_module.DependencyCheck:
+        return health_module.DependencyCheck(
+            name="postgres",
+            status="ok",
+            required=True,
+            latency_ms=2,
+        )
+
+    monkeypatch.setattr(health_module, "_check_postgres", fake_check_postgres)
+    app.dependency_overrides[get_runtime_settings] = lambda: Settings(
+        advertiser_memory_persistence_backend="postgres",
+        use_llm_planner=False,
+        use_llm_critic=False,
+    )
+    try:
+        response = TestClient(app).get("/health/ready")
+    finally:
+        app.dependency_overrides.clear()
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["status"] == "ok"
+    assert payload["dependencies"][0] == {
+        "name": "postgres",
+        "status": "ok",
+        "required": True,
+        "latency_ms": 2,
+        "detail": None,
     }
 
 

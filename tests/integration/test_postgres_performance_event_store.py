@@ -8,12 +8,18 @@ from alembic.config import Config
 from fastapi.testclient import TestClient
 from sqlalchemy.engine import URL, make_url
 
+from ads_growth_agent.advertiser_memory_store_factory import (
+    dispose_cached_advertiser_memory_store_engines,
+)
 from ads_growth_agent.api import app as api_app
 from ads_growth_agent.api import get_runtime_settings
 from ads_growth_agent.config import Settings
+from ads_growth_agent.contracts import AdvertiserBrief, CampaignObjective
+from ads_growth_agent.knowledge_store_factory import dispose_cached_knowledge_store_engines
 from ads_growth_agent.performance_event_store_factory import (
     dispose_cached_performance_event_store_engines,
 )
+from ads_growth_agent.strategy import generate_growth_strategy
 
 pytestmark = pytest.mark.integration
 
@@ -34,6 +40,7 @@ def test_performance_event_api_persists_analysis_to_postgres(monkeypatch) -> Non
         settings = Settings(
             database_url=test_url.render_as_string(hide_password=False),
             performance_event_persistence_backend="postgres",
+            advertiser_memory_persistence_backend="postgres",
             tenant_id="tenant_perf",
         )
         api_app.dependency_overrides[get_runtime_settings] = lambda: settings
@@ -49,7 +56,10 @@ def test_performance_event_api_persists_analysis_to_postgres(monkeypatch) -> Non
         assert response.status_code == 200
         assert response.headers["performance-event-id"] == "evt_perf_integration"
         assert response.headers["performance-event-status"] == "created"
+        assert response.headers["advertiser-memory-status"] == "recorded"
         assert payload["persisted"] is True
+        assert payload["advertiser_memory_persisted"] is True
+        assert payload["advertiser_memory_source_id"].startswith("memory:performance:")
         assert payload["analysis"]["health_status"] == "underperforming"
         replay = client.post(
             "/campaign-events/performance",
@@ -77,6 +87,7 @@ def test_performance_event_api_persists_analysis_to_postgres(monkeypatch) -> Non
 
         assert replay.status_code == 200
         assert replay.headers["performance-event-status"] == "replayed"
+        assert replay.headers["advertiser-memory-status"] == "recorded"
         assert replay.json()["analysis"]["feedback_id"] == payload["analysis"]["feedback_id"]
         assert conflict.status_code == 409
         assert conflict.json()["detail"]["error_code"] == "PERFORMANCE_EVENT_ID_CONFLICT"
@@ -109,6 +120,15 @@ def test_performance_event_api_persists_analysis_to_postgres(monkeypatch) -> Non
                 ),
                 {"tenant_id": "tenant_other"},
             ).scalar_one()
+            memory = connection.execute(
+                sa.text(
+                    "SELECT memory_type, content, metadata, partition_key, partition_bucket "
+                    "FROM advertiser_memories "
+                    "WHERE tenant_id = :tenant_id "
+                    "AND metadata ->> 'event_id' = :event_id"
+                ),
+                {"tenant_id": "tenant_perf", "event_id": "evt_perf_integration"},
+            ).mappings().one()
 
         assert event["tenant_id"] == "tenant_perf"
         assert event["advertiser_id"] == "adv_fitness_001"
@@ -123,8 +143,26 @@ def test_performance_event_api_persists_analysis_to_postgres(monkeypatch) -> Non
         assert event["partition_key"] == "evt_perf_integration"
         assert 0 <= event["partition_bucket"] < 128
         assert other_tenant_count == 0
+        assert memory["memory_type"] == "historical_performance"
+        assert memory["metadata"]["source_id"] == payload["advertiser_memory_source_id"]
+        assert memory["metadata"]["health_status"] == "underperforming"
+        assert memory["metadata"]["objectives"] == ["registrations"]
+        assert "observed CPA 50.00" in memory["content"]
+        assert memory["partition_key"] == "adv_fitness_001"
+        assert 0 <= memory["partition_bucket"] < 128
+
+        strategy_settings = Settings(
+            database_url=test_url.render_as_string(hide_password=False),
+            knowledge_store_backend="postgres",
+            tenant_id="tenant_perf",
+        )
+        strategy = generate_growth_strategy(_fitness_brief(), settings=strategy_settings)
+        source_ids = {source.source_id for source in strategy.strategy.sources}
+        assert payload["advertiser_memory_source_id"] in source_ids
     finally:
         api_app.dependency_overrides.clear()
+        dispose_cached_advertiser_memory_store_engines()
+        dispose_cached_knowledge_store_engines()
         dispose_cached_performance_event_store_engines()
         engine.dispose()
         _drop_temporary_database(test_url)
@@ -147,6 +185,22 @@ def _event_payload() -> dict[str, object]:
         "target_cpa": "20.00",
         "attribution_window_days": 7,
     }
+
+
+def _fitness_brief() -> AdvertiserBrief:
+    return AdvertiserBrief(
+        advertiser_id="adv_fitness_001",
+        product_name="FitTrack Pro",
+        product_category="fitness app",
+        objective=CampaignObjective.REGISTRATIONS,
+        budget="2000.00",
+        currency="USD",
+        duration_days=14,
+        target_market="United States",
+        primary_kpi="trial registrations",
+        target_cpa="20.00",
+        brand_voice="motivational and practical",
+    )
 
 
 def _integration_database_url() -> URL:

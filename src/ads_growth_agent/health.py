@@ -54,6 +54,7 @@ def _requires_postgres(settings: Settings) -> bool:
             settings.run_persistence_backend == "postgres",
             settings.campaign_draft_persistence_backend == "postgres",
             settings.performance_event_persistence_backend == "postgres",
+            settings.advertiser_memory_persistence_backend == "postgres",
             settings.idempotency_backend == "postgres",
             settings.strategy_job_backend == "postgres",
             settings.graph_checkpointer_backend == "postgres",

@@ -3,12 +3,16 @@ from fastapi.testclient import TestClient
 from ads_growth_agent import api as api_module
 from ads_growth_agent.api import app as api_app
 from ads_growth_agent.api import (
+    get_runtime_advertiser_memory_store,
     get_runtime_performance_event_store,
     get_runtime_settings,
 )
 from ads_growth_agent.config import Settings
 from ads_growth_agent.contracts import CampaignPerformanceEventDetailResponse
 from ads_growth_agent.feedback import analyze_campaign_performance_event
+from ads_growth_agent.persistence.advertiser_memory_store import (
+    AdvertiserMemoryWriteResult,
+)
 from ads_growth_agent.persistence.performance_event_store import (
     PerformanceEventConflictError,
     hash_campaign_performance_event,
@@ -49,7 +53,10 @@ def test_campaign_performance_event_api_returns_feedback_analysis(monkeypatch) -
     assert response.headers["performance-event-id"] == "evt_perf_001"
     assert response.headers["feedback-id"].startswith("feedback_")
     assert response.headers["performance-event-status"] == "created"
+    assert response.headers["advertiser-memory-status"] == "disabled"
     assert payload["persisted"] is True
+    assert payload["advertiser_memory_persisted"] is False
+    assert payload["advertiser_memory_source_id"] is None
     assert payload["status"] == "analyzed"
     assert payload["analysis"]["health_status"] == "underperforming"
     assert payload["analysis"]["metrics_summary"]["cpa"] == "50.00"
@@ -78,6 +85,7 @@ def test_campaign_performance_event_api_uses_noop_persistence_by_default() -> No
     assert response.status_code == 200
     assert response.json()["persisted"] is False
     assert response.headers["performance-event-status"] == "created"
+    assert response.headers["advertiser-memory-status"] == "disabled"
 
 
 def test_campaign_performance_event_api_rejects_orphan_event() -> None:
@@ -113,9 +121,46 @@ def test_campaign_performance_event_api_replays_existing_event() -> None:
     assert response.status_code == 200
     assert response.headers["performance-event-status"] == "replayed"
     assert response.headers["feedback-id"] == analysis.feedback_id
+    assert response.headers["advertiser-memory-status"] == "disabled"
     assert payload["analysis"]["feedback_id"] == analysis.feedback_id
     assert store.records == []
     assert store.requested_event_ids == ["evt_perf_001"]
+
+
+def test_campaign_performance_event_api_records_advertiser_memory() -> None:
+    event_store = CapturingPerformanceEventStore()
+    memory_store = CapturingAdvertiserMemoryStore(
+        AdvertiserMemoryWriteResult(
+            persisted=True,
+            source_id="memory:performance:test:v1",
+            memory_type="historical_performance",
+        )
+    )
+    api_app.dependency_overrides[get_runtime_settings] = lambda: Settings(
+        performance_event_persistence_backend="postgres",
+        advertiser_memory_persistence_backend="postgres",
+    )
+    api_app.dependency_overrides[get_runtime_performance_event_store] = (
+        lambda: event_store
+    )
+    api_app.dependency_overrides[get_runtime_advertiser_memory_store] = (
+        lambda: memory_store
+    )
+    try:
+        response = TestClient(api_app).post(
+            "/campaign-events/performance",
+            json=_event_payload(),
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert response.headers["advertiser-memory-status"] == "recorded"
+    assert response.headers["advertiser-memory-source-id"] == "memory:performance:test:v1"
+    assert payload["advertiser_memory_persisted"] is True
+    assert payload["advertiser_memory_source_id"] == "memory:performance:test:v1"
+    assert memory_store.records == [("evt_perf_001", payload["analysis"]["feedback_id"])]
 
 
 def test_campaign_performance_event_api_rejects_event_id_payload_conflict() -> None:
@@ -238,6 +283,16 @@ class CapturingPerformanceEventStore:
         if self.detail is None or self.detail.event_id != event_id:
             return None
         return self.detail
+
+
+class CapturingAdvertiserMemoryStore:
+    def __init__(self, result: AdvertiserMemoryWriteResult) -> None:
+        self.result = result
+        self.records: list[tuple[str, str]] = []
+
+    def record_feedback_memory(self, event, analysis) -> AdvertiserMemoryWriteResult:
+        self.records.append((event.event_id, analysis.feedback_id))
+        return self.result
 
 
 def _event_detail(

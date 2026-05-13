@@ -7,6 +7,9 @@ from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Re
 from pydantic import BaseModel, ValidationError
 
 from ads_growth_agent import __version__
+from ads_growth_agent.advertiser_memory_store_factory import (
+    build_configured_advertiser_memory_store,
+)
 from ads_growth_agent.config import Settings, get_settings
 from ads_growth_agent.contracts import (
     AdvertiserBrief,
@@ -27,6 +30,11 @@ from ads_growth_agent.logging_config import configure_logging
 from ads_growth_agent.observability import RunContext, create_run_context
 from ads_growth_agent.performance_event_store_factory import (
     build_configured_performance_event_store,
+)
+from ads_growth_agent.persistence.advertiser_memory_store import (
+    AdvertiserMemoryConflictError,
+    AdvertiserMemoryStore,
+    AdvertiserMemoryWriteResult,
 )
 from ads_growth_agent.persistence.idempotency_store import (
     IdempotencyConflictError,
@@ -109,6 +117,12 @@ def get_runtime_performance_event_store(
     settings: Annotated[Settings, Depends(get_request_settings)],
 ) -> CampaignPerformanceEventStore:
     return build_configured_performance_event_store(settings)
+
+
+def get_runtime_advertiser_memory_store(
+    settings: Annotated[Settings, Depends(get_request_settings)],
+) -> AdvertiserMemoryStore:
+    return build_configured_advertiser_memory_store(settings)
 
 
 def get_runtime_strategy_job_store(
@@ -267,6 +281,10 @@ def ingest_campaign_performance_event(
         CampaignPerformanceEventStore,
         Depends(get_runtime_performance_event_store),
     ],
+    memory_store: Annotated[
+        AdvertiserMemoryStore,
+        Depends(get_runtime_advertiser_memory_store),
+    ],
 ) -> CampaignPerformanceEventResponse:
     response.headers["X-Tenant-ID"] = settings.tenant_id
     response.headers["Performance-Event-ID"] = request.event_id
@@ -275,14 +293,24 @@ def ingest_campaign_performance_event(
     if existing_event is not None:
         if existing_event.metadata.get("event_hash") != request_hash:
             _raise_performance_event_conflict(request.event_id)
+        try:
+            memory_result = memory_store.record_feedback_memory(
+                request,
+                existing_event.analysis,
+            )
+        except AdvertiserMemoryConflictError as exc:
+            _raise_performance_event_conflict(exc.event_id)
         response.headers["Feedback-ID"] = existing_event.analysis.feedback_id
         response.headers["Performance-Event-Status"] = "replayed"
+        _set_advertiser_memory_headers(response, memory_result)
         return CampaignPerformanceEventResponse(
             event_id=existing_event.event_id,
             advertiser_id=existing_event.advertiser_id,
             run_id=existing_event.run_id,
             status="analyzed",
             persisted=True,
+            advertiser_memory_persisted=memory_result.persisted,
+            advertiser_memory_source_id=memory_result.source_id,
             analysis=existing_event.analysis,
         )
 
@@ -291,14 +319,21 @@ def ingest_campaign_performance_event(
         event_store.record_analyzed(request, analysis)
     except PerformanceEventConflictError as exc:
         _raise_performance_event_conflict(exc.event_id)
+    try:
+        memory_result = memory_store.record_feedback_memory(request, analysis)
+    except AdvertiserMemoryConflictError as exc:
+        _raise_performance_event_conflict(exc.event_id)
     response.headers["Feedback-ID"] = analysis.feedback_id
     response.headers["Performance-Event-Status"] = "created"
+    _set_advertiser_memory_headers(response, memory_result)
     return CampaignPerformanceEventResponse(
         event_id=request.event_id,
         advertiser_id=request.advertiser_id,
         run_id=request.run_id,
         status="analyzed",
         persisted=settings.performance_event_persistence_backend != "none",
+        advertiser_memory_persisted=memory_result.persisted,
+        advertiser_memory_source_id=memory_result.source_id,
         analysis=analysis,
     )
 
@@ -339,6 +374,17 @@ def _raise_performance_event_conflict(event_id: str) -> None:
             "event_id": event_id,
         },
     )
+
+
+def _set_advertiser_memory_headers(
+    response: Response,
+    result: AdvertiserMemoryWriteResult,
+) -> None:
+    response.headers["Advertiser-Memory-Status"] = (
+        "recorded" if result.persisted else "disabled"
+    )
+    if result.source_id is not None:
+        response.headers["Advertiser-Memory-Source-ID"] = result.source_id
 
 
 @app.get("/runs/{run_id}", response_model=AgentRunDetailResponse)
