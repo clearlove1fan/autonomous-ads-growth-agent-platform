@@ -377,6 +377,10 @@ class StrategyJobDetailResponse(BaseModel):
     result: GrowthStrategyResponse | None = None
     error: dict[str, Any] | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    attempt_count: int = Field(default=0, ge=0)
+    max_attempts: int = Field(default=3, gt=0)
+    locked_by: str | None = Field(default=None, min_length=1, max_length=160)
+    locked_until: datetime | None = None
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None = None

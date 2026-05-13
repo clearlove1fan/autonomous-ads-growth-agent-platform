@@ -149,7 +149,15 @@ curl -i -X POST http://localhost:8000/growth-strategies/jobs \
 curl http://localhost:8000/growth-strategies/jobs/job_abc123
 ```
 
-The v0.1 job executor uses FastAPI background tasks for local development. Set `STRATEGY_JOB_BACKEND=postgres` to persist job status and completed results in `strategy_jobs`; a production deployment should replace the in-process executor with a real queue and worker pool.
+The default job executor uses FastAPI background tasks for local development. Set `STRATEGY_JOB_BACKEND=postgres` to persist job status and completed results in `strategy_jobs`.
+
+For a production-style worker path, set `STRATEGY_JOB_BACKEND=postgres` and `STRATEGY_JOB_EXECUTION_MODE=external`. The API will leave jobs in `queued` state, and bounded workers can claim distinct jobs with PostgreSQL row locks:
+
+```bash
+STRATEGY_JOB_BACKEND=postgres STRATEGY_JOB_EXECUTION_MODE=external ads-growth-agent process-strategy-jobs --limit 10 --worker-id worker_a
+```
+
+Worker claims use `FOR UPDATE SKIP LOCKED`, `attempt_count`, `locked_by`, and `locked_until` so multiple workers can process the same queue without claiming the same job at the same time.
 
 The current deterministic workflow runs through explicit LangGraph nodes:
 

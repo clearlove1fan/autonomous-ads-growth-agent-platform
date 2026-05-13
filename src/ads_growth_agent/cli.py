@@ -14,6 +14,7 @@ from ads_growth_agent.logging_config import configure_logging
 from ads_growth_agent.outbox import process_configured_outbox
 from ads_growth_agent.persistence.knowledge_seed import seed_default_knowledge
 from ads_growth_agent.strategy import StrategyGenerationError, generate_growth_strategy
+from ads_growth_agent.strategy_job_worker import process_configured_strategy_jobs
 
 app = typer.Typer(
     help="Autonomous Ads Growth Agent Platform CLI.",
@@ -100,6 +101,23 @@ def process_outbox(
     """Process a bounded batch of durable outbox events."""
     settings = get_settings()
     report = process_configured_outbox(settings, limit=limit, worker_id=worker_id)
+    typer.echo(report.model_dump_json(indent=2))
+
+
+@app.command("process-strategy-jobs")
+def process_strategy_jobs(
+    limit: int = typer.Option(10, "--limit", min=1, max=100),
+    worker_id: str | None = typer.Option(None, "--worker-id"),
+    lock_seconds: int = typer.Option(1_800, "--lock-seconds", min=30, max=86_400),
+) -> None:
+    """Process a bounded batch of queued strategy-generation jobs."""
+    settings = get_settings()
+    report = process_configured_strategy_jobs(
+        settings,
+        limit=limit,
+        worker_id=worker_id,
+        lock_seconds=lock_seconds,
+    )
     typer.echo(report.model_dump_json(indent=2))
 
 

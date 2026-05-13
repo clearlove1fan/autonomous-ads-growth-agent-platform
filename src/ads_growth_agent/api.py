@@ -55,6 +55,7 @@ from ads_growth_agent.persistence.strategy_job_store import StrategyJobStore
 from ads_growth_agent.run_store_factory import build_configured_run_read_store
 from ads_growth_agent.strategy import StrategyGenerationError, generate_growth_strategy
 from ads_growth_agent.strategy_job_store_factory import build_configured_strategy_job_store
+from ads_growth_agent.strategy_job_worker import execute_background_strategy_job
 
 
 class HealthResponse(BaseModel):
@@ -234,14 +235,14 @@ def create_growth_strategy_job(
     response.headers["Location"] = polling_url
     response.headers["Strategy-Job-ID"] = job.job_id
     response.headers["Run-ID"] = job.run_id
-    background_tasks.add_task(
-        _execute_growth_strategy_job,
-        job.job_id,
-        request,
-        settings,
-        run_context,
-        job_store,
-    )
+    response.headers["Strategy-Job-Execution-Mode"] = settings.strategy_job_execution_mode
+    if settings.strategy_job_execution_mode == "background":
+        background_tasks.add_task(
+            execute_background_strategy_job,
+            job_store,
+            job_id=job.job_id,
+            settings=settings,
+        )
     return StrategyJobAcceptedResponse(
         job_id=job.job_id,
         status=job.status,
@@ -648,47 +649,6 @@ def _generate_growth_strategy_response(
                 ),
             },
         ) from exc
-
-
-def _execute_growth_strategy_job(
-    job_id: str,
-    request: GrowthStrategyRequest,
-    settings: Settings,
-    run_context: RunContext,
-    job_store: StrategyJobStore,
-) -> None:
-    job_store.mark_running(job_id)
-    try:
-        growth_response = _generate_growth_strategy_response(
-            request,
-            settings=settings,
-            run_context=run_context,
-        )
-    except HTTPException as exc:
-        job_store.mark_failed(job_id, error=_job_error_from_http_exception(exc))
-        return
-    except Exception as exc:
-        job_store.mark_failed(
-            job_id,
-            error={
-                "message": "Strategy job execution failed with an unexpected error.",
-                "error_code": "STRATEGY_JOB_EXECUTION_FAILED",
-                "exception_type": type(exc).__name__,
-                "detail": str(exc),
-            },
-        )
-        return
-
-    job_store.mark_completed(job_id, growth_response)
-
-
-def _job_error_from_http_exception(exc: HTTPException) -> dict:
-    return {
-        "message": "Strategy job execution failed.",
-        "error_code": "STRATEGY_JOB_EXECUTION_FAILED",
-        "status_code": exc.status_code,
-        "detail": exc.detail,
-    }
 
 
 def _brief_from_run_metadata(run: AgentRunDetailResponse) -> AdvertiserBrief:

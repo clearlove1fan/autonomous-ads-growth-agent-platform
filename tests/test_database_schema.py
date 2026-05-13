@@ -117,8 +117,14 @@ def test_strategy_jobs_support_async_workflow_access_patterns() -> None:
     assert "request_json" in columns
     assert "response_json" in columns
     assert "error_json" in columns
+    assert "attempt_count" in columns
+    assert "max_attempts" in columns
+    assert "next_attempt_at" in columns
+    assert "locked_by" in columns
+    assert "locked_until" in columns
     assert "completed_at" in columns
     assert "ix_strategy_jobs_status_created" in index_names
+    assert "ix_strategy_jobs_claimable" in index_names
     assert "ix_strategy_jobs_advertiser_created" in index_names
     assert "ix_strategy_jobs_run_id" in index_names
     assert {

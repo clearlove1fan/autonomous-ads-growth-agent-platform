@@ -1,6 +1,6 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from threading import Lock
 from typing import Any, Protocol
 
@@ -33,8 +33,23 @@ class StrategyJobStore(Protocol):
     ) -> StrategyJobDetailResponse:
         """Persist a queued strategy-generation job."""
 
-    def mark_running(self, job_id: str) -> StrategyJobDetailResponse | None:
+    def mark_running(
+        self,
+        job_id: str,
+        *,
+        worker_id: str | None = None,
+        lock_seconds: int = 1_800,
+    ) -> StrategyJobDetailResponse | None:
         """Mark a queued job as running."""
+
+    def claim_queued(
+        self,
+        *,
+        limit: int,
+        worker_id: str,
+        lock_seconds: int = 1_800,
+    ) -> list[StrategyJobDetailResponse]:
+        """Claim queued or stale running jobs for one worker."""
 
     def mark_completed(
         self,
@@ -87,8 +102,69 @@ class InMemoryStrategyJobStore:
             self._jobs[job_id] = job
         return job
 
-    def mark_running(self, job_id: str) -> StrategyJobDetailResponse | None:
-        return self._update(job_id, status=StrategyJobStatus.RUNNING)
+    def mark_running(
+        self,
+        job_id: str,
+        *,
+        worker_id: str | None = None,
+        lock_seconds: int = 1_800,
+    ) -> StrategyJobDetailResponse | None:
+        now = datetime.now(UTC)
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job.status != StrategyJobStatus.QUEUED:
+                return None
+            updated = job.model_copy(
+                update={
+                    "status": StrategyJobStatus.RUNNING,
+                    "attempt_count": job.attempt_count + 1,
+                    "locked_by": worker_id or "memory_background",
+                    "locked_until": now + timedelta(seconds=lock_seconds),
+                    "updated_at": now,
+                }
+            )
+            self._jobs[job_id] = updated
+            return updated
+
+    def claim_queued(
+        self,
+        *,
+        limit: int,
+        worker_id: str,
+        lock_seconds: int = 1_800,
+    ) -> list[StrategyJobDetailResponse]:
+        now = datetime.now(UTC)
+        claimed: list[StrategyJobDetailResponse] = []
+        with self._lock:
+            candidates = sorted(
+                (
+                    job
+                    for job in self._jobs.values()
+                    if job.attempt_count < job.max_attempts
+                    and (
+                        job.status == StrategyJobStatus.QUEUED
+                        or (
+                            job.status == StrategyJobStatus.RUNNING
+                            and job.locked_until is not None
+                            and job.locked_until <= now
+                        )
+                    )
+                ),
+                key=lambda job: (job.created_at, job.job_id),
+            )
+            for job in candidates[:limit]:
+                updated = job.model_copy(
+                    update={
+                        "status": StrategyJobStatus.RUNNING,
+                        "attempt_count": job.attempt_count + 1,
+                        "locked_by": worker_id,
+                        "locked_until": now + timedelta(seconds=lock_seconds),
+                        "updated_at": now,
+                    }
+                )
+                self._jobs[job.job_id] = updated
+                claimed.append(updated)
+        return claimed
 
     def mark_completed(
         self,
@@ -99,6 +175,8 @@ class InMemoryStrategyJobStore:
             job_id,
             status=StrategyJobStatus.COMPLETED,
             result=response,
+            locked_by=None,
+            locked_until=None,
             completed_at=datetime.now(UTC),
         )
 
@@ -112,6 +190,8 @@ class InMemoryStrategyJobStore:
             job_id,
             status=StrategyJobStatus.FAILED,
             error=error,
+            locked_by=None,
+            locked_until=None,
             completed_at=datetime.now(UTC),
         )
 
@@ -130,6 +210,8 @@ class InMemoryStrategyJobStore:
         status: StrategyJobStatus,
         result: GrowthStrategyResponse | None = None,
         error: dict[str, Any] | None = None,
+        locked_by: str | None = None,
+        locked_until: datetime | None = None,
         completed_at: datetime | None = None,
     ) -> StrategyJobDetailResponse | None:
         with self._lock:
@@ -141,6 +223,8 @@ class InMemoryStrategyJobStore:
                     "status": status,
                     "result": result if result is not None else job.result,
                     "error": error if error is not None else job.error,
+                    "locked_by": locked_by,
+                    "locked_until": locked_until,
                     "updated_at": datetime.now(UTC),
                     "completed_at": completed_at if completed_at is not None else job.completed_at,
                 }
@@ -196,6 +280,11 @@ class PostgresStrategyJobStore:
                         "run_id": values["run_id"],
                         "trace_id": values["trace_id"],
                         "metadata": values["metadata"],
+                        "attempt_count": values["attempt_count"],
+                        "max_attempts": values["max_attempts"],
+                        "next_attempt_at": values["next_attempt_at"],
+                        "locked_by": values["locked_by"],
+                        "locked_until": values["locked_until"],
                         "updated_at": sa.func.now(),
                         "completed_at": values["completed_at"],
                     },
@@ -208,14 +297,91 @@ class PostgresStrategyJobStore:
             raise RuntimeError(f"strategy job was not persisted: {job_id}")
         return job
 
-    def mark_running(self, job_id: str) -> StrategyJobDetailResponse | None:
-        return self._mark_terminal_or_running(
-            job_id,
-            status=StrategyJobStatus.RUNNING,
-            response_json=None,
-            error_json=None,
-            completed_at=None,
-        )
+    def mark_running(
+        self,
+        job_id: str,
+        *,
+        worker_id: str | None = None,
+        lock_seconds: int = 1_800,
+    ) -> StrategyJobDetailResponse | None:
+        locked_until = datetime.now(UTC) + timedelta(seconds=lock_seconds)
+        with _transaction(self._bind) as connection:
+            row = _fetch_job_row_for_update(connection, job_id, tenant_id=self._tenant_id)
+            if row is None or row["status"] != StrategyJobStatus.QUEUED.value:
+                return None
+            connection.execute(
+                strategy_jobs.update()
+                .where(strategy_jobs.c.tenant_id == self._tenant_id)
+                .where(strategy_jobs.c.job_id == job_id)
+                .values(
+                    status=StrategyJobStatus.RUNNING.value,
+                    response_json=None,
+                    error_json=None,
+                    attempt_count=row["attempt_count"] + 1,
+                    next_attempt_at=None,
+                    locked_by=worker_id or "api_background",
+                    locked_until=locked_until,
+                    updated_at=sa.func.now(),
+                    completed_at=None,
+                )
+            )
+            return _fetch_job(connection, job_id, tenant_id=self._tenant_id)
+
+    def claim_queued(
+        self,
+        *,
+        limit: int,
+        worker_id: str,
+        lock_seconds: int = 1_800,
+    ) -> list[StrategyJobDetailResponse]:
+        now = datetime.now(UTC)
+        locked_until = now + timedelta(seconds=lock_seconds)
+        with _transaction(self._bind) as connection:
+            rows = connection.execute(
+                sa.select(strategy_jobs)
+                .where(strategy_jobs.c.tenant_id == self._tenant_id)
+                .where(strategy_jobs.c.attempt_count < strategy_jobs.c.max_attempts)
+                .where(
+                    sa.or_(
+                        sa.and_(
+                            strategy_jobs.c.status == StrategyJobStatus.QUEUED.value,
+                            sa.or_(
+                                strategy_jobs.c.next_attempt_at.is_(None),
+                                strategy_jobs.c.next_attempt_at <= now,
+                            ),
+                        ),
+                        sa.and_(
+                            strategy_jobs.c.status == StrategyJobStatus.RUNNING.value,
+                            strategy_jobs.c.locked_until <= now,
+                        ),
+                    )
+                )
+                .order_by(strategy_jobs.c.created_at, strategy_jobs.c.job_id)
+                .limit(limit)
+                .with_for_update(skip_locked=True)
+            ).mappings().all()
+            claimed: list[StrategyJobDetailResponse] = []
+            for row in rows:
+                connection.execute(
+                    strategy_jobs.update()
+                    .where(strategy_jobs.c.tenant_id == self._tenant_id)
+                    .where(strategy_jobs.c.job_id == row["job_id"])
+                    .values(
+                        status=StrategyJobStatus.RUNNING.value,
+                        response_json=None,
+                        error_json=None,
+                        attempt_count=row["attempt_count"] + 1,
+                        next_attempt_at=None,
+                        locked_by=worker_id,
+                        locked_until=locked_until,
+                        updated_at=sa.func.now(),
+                        completed_at=None,
+                    )
+                )
+                updated = _fetch_job(connection, row["job_id"], tenant_id=self._tenant_id)
+                if updated is not None:
+                    claimed.append(updated)
+        return claimed
 
     def mark_completed(
         self,
@@ -266,6 +432,8 @@ class PostgresStrategyJobStore:
                     status=status.value,
                     response_json=response_json,
                     error_json=error_json,
+                    locked_by=None,
+                    locked_until=None,
                     updated_at=sa.func.now(),
                     completed_at=completed_at,
                 )
@@ -320,6 +488,11 @@ def _job_values(
         "response_json": response_json,
         "error_json": error_json,
         "metadata": {"strategy_job_backend": "postgres"},
+        "attempt_count": 0,
+        "max_attempts": 3,
+        "next_attempt_at": datetime.now(UTC),
+        "locked_by": None,
+        "locked_until": None,
         "partition_key": job_id,
         "partition_bucket": partition_bucket(job_id),
         "completed_at": completed_at,
@@ -353,7 +526,25 @@ def _fetch_job(
         else None,
         error=dict(row["error_json"]) if row["error_json"] else None,
         metadata=dict(row["metadata"] or {}),
+        attempt_count=row["attempt_count"],
+        max_attempts=row["max_attempts"],
+        locked_by=row["locked_by"],
+        locked_until=row["locked_until"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         completed_at=row["completed_at"],
     )
+
+
+def _fetch_job_row_for_update(
+    connection: Connection,
+    job_id: str,
+    *,
+    tenant_id: str,
+):
+    return connection.execute(
+        sa.select(strategy_jobs)
+        .where(strategy_jobs.c.tenant_id == tenant_id)
+        .where(strategy_jobs.c.job_id == job_id)
+        .with_for_update()
+    ).mappings().one_or_none()

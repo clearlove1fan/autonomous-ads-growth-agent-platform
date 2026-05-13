@@ -173,6 +173,11 @@ strategy_jobs = sa.Table(
     sa.Column(
         "metadata", postgresql.JSONB(), nullable=False, server_default=sa.text("'{}'::jsonb")
     ),
+    sa.Column("attempt_count", sa.Integer(), nullable=False, server_default="0"),
+    sa.Column("max_attempts", sa.Integer(), nullable=False, server_default="3"),
+    sa.Column("next_attempt_at", sa.DateTime(timezone=True), nullable=True),
+    sa.Column("locked_by", sa.Text(), nullable=True),
+    sa.Column("locked_until", sa.DateTime(timezone=True), nullable=True),
     *partition_columns(),
     *timestamp_columns(),
     sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
@@ -190,6 +195,8 @@ strategy_jobs = sa.Table(
         "or (status in ('completed', 'failed') and completed_at is not null)",
         name="strategy_job_completed_at_status",
     ),
+    sa.CheckConstraint("attempt_count >= 0", name="strategy_job_attempt_count_nonnegative"),
+    sa.CheckConstraint("max_attempts > 0", name="strategy_job_max_attempts_positive"),
     sa.CheckConstraint(
         f"partition_bucket >= 0 and partition_bucket < {PARTITION_BUCKETS}",
         name="strategy_job_partition_bucket_range",
@@ -533,6 +540,14 @@ sa.Index(
     "ix_strategy_jobs_status_created",
     strategy_jobs.c.tenant_id,
     strategy_jobs.c.status,
+    strategy_jobs.c.created_at,
+)
+sa.Index(
+    "ix_strategy_jobs_claimable",
+    strategy_jobs.c.tenant_id,
+    strategy_jobs.c.status,
+    strategy_jobs.c.next_attempt_at,
+    strategy_jobs.c.locked_until,
     strategy_jobs.c.created_at,
 )
 sa.Index(
