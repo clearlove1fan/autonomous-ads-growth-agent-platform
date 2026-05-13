@@ -13,6 +13,7 @@ from ads_growth_agent.api import get_runtime_settings
 from ads_growth_agent.config import Settings
 from ads_growth_agent.contracts import GrowthStrategyRequest
 from ads_growth_agent.persistence.strategy_job_store import PostgresStrategyJobStore
+from ads_growth_agent.strategy import generate_growth_strategy
 from ads_growth_agent.strategy_job_store_factory import (
     dispose_cached_strategy_job_store_engines,
 )
@@ -299,6 +300,73 @@ def test_postgres_failed_strategy_job_can_be_manually_retried(monkeypatch) -> No
         assert retried.metadata["previous_error"]["message"] == "permanent failure"
         assert claimed_again[0].job_id == created.job_id
         assert claimed_again[0].attempt_count == 1
+    finally:
+        engine.dispose()
+        _drop_temporary_database(test_url)
+
+
+def test_postgres_strategy_job_can_be_manually_cancelled(monkeypatch) -> None:
+    base_url = _integration_database_url()
+    test_url = _create_temporary_database(base_url)
+    engine = sa.create_engine(test_url)
+
+    try:
+        monkeypatch.setenv("DATABASE_URL", test_url.render_as_string(hide_password=False))
+        command.upgrade(Config("alembic.ini"), "head")
+
+        store = PostgresStrategyJobStore(engine, tenant_id="tenant_jobs")
+        request = GrowthStrategyRequest.model_validate({"brief": _brief_payload()})
+        queued = store.create_queued(
+            request,
+            job_id="job_manual_cancel_pg",
+            strategy_id="strategy_manual_cancel_pg",
+            run_id="run_manual_cancel_pg",
+            trace_id="trace_manual_cancel_pg",
+        )
+
+        cancelled = store.cancel(
+            queued.job_id,
+            requested_by="integration_test",
+            reason="duplicate request",
+        )
+        claim_after_cancel = store.claim_queued(limit=1, worker_id="worker_cancel")
+
+        running_source = store.create_queued(
+            request,
+            job_id="job_running_cancel_pg",
+            strategy_id="strategy_running_cancel_pg",
+            run_id="run_running_cancel_pg",
+            trace_id="trace_running_cancel_pg",
+        )
+        running = store.claim_queued(limit=1, worker_id="worker_cancel")[0]
+        running_cancelled = store.cancel(
+            running.job_id,
+            requested_by="integration_test",
+            reason="operator stopped in-flight job",
+        )
+        late_completion = store.mark_completed(
+            running.job_id,
+            generate_growth_strategy(request.brief),
+        )
+        terminal = store.get_job(running_source.job_id)
+
+        assert cancelled is not None
+        assert cancelled.status == "cancelled"
+        assert cancelled.error is not None
+        assert cancelled.error["error_code"] == "STRATEGY_JOB_CANCELLED"
+        assert cancelled.metadata["cancelled_by"] == "integration_test"
+        assert cancelled.metadata["cancel_reason"] == "duplicate request"
+        assert cancelled.metadata["cancelled_from_status"] == "queued"
+        assert cancelled.completed_at is not None
+        assert cancelled.next_attempt_at is None
+        assert claim_after_cancel == []
+        assert running_cancelled is not None
+        assert running_cancelled.status == "cancelled"
+        assert running_cancelled.metadata["cancelled_from_status"] == "running"
+        assert late_completion is None
+        assert terminal is not None
+        assert terminal.status == "cancelled"
+        assert terminal.result is None
     finally:
         engine.dispose()
         _drop_temporary_database(test_url)

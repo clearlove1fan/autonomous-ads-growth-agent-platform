@@ -232,6 +232,67 @@ def test_manual_retry_rejects_non_failed_strategy_job() -> None:
     assert retry_response.json()["detail"]["error_code"] == "STRATEGY_JOB_NOT_RETRYABLE"
 
 
+def test_queued_strategy_job_can_be_manually_cancelled_via_api() -> None:
+    store = InMemoryStrategyJobStore()
+    settings = Settings(strategy_job_backend="memory", strategy_job_execution_mode="external")
+    api_app.dependency_overrides[get_runtime_settings] = lambda: settings
+    api_app.dependency_overrides[get_runtime_strategy_job_store] = lambda: store
+    try:
+        accepted = TestClient(api_app).post(
+            "/growth-strategies/jobs",
+            json={"brief": _brief_payload()},
+        )
+        cancel_response = TestClient(api_app).post(
+            f"/growth-strategies/jobs/{accepted.json()['job_id']}/cancel",
+            json={"reason": "duplicate advertiser request"},
+            headers={"X-Operator-ID": "operator_api"},
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    payload = cancel_response.json()
+    claim_after_cancel = store.claim_queued(limit=1, worker_id="worker_after_cancel")
+    assert accepted.status_code == 202
+    assert cancel_response.status_code == 200
+    assert cancel_response.headers["strategy-job-id"] == accepted.json()["job_id"]
+    assert cancel_response.headers["strategy-job-status"] == "cancelled"
+    assert payload["status"] == "cancelled"
+    assert payload["result"] is None
+    assert payload["error"]["error_code"] == "STRATEGY_JOB_CANCELLED"
+    assert payload["error"]["cancelled_by"] == "operator_api"
+    assert payload["error"]["cancel_reason"] == "duplicate advertiser request"
+    assert payload["metadata"]["cancelled_by"] == "operator_api"
+    assert payload["metadata"]["cancel_reason"] == "duplicate advertiser request"
+    assert payload["metadata"]["cancelled_from_status"] == "queued"
+    assert payload["next_attempt_at"] is None
+    assert payload["locked_by"] is None
+    assert payload["completed_at"] is not None
+    assert claim_after_cancel == []
+
+
+def test_manual_cancel_rejects_terminal_strategy_job() -> None:
+    store = InMemoryStrategyJobStore()
+    api_app.dependency_overrides[get_runtime_settings] = lambda: Settings(
+        strategy_job_backend="memory"
+    )
+    api_app.dependency_overrides[get_runtime_strategy_job_store] = lambda: store
+    try:
+        accepted = TestClient(api_app).post(
+            "/growth-strategies/jobs",
+            json={"brief": _brief_payload()},
+        )
+        cancel_response = TestClient(api_app).post(
+            f"/growth-strategies/jobs/{accepted.json()['job_id']}/cancel"
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    assert accepted.status_code == 202
+    assert cancel_response.status_code == 409
+    assert cancel_response.json()["detail"]["error_code"] == "STRATEGY_JOB_NOT_CANCELLABLE"
+    assert cancel_response.json()["detail"]["status"] == "completed"
+
+
 def test_external_strategy_job_execution_mode_leaves_job_queued_then_worker_completes() -> None:
     store = InMemoryStrategyJobStore()
     settings = Settings(strategy_job_backend="memory", strategy_job_execution_mode="external")
@@ -268,6 +329,53 @@ def test_external_strategy_job_execution_mode_leaves_job_queued_then_worker_comp
     assert completed is not None
     assert completed.status == "completed"
     assert completed.result is not None
+
+
+def test_running_strategy_job_cancel_is_not_overwritten_by_worker_completion(
+    monkeypatch,
+) -> None:
+    store = InMemoryStrategyJobStore()
+    settings = Settings(strategy_job_backend="memory", strategy_job_execution_mode="external")
+    request = GrowthStrategyRequest.model_validate({"brief": _brief_payload()})
+    job = store.create_queued(
+        request,
+        job_id="job_cancel_race",
+        strategy_id="strategy_cancel_race",
+        run_id="run_cancel_race",
+        trace_id="trace_cancel_race",
+    )
+    original_generate = worker_module.generate_growth_strategy
+
+    def cancel_during_generation(*args, **kwargs):
+        cancelled = store.cancel(
+            job.job_id,
+            requested_by="operator_race",
+            reason="operator stopped in-flight job",
+        )
+        assert cancelled is not None
+        assert cancelled.status == "cancelled"
+        return original_generate(*args, **kwargs)
+
+    monkeypatch.setattr(worker_module, "generate_growth_strategy", cancel_during_generation)
+
+    report = process_strategy_jobs(
+        store,
+        settings=settings,
+        limit=1,
+        worker_id="worker_race",
+    )
+    terminal = store.get_job(job.job_id)
+
+    assert report.claimed == 1
+    assert report.completed == 0
+    assert report.failed == 0
+    assert report.cancelled == 1
+    assert terminal is not None
+    assert terminal.status == "cancelled"
+    assert terminal.result is None
+    assert terminal.error is not None
+    assert terminal.error["error_code"] == "STRATEGY_JOB_CANCELLED"
+    assert terminal.metadata["cancelled_from_status"] == "running"
 
 
 def test_external_strategy_job_worker_retries_then_marks_terminal_failed(
@@ -328,6 +436,7 @@ def test_external_strategy_job_worker_retries_then_marks_terminal_failed(
     assert second_report.completed == 0
     assert second_report.retry_scheduled == 0
     assert second_report.failed == 1
+    assert second_report.cancelled == 0
     assert terminal is not None
     assert terminal.status == "failed"
     assert terminal.attempt_count == 2
@@ -476,6 +585,47 @@ def test_retry_strategy_job_cli_requeues_failed_job(monkeypatch) -> None:
     assert payload["metadata"]["manual_retry_count"] == 1
     assert payload["metadata"]["last_manual_retry_by"] == "operator_cli"
     assert payload["metadata"]["previous_error"]["message"] == "permanent failure"
+
+
+def test_cancel_strategy_job_cli_cancels_queued_job(monkeypatch) -> None:
+    store = InMemoryStrategyJobStore()
+    request = GrowthStrategyRequest.model_validate({"brief": _brief_payload()})
+    job = store.create_queued(
+        request,
+        job_id="job_cli_cancel",
+        strategy_id="strategy_cli_cancel",
+        run_id="run_cli_cancel",
+        trace_id="trace_cli_cancel",
+    )
+
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.get_settings",
+        lambda: Settings(tenant_id="tenant_cli"),
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_strategy_job_store",
+        lambda settings: store,
+    )
+
+    result = CliRunner().invoke(
+        cli_app,
+        [
+            "cancel-strategy-job",
+            job.job_id,
+            "--requested-by",
+            "operator_cli",
+            "--reason",
+            "bad audience input",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["job_id"] == job.job_id
+    assert payload["status"] == "cancelled"
+    assert payload["error"]["error_code"] == "STRATEGY_JOB_CANCELLED"
+    assert payload["metadata"]["cancelled_by"] == "operator_cli"
+    assert payload["metadata"]["cancel_reason"] == "bad audience input"
 
 
 def test_get_growth_strategy_job_returns_404_for_missing_job() -> None:

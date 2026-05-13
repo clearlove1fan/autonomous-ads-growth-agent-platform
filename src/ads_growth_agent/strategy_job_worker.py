@@ -4,7 +4,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 
 from ads_growth_agent.config import Settings
-from ads_growth_agent.contracts import StrategyJobDetailResponse
+from ads_growth_agent.contracts import StrategyJobDetailResponse, StrategyJobStatus
 from ads_growth_agent.observability import create_run_context
 from ads_growth_agent.persistence.strategy_job_store import StrategyJobStore
 from ads_growth_agent.strategy import StrategyGenerationError, generate_growth_strategy
@@ -17,11 +17,12 @@ class StrategyJobWorkerReport(BaseModel):
     completed: int = Field(ge=0)
     retry_scheduled: int = Field(ge=0)
     failed: int = Field(ge=0)
+    cancelled: int = Field(default=0, ge=0)
     job_ids: list[str] = Field(default_factory=list)
     failures: list[dict] = Field(default_factory=list)
 
 
-StrategyJobExecutionOutcome = Literal["completed", "retry_scheduled", "failed"]
+StrategyJobExecutionOutcome = Literal["completed", "retry_scheduled", "failed", "cancelled"]
 
 
 def process_configured_strategy_jobs(
@@ -57,6 +58,7 @@ def process_strategy_jobs(
     completed = 0
     retry_scheduled = 0
     failed = 0
+    cancelled = 0
     failures: list[dict] = []
     for job in claimed_jobs:
         outcome = execute_claimed_strategy_job(
@@ -70,6 +72,9 @@ def process_strategy_jobs(
         elif outcome == "retry_scheduled":
             retry_scheduled += 1
             failures.append({"job_id": job.job_id, "status": "retry_scheduled"})
+        elif outcome == "cancelled":
+            cancelled += 1
+            failures.append({"job_id": job.job_id, "status": "cancelled"})
         else:
             failed += 1
             failures.append({"job_id": job.job_id, "status": "failed"})
@@ -80,6 +85,7 @@ def process_strategy_jobs(
         completed=completed,
         retry_scheduled=retry_scheduled,
         failed=failed,
+        cancelled=cancelled,
         job_ids=[job.job_id for job in claimed_jobs],
         failures=failures,
     )
@@ -139,7 +145,8 @@ def execute_claimed_strategy_job(
             retry_failures=retry_failures,
         )
 
-    job_store.mark_completed(job.job_id, growth_response)
+    if job_store.mark_completed(job.job_id, growth_response) is None:
+        return "cancelled" if _job_was_cancelled(job_store, job.job_id) else "failed"
     return "completed"
 
 
@@ -161,7 +168,7 @@ def _record_job_failure(
                 "retry_scheduled": False,
             },
         )
-        return "failed"
+        return "cancelled" if _job_was_cancelled(job_store, job.job_id) else "failed"
 
     retry_delay_seconds = _retry_delay_seconds(job, settings)
     retry_scheduled = job.attempt_count < job.max_attempts
@@ -178,7 +185,14 @@ def _record_job_failure(
     )
     if updated is not None and updated.status == "queued":
         return "retry_scheduled"
+    if updated is None and _job_was_cancelled(job_store, job.job_id):
+        return "cancelled"
     return "failed"
+
+
+def _job_was_cancelled(job_store: StrategyJobStore, job_id: str) -> bool:
+    latest = job_store.get_job(job_id)
+    return latest is not None and latest.status == StrategyJobStatus.CANCELLED
 
 
 def _retry_delay_seconds(job: StrategyJobDetailResponse, settings: Settings) -> int:

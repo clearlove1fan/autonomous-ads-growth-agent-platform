@@ -152,6 +152,11 @@ curl "http://localhost:8000/growth-strategies/jobs?status=queued&limit=20"
 
 curl -X POST http://localhost:8000/growth-strategies/jobs/job_abc123/retry \
   -H 'X-Operator-ID: operator_a'
+
+curl -X POST http://localhost:8000/growth-strategies/jobs/job_abc123/cancel \
+  -H 'X-Operator-ID: operator_a' \
+  -H 'Content-Type: application/json' \
+  -d '{"reason":"duplicate advertiser request"}'
 ```
 
 The default job executor uses FastAPI background tasks for local development. Set `STRATEGY_JOB_BACKEND=postgres` to persist job status and completed results in `strategy_jobs`.
@@ -164,6 +169,8 @@ STRATEGY_JOB_BACKEND=postgres STRATEGY_JOB_EXECUTION_MODE=external ads-growth-ag
 STRATEGY_JOB_BACKEND=postgres ads-growth-agent list-strategy-jobs --status failed --limit 20
 
 STRATEGY_JOB_BACKEND=postgres ads-growth-agent retry-strategy-job job_abc123 --requested-by operator_a
+
+STRATEGY_JOB_BACKEND=postgres ads-growth-agent cancel-strategy-job job_abc123 --requested-by operator_a --reason "duplicate advertiser request"
 ```
 
 Worker claims use `FOR UPDATE SKIP LOCKED`, `attempt_count`, `locked_by`, and `locked_until` so multiple workers can process the same queue without claiming the same job at the same time.
@@ -171,6 +178,8 @@ Worker claims use `FOR UPDATE SKIP LOCKED`, `attempt_count`, `locked_by`, and `l
 External workers retry failed jobs with bounded exponential backoff. Configure the retry budget with `STRATEGY_JOB_MAX_ATTEMPTS`, `STRATEGY_JOB_RETRY_BASE_DELAY_SECONDS`, and `STRATEGY_JOB_RETRY_MAX_DELAY_SECONDS`. Failed attempts return the job to `queued` with `next_attempt_at`; once attempts are exhausted the job becomes terminal `failed`.
 
 Terminal failed jobs can be manually retried from the API or CLI. Manual retry only accepts `failed` jobs, resets `attempt_count`, reapplies the current `STRATEGY_JOB_MAX_ATTEMPTS`, and records retry audit metadata while preserving the previous error in `metadata.previous_error`.
+
+Queued or running jobs can be manually cancelled from the API or CLI. Cancelled jobs become terminal `cancelled`, leave the worker claim set, preserve operator audit metadata, and cannot be overwritten by late worker completion.
 
 The current deterministic workflow runs through explicit LangGraph nodes:
 

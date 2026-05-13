@@ -49,6 +49,11 @@ STRATEGY_JOB_REQUESTED_BY_OPTION = typer.Option(
     "--requested-by",
     help="Operator or automation identifier recorded in retry metadata.",
 )
+STRATEGY_JOB_CANCEL_REASON_OPTION = typer.Option(
+    None,
+    "--reason",
+    help="Human-readable cancellation reason.",
+)
 
 
 @app.command()
@@ -183,6 +188,36 @@ def retry_strategy_job(
         typer.echo(f"Strategy job could not be retried: {job_id}", err=True)
         raise typer.Exit(1)
     typer.echo(retried.model_dump_json(indent=2))
+
+
+@app.command("cancel-strategy-job")
+def cancel_strategy_job(
+    job_id: str = STRATEGY_JOB_ID_ARGUMENT,
+    requested_by: str = STRATEGY_JOB_REQUESTED_BY_OPTION,
+    reason: str | None = STRATEGY_JOB_CANCEL_REASON_OPTION,
+) -> None:
+    """Manually cancel a queued or running strategy-generation job."""
+    settings = get_settings()
+    store = build_configured_strategy_job_store(settings)
+    job = store.get_job(job_id)
+    if job is None:
+        typer.echo(f"Strategy job not found: {job_id}", err=True)
+        raise typer.Exit(1)
+    if job.status not in {StrategyJobStatus.QUEUED, StrategyJobStatus.RUNNING}:
+        typer.echo(
+            f"Strategy job is not cancellable: {job_id} status={job.status.value}",
+            err=True,
+        )
+        raise typer.Exit(1)
+    cancelled = store.cancel(
+        job_id,
+        requested_by=requested_by.strip() or "cli",
+        reason=reason.strip() if reason else None,
+    )
+    if cancelled is None:
+        typer.echo(f"Strategy job could not be cancelled: {job_id}", err=True)
+        raise typer.Exit(1)
+    typer.echo(cancelled.model_dump_json(indent=2))
 
 
 @app.command("eval")

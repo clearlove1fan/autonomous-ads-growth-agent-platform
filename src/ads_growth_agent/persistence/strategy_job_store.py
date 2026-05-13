@@ -88,6 +88,15 @@ class StrategyJobStore(Protocol):
     ) -> StrategyJobDetailResponse | None:
         """Requeue a terminal failed job with a fresh attempt budget."""
 
+    def cancel(
+        self,
+        job_id: str,
+        *,
+        requested_by: str,
+        reason: str | None,
+    ) -> StrategyJobDetailResponse | None:
+        """Mark a queued or running strategy job as cancelled."""
+
     def list_jobs(
         self,
         *,
@@ -218,6 +227,7 @@ class InMemoryStrategyJobStore:
             locked_by=None,
             locked_until=None,
             completed_at=datetime.now(UTC),
+            expected_status=StrategyJobStatus.RUNNING,
         )
 
     def mark_failed(
@@ -234,6 +244,7 @@ class InMemoryStrategyJobStore:
             locked_by=None,
             locked_until=None,
             completed_at=datetime.now(UTC),
+            expected_status=StrategyJobStatus.RUNNING,
         )
 
     def mark_attempt_failed(
@@ -246,7 +257,7 @@ class InMemoryStrategyJobStore:
         now = datetime.now(UTC)
         with self._lock:
             job = self._jobs.get(job_id)
-            if job is None:
+            if job is None or job.status != StrategyJobStatus.RUNNING:
                 return None
             has_attempts_remaining = job.attempt_count < job.max_attempts
             updated = job.model_copy(
@@ -312,6 +323,49 @@ class InMemoryStrategyJobStore:
             self._jobs[job_id] = updated
             return updated
 
+    def cancel(
+        self,
+        job_id: str,
+        *,
+        requested_by: str,
+        reason: str | None,
+    ) -> StrategyJobDetailResponse | None:
+        now = datetime.now(UTC)
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job.status not in {
+                StrategyJobStatus.QUEUED,
+                StrategyJobStatus.RUNNING,
+            }:
+                return None
+            metadata = _manual_cancel_metadata(
+                job.metadata,
+                previous_error=job.error,
+                requested_by=requested_by,
+                requested_at=now,
+                reason=reason,
+                from_status=job.status,
+            )
+            updated = job.model_copy(
+                update={
+                    "status": StrategyJobStatus.CANCELLED,
+                    "result": None,
+                    "error": _manual_cancel_error(
+                        requested_by=requested_by,
+                        reason=reason,
+                        from_status=job.status,
+                    ),
+                    "metadata": metadata,
+                    "next_attempt_at": None,
+                    "locked_by": None,
+                    "locked_until": None,
+                    "completed_at": now,
+                    "updated_at": now,
+                }
+            )
+            self._jobs[job_id] = updated
+            return updated
+
     def list_jobs(
         self,
         *,
@@ -345,10 +399,13 @@ class InMemoryStrategyJobStore:
         locked_by: str | None = None,
         locked_until: datetime | None = None,
         completed_at: datetime | None = None,
+        expected_status: StrategyJobStatus | None = None,
     ) -> StrategyJobDetailResponse | None:
         with self._lock:
             job = self._jobs.get(job_id)
             if job is None:
+                return None
+            if expected_status is not None and job.status != expected_status:
                 return None
             updated = job.model_copy(
                 update={
@@ -555,7 +612,7 @@ class PostgresStrategyJobStore:
         now = datetime.now(UTC)
         with _transaction(self._bind) as connection:
             row = _fetch_job_row_for_update(connection, job_id, tenant_id=self._tenant_id)
-            if row is None:
+            if row is None or row["status"] != StrategyJobStatus.RUNNING.value:
                 return None
             has_attempts_remaining = row["attempt_count"] < row["max_attempts"]
             connection.execute(
@@ -627,6 +684,54 @@ class PostgresStrategyJobStore:
             )
             return _fetch_job(connection, job_id, tenant_id=self._tenant_id)
 
+    def cancel(
+        self,
+        job_id: str,
+        *,
+        requested_by: str,
+        reason: str | None,
+    ) -> StrategyJobDetailResponse | None:
+        now = datetime.now(UTC)
+        with _transaction(self._bind) as connection:
+            row = _fetch_job_row_for_update(connection, job_id, tenant_id=self._tenant_id)
+            if row is None or row["status"] not in {
+                StrategyJobStatus.QUEUED.value,
+                StrategyJobStatus.RUNNING.value,
+            }:
+                return None
+            from_status = StrategyJobStatus(row["status"])
+            metadata = _manual_cancel_metadata(
+                dict(row["metadata"] or {}),
+                previous_error=(
+                    dict(row["error_json"]) if row["error_json"] is not None else None
+                ),
+                requested_by=requested_by,
+                requested_at=now,
+                reason=reason,
+                from_status=from_status,
+            )
+            connection.execute(
+                strategy_jobs.update()
+                .where(strategy_jobs.c.tenant_id == self._tenant_id)
+                .where(strategy_jobs.c.job_id == job_id)
+                .values(
+                    status=StrategyJobStatus.CANCELLED.value,
+                    response_json=None,
+                    error_json=_manual_cancel_error(
+                        requested_by=requested_by,
+                        reason=reason,
+                        from_status=from_status,
+                    ),
+                    metadata=metadata,
+                    next_attempt_at=None,
+                    locked_by=None,
+                    locked_until=None,
+                    completed_at=now,
+                    updated_at=sa.func.now(),
+                )
+            )
+            return _fetch_job(connection, job_id, tenant_id=self._tenant_id)
+
     def list_jobs(
         self,
         *,
@@ -668,6 +773,7 @@ class PostgresStrategyJobStore:
                 strategy_jobs.update()
                 .where(strategy_jobs.c.tenant_id == self._tenant_id)
                 .where(strategy_jobs.c.job_id == job_id)
+                .where(strategy_jobs.c.status == StrategyJobStatus.RUNNING.value)
                 .values(
                     status=status.value,
                     response_json=response_json,
@@ -797,6 +903,40 @@ def _manual_retry_metadata(
         "last_manual_retry_by": requested_by,
         "last_manual_retry_at": requested_at.isoformat(),
         "previous_error": previous_error,
+    }
+
+
+def _manual_cancel_metadata(
+    metadata: dict[str, Any],
+    *,
+    previous_error: dict[str, Any] | None,
+    requested_by: str,
+    requested_at: datetime,
+    reason: str | None,
+    from_status: StrategyJobStatus,
+) -> dict[str, Any]:
+    return {
+        **metadata,
+        "cancelled_by": requested_by,
+        "cancelled_at": requested_at.isoformat(),
+        "cancel_reason": reason,
+        "cancelled_from_status": from_status.value,
+        "cancelled_previous_error": previous_error,
+    }
+
+
+def _manual_cancel_error(
+    *,
+    requested_by: str,
+    reason: str | None,
+    from_status: StrategyJobStatus,
+) -> dict[str, Any]:
+    return {
+        "message": "Strategy job was cancelled by an operator.",
+        "error_code": "STRATEGY_JOB_CANCELLED",
+        "cancelled_by": requested_by,
+        "cancel_reason": reason,
+        "cancelled_from_status": from_status.value,
     }
 
 

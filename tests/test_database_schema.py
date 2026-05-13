@@ -1,3 +1,5 @@
+import sqlalchemy as sa
+
 from ads_growth_agent.persistence.schema import (
     CORE_TABLES,
     EMBEDDING_DIMENSIONS,
@@ -109,6 +111,11 @@ def test_campaign_performance_events_support_feedback_loop_access_patterns() -> 
 def test_strategy_jobs_support_async_workflow_access_patterns() -> None:
     columns = strategy_jobs.c
     index_names = {index.name for index in strategy_jobs.indexes}
+    check_constraints = {
+        constraint.name.removeprefix("ck_strategy_jobs_"): str(constraint.sqltext)
+        for constraint in strategy_jobs.constraints
+        if isinstance(constraint, sa.CheckConstraint) and constraint.name is not None
+    }
 
     assert "job_id" in columns
     assert "strategy_id" in columns
@@ -130,6 +137,8 @@ def test_strategy_jobs_support_async_workflow_access_patterns() -> None:
     assert {
         foreign_key.column.table.name for foreign_key in strategy_jobs.foreign_keys
     } == {"advertisers"}
+    assert "cancelled" in check_constraints["strategy_job_status"]
+    assert "cancelled" in check_constraints["strategy_job_completed_at_status"]
 
 
 def test_outbox_events_support_high_concurrency_worker_access_patterns() -> None:

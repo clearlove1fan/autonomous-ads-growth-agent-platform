@@ -187,12 +187,12 @@ strategy_jobs = sa.Table(
         ["advertisers.tenant_id", "advertisers.advertiser_id"],
     ),
     sa.CheckConstraint(
-        "status in ('queued', 'running', 'completed', 'failed')",
+        "status in ('queued', 'running', 'completed', 'failed', 'cancelled')",
         name="strategy_job_status",
     ),
     sa.CheckConstraint(
         "(status in ('queued', 'running') and completed_at is null) "
-        "or (status in ('completed', 'failed') and completed_at is not null)",
+        "or (status in ('completed', 'failed', 'cancelled') and completed_at is not null)",
         name="strategy_job_completed_at_status",
     ),
     sa.CheckConstraint("attempt_count >= 0", name="strategy_job_attempt_count_nonnegative"),
