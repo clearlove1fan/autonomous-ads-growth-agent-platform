@@ -36,7 +36,7 @@ easy to inspect without querying PostgreSQL manually.
 - [x] Add CLI `list-strategy-jobs`.
 - [x] Add unit and live Postgres integration coverage.
 - [x] Update README.
-- [ ] Run verification, commit, push, and watch CI.
+- [x] Run verification, commit, push, and watch CI.
 
 ## Decisions
 
@@ -71,8 +71,14 @@ easy to inspect without querying PostgreSQL manually.
   Result: `RUN_POSTGRES_INTEGRATION=1 TEST_DATABASE_URL=postgresql+psycopg://ads_growth:ads_growth@localhost:5432/ads_growth .venv/bin/python -m pytest tests/integration/test_postgres_strategy_jobs.py` passed with 4 passed.
 - [x] Docker cleanup:
   Result: `docker compose down` stopped and removed the local Postgres container.
-- [ ] CI:
+- [x] CI:
+  Result: GitHub Actions CI run `25788142029` passed, including unit, lint,
+  e2e-smoke, postgres-integration, and release-readiness.
 
 ## Final Status
 
-In progress.
+Complete. Operators can now list strategy jobs through the API and CLI with
+status, advertiser, and limit filters. The list response reuses the typed job
+detail contract so retry timing, leases, attempts, errors, and results are
+visible for queue inspection and failed-job triage. Local tests, live Postgres
+integration, and GitHub Actions CI all passed.
