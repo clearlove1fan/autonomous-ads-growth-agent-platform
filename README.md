@@ -147,6 +147,8 @@ curl -i -X POST http://localhost:8000/growth-strategies/jobs \
   -d '{"brief":{"advertiser_id":"adv_fitness_001","product_name":"FitTrack Pro","product_category":"fitness app","objective":"registrations","budget":"2000.00","currency":"USD","duration_days":14,"target_market":"United States","primary_kpi":"trial registrations","target_cpa":"20.00"}}'
 
 curl http://localhost:8000/growth-strategies/jobs/job_abc123
+
+curl "http://localhost:8000/growth-strategies/jobs?status=queued&limit=20"
 ```
 
 The default job executor uses FastAPI background tasks for local development. Set `STRATEGY_JOB_BACKEND=postgres` to persist job status and completed results in `strategy_jobs`.
@@ -155,6 +157,8 @@ For a production-style worker path, set `STRATEGY_JOB_BACKEND=postgres` and `STR
 
 ```bash
 STRATEGY_JOB_BACKEND=postgres STRATEGY_JOB_EXECUTION_MODE=external ads-growth-agent process-strategy-jobs --limit 10 --worker-id worker_a
+
+STRATEGY_JOB_BACKEND=postgres ads-growth-agent list-strategy-jobs --status failed --limit 20
 ```
 
 Worker claims use `FOR UPDATE SKIP LOCKED`, `attempt_count`, `locked_by`, and `locked_until` so multiple workers can process the same queue without claiming the same job at the same time.

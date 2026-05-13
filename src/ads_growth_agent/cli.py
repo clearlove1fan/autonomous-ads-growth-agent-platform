@@ -8,12 +8,18 @@ from sqlalchemy.engine import make_url
 
 from ads_growth_agent import __version__
 from ads_growth_agent.config import get_settings
-from ads_growth_agent.contracts import AdvertiserBrief, GrowthStrategyRequest
+from ads_growth_agent.contracts import (
+    AdvertiserBrief,
+    GrowthStrategyRequest,
+    StrategyJobListResponse,
+    StrategyJobStatus,
+)
 from ads_growth_agent.evaluation import load_eval_cases, run_local_eval_suite
 from ads_growth_agent.logging_config import configure_logging
 from ads_growth_agent.outbox import process_configured_outbox
 from ads_growth_agent.persistence.knowledge_seed import seed_default_knowledge
 from ads_growth_agent.strategy import StrategyGenerationError, generate_growth_strategy
+from ads_growth_agent.strategy_job_store_factory import build_configured_strategy_job_store
 from ads_growth_agent.strategy_job_worker import process_configured_strategy_jobs
 
 app = typer.Typer(
@@ -34,6 +40,9 @@ EVAL_FILE_ARGUMENT = typer.Argument(
     readable=True,
     help="Path to a local evaluation cases JSON file.",
 )
+STRATEGY_JOB_STATUS_OPTION = typer.Option(None, "--status")
+STRATEGY_JOB_ADVERTISER_ID_OPTION = typer.Option(None, "--advertiser-id")
+STRATEGY_JOB_LIST_LIMIT_OPTION = typer.Option(50, "--limit", min=1, max=100)
 
 
 @app.command()
@@ -119,6 +128,26 @@ def process_strategy_jobs(
         lock_seconds=lock_seconds,
     )
     typer.echo(report.model_dump_json(indent=2))
+
+
+@app.command("list-strategy-jobs")
+def list_strategy_jobs(
+    status: StrategyJobStatus | None = STRATEGY_JOB_STATUS_OPTION,
+    advertiser_id: str | None = STRATEGY_JOB_ADVERTISER_ID_OPTION,
+    limit: int = STRATEGY_JOB_LIST_LIMIT_OPTION,
+) -> None:
+    """List recent strategy-generation jobs for queue inspection."""
+    settings = get_settings()
+    store = build_configured_strategy_job_store(settings)
+    jobs = store.list_jobs(status=status, advertiser_id=advertiser_id, limit=limit)
+    response = StrategyJobListResponse(
+        items=jobs,
+        count=len(jobs),
+        limit=limit,
+        status=status,
+        advertiser_id=advertiser_id,
+    )
+    typer.echo(response.model_dump_json(indent=2))
 
 
 @app.command("eval")

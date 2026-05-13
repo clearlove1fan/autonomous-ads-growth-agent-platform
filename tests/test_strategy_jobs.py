@@ -1,6 +1,8 @@
+import json
 from decimal import Decimal
 
 from fastapi.testclient import TestClient
+from typer.testing import CliRunner
 
 from ads_growth_agent import strategy_job_worker as worker_module
 from ads_growth_agent.api import (
@@ -10,6 +12,7 @@ from ads_growth_agent.api import (
     get_runtime_settings,
     get_runtime_strategy_job_store,
 )
+from ads_growth_agent.cli import app as cli_app
 from ads_growth_agent.config import Settings
 from ads_growth_agent.contracts import GrowthStrategyRequest
 from ads_growth_agent.persistence.strategy_job_store import InMemoryStrategyJobStore
@@ -124,6 +127,48 @@ def test_strategy_job_uses_configured_max_attempts_in_external_mode() -> None:
     assert detail_payload["max_attempts"] == 5
     assert detail_payload["attempt_count"] == 0
     assert detail_payload["next_attempt_at"] is not None
+
+
+def test_growth_strategy_jobs_list_filters_by_status_and_advertiser() -> None:
+    store = InMemoryStrategyJobStore()
+    settings = Settings(strategy_job_backend="memory", strategy_job_execution_mode="external")
+    api_app.dependency_overrides[get_runtime_settings] = lambda: settings
+    api_app.dependency_overrides[get_runtime_strategy_job_store] = lambda: store
+    try:
+        first = TestClient(api_app).post(
+            "/growth-strategies/jobs",
+            json={"brief": _brief_payload(advertiser_id="adv_fitness_001")},
+            headers={"X-Tenant-ID": "tenant_jobs"},
+        )
+        second = TestClient(api_app).post(
+            "/growth-strategies/jobs",
+            json={"brief": _brief_payload(advertiser_id="adv_fitness_002")},
+            headers={"X-Tenant-ID": "tenant_jobs"},
+        )
+        list_response = TestClient(api_app).get(
+            "/growth-strategies/jobs",
+            params={
+                "status": "queued",
+                "advertiser_id": "adv_fitness_001",
+                "limit": "10",
+            },
+            headers={"X-Tenant-ID": "tenant_jobs"},
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    payload = list_response.json()
+    assert first.status_code == 202
+    assert second.status_code == 202
+    assert list_response.status_code == 200
+    assert list_response.headers["x-tenant-id"] == "tenant_jobs"
+    assert payload["count"] == 1
+    assert payload["limit"] == 10
+    assert payload["status"] == "queued"
+    assert payload["advertiser_id"] == "adv_fitness_001"
+    assert payload["items"][0]["advertiser_id"] == "adv_fitness_001"
+    assert payload["items"][0]["status"] == "queued"
+    assert payload["items"][0]["next_attempt_at"] is not None
 
 
 def test_external_strategy_job_execution_mode_leaves_job_queued_then_worker_completes() -> None:
@@ -287,6 +332,48 @@ def test_in_memory_strategy_job_claims_distinct_jobs_per_worker() -> None:
     assert worker_two[0].attempt_count == 1
 
 
+def test_list_strategy_jobs_cli_filters_jobs(monkeypatch) -> None:
+    store = InMemoryStrategyJobStore()
+    request = GrowthStrategyRequest.model_validate({"brief": _brief_payload()})
+    store.create_queued(
+        request,
+        job_id="job_cli_001",
+        strategy_id="strategy_cli_001",
+        run_id="run_cli_001",
+        trace_id="trace_cli_001",
+    )
+
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.get_settings",
+        lambda: Settings(tenant_id="tenant_cli"),
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_strategy_job_store",
+        lambda settings: store,
+    )
+
+    result = CliRunner().invoke(
+        cli_app,
+        [
+            "list-strategy-jobs",
+            "--status",
+            "queued",
+            "--advertiser-id",
+            "adv_fitness_001",
+            "--limit",
+            "5",
+        ],
+    )
+
+    assert result.exit_code == 0
+    parsed = json.loads(result.stdout)
+    assert parsed["count"] == 1
+    assert parsed["limit"] == 5
+    assert parsed["status"] == "queued"
+    assert parsed["advertiser_id"] == "adv_fitness_001"
+    assert parsed["items"][0]["job_id"] == "job_cli_001"
+
+
 def test_get_growth_strategy_job_returns_404_for_missing_job() -> None:
     api_app.dependency_overrides[get_runtime_strategy_job_store] = (
         lambda: InMemoryStrategyJobStore()
@@ -300,9 +387,9 @@ def test_get_growth_strategy_job_returns_404_for_missing_job() -> None:
     assert response.json()["detail"]["error_code"] == "STRATEGY_JOB_NOT_FOUND"
 
 
-def _brief_payload() -> dict:
+def _brief_payload(*, advertiser_id: str = "adv_fitness_001") -> dict:
     return {
-        "advertiser_id": "adv_fitness_001",
+        "advertiser_id": advertiser_id,
         "product_name": "FitTrack Pro",
         "product_category": "fitness app",
         "objective": "registrations",

@@ -3,7 +3,7 @@ from collections.abc import Callable
 from typing import Annotated
 from uuid import uuid4
 
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Response
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query, Response
 from pydantic import BaseModel, ValidationError
 
 from ads_growth_agent import __version__
@@ -22,6 +22,8 @@ from ads_growth_agent.contracts import (
     GrowthStrategyResponse,
     StrategyJobAcceptedResponse,
     StrategyJobDetailResponse,
+    StrategyJobListResponse,
+    StrategyJobStatus,
 )
 from ads_growth_agent.feedback import analyze_campaign_performance_event
 from ads_growth_agent.graph import strategy_id_for_brief
@@ -254,6 +256,29 @@ def create_growth_strategy_job(
         trace_id=job.trace_id,
         polling_url=polling_url,
         created_at=job.created_at,
+    )
+
+
+@app.get("/growth-strategies/jobs", response_model=StrategyJobListResponse)
+def list_growth_strategy_jobs(
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    job_store: Annotated[
+        StrategyJobStore,
+        Depends(get_runtime_strategy_job_store),
+    ],
+    status: Annotated[StrategyJobStatus | None, Query()] = None,
+    advertiser_id: Annotated[str | None, Query(min_length=1, max_length=128)] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> StrategyJobListResponse:
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    jobs = job_store.list_jobs(status=status, advertiser_id=advertiser_id, limit=limit)
+    return StrategyJobListResponse(
+        items=jobs,
+        count=len(jobs),
+        limit=limit,
+        status=status,
+        advertiser_id=advertiser_id,
     )
 
 

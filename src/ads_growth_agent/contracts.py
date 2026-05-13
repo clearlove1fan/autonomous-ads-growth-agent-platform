@@ -387,6 +387,16 @@ class StrategyJobDetailResponse(BaseModel):
     completed_at: datetime | None = None
 
 
+class StrategyJobListResponse(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    items: list[StrategyJobDetailResponse] = Field(default_factory=list)
+    count: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    status: StrategyJobStatus | None = None
+    advertiser_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+
 class PerformanceMetrics(BaseModel):
     impressions: int = Field(ge=0)
     clicks: int = Field(ge=0)

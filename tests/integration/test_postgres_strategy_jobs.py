@@ -131,6 +131,55 @@ def test_postgres_strategy_jobs_claim_distinct_jobs_with_skip_locked(monkeypatch
         _drop_temporary_database(test_url)
 
 
+def test_postgres_strategy_jobs_list_filters_status_and_advertiser(monkeypatch) -> None:
+    base_url = _integration_database_url()
+    test_url = _create_temporary_database(base_url)
+    engine = sa.create_engine(test_url)
+
+    try:
+        monkeypatch.setenv("DATABASE_URL", test_url.render_as_string(hide_password=False))
+        command.upgrade(Config("alembic.ini"), "head")
+
+        store = PostgresStrategyJobStore(engine, tenant_id="tenant_jobs")
+        first_request = GrowthStrategyRequest.model_validate(
+            {"brief": _brief_payload(advertiser_id="adv_fitness_001")}
+        )
+        second_request = GrowthStrategyRequest.model_validate(
+            {"brief": _brief_payload(advertiser_id="adv_fitness_002")}
+        )
+        first = store.create_queued(
+            first_request,
+            job_id="job_list_001",
+            strategy_id="strategy_list_001",
+            run_id="run_list_001",
+            trace_id="trace_list_001",
+        )
+        second = store.create_queued(
+            second_request,
+            job_id="job_list_002",
+            strategy_id="strategy_list_002",
+            run_id="run_list_002",
+            trace_id="trace_list_002",
+        )
+        claimed = store.claim_queued(limit=1, worker_id="worker_list")
+
+        running = store.list_jobs(status=claimed[0].status, limit=10)
+        queued_for_second_advertiser = store.list_jobs(
+            status=second.status,
+            advertiser_id="adv_fitness_002",
+            limit=10,
+        )
+        first_advertiser_jobs = store.list_jobs(advertiser_id="adv_fitness_001", limit=10)
+
+        assert claimed[0].job_id == first.job_id
+        assert [job.job_id for job in running] == [first.job_id]
+        assert [job.job_id for job in queued_for_second_advertiser] == [second.job_id]
+        assert [job.job_id for job in first_advertiser_jobs] == [first.job_id]
+    finally:
+        engine.dispose()
+        _drop_temporary_database(test_url)
+
+
 def test_postgres_strategy_job_failure_retries_until_attempts_exhausted(
     monkeypatch,
 ) -> None:
@@ -202,9 +251,9 @@ def test_postgres_strategy_job_failure_retries_until_attempts_exhausted(
         _drop_temporary_database(test_url)
 
 
-def _brief_payload() -> dict:
+def _brief_payload(*, advertiser_id: str = "adv_fitness_001") -> dict:
     return {
-        "advertiser_id": "adv_fitness_001",
+        "advertiser_id": advertiser_id,
         "product_name": "FitTrack Pro",
         "product_category": "fitness app",
         "objective": "registrations",

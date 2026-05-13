@@ -79,6 +79,15 @@ class StrategyJobStore(Protocol):
     def get_job(self, job_id: str) -> StrategyJobDetailResponse | None:
         """Return one strategy job for the configured tenant."""
 
+    def list_jobs(
+        self,
+        *,
+        status: StrategyJobStatus | None = None,
+        advertiser_id: str | None = None,
+        limit: int = 50,
+    ) -> list[StrategyJobDetailResponse]:
+        """Return recent strategy jobs for the configured tenant."""
+
 
 class InMemoryStrategyJobStore:
     def __init__(self) -> None:
@@ -257,6 +266,24 @@ class InMemoryStrategyJobStore:
     def get_job(self, job_id: str) -> StrategyJobDetailResponse | None:
         with self._lock:
             return self._jobs.get(job_id)
+
+    def list_jobs(
+        self,
+        *,
+        status: StrategyJobStatus | None = None,
+        advertiser_id: str | None = None,
+        limit: int = 50,
+    ) -> list[StrategyJobDetailResponse]:
+        with self._lock:
+            jobs = [
+                job
+                for job in self._jobs.values()
+                if (status is None or job.status == status)
+                and (advertiser_id is None or job.advertiser_id == advertiser_id)
+            ]
+        return sorted(jobs, key=lambda job: (job.updated_at, job.job_id), reverse=True)[
+            :limit
+        ]
 
     def clear(self) -> None:
         with self._lock:
@@ -515,6 +542,33 @@ class PostgresStrategyJobStore:
         with _connection(self._bind) as connection:
             return _fetch_job(connection, job_id, tenant_id=self._tenant_id)
 
+    def list_jobs(
+        self,
+        *,
+        status: StrategyJobStatus | None = None,
+        advertiser_id: str | None = None,
+        limit: int = 50,
+    ) -> list[StrategyJobDetailResponse]:
+        with _connection(self._bind) as connection:
+            stmt = sa.select(strategy_jobs).where(
+                strategy_jobs.c.tenant_id == self._tenant_id
+            )
+            if status is not None:
+                stmt = stmt.where(strategy_jobs.c.status == status.value)
+            if advertiser_id is not None:
+                stmt = stmt.where(strategy_jobs.c.advertiser_id == advertiser_id)
+            rows = (
+                connection.execute(
+                    stmt.order_by(
+                        strategy_jobs.c.updated_at.desc(),
+                        strategy_jobs.c.job_id.desc(),
+                    ).limit(limit)
+                )
+                .mappings()
+                .all()
+            )
+        return [_row_to_job(row) for row in rows]
+
     def _mark_terminal_or_running(
         self,
         job_id: str,
@@ -615,6 +669,10 @@ def _fetch_job(
     ).mappings().one_or_none()
     if row is None:
         return None
+    return _row_to_job(row)
+
+
+def _row_to_job(row) -> StrategyJobDetailResponse:
     return StrategyJobDetailResponse(
         job_id=row["job_id"],
         status=row["status"],
