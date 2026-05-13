@@ -42,7 +42,7 @@ configuration can leave jobs queued for an external worker command.
       worker mode leaves jobs queued.
 - [x] Add unit tests, schema tests, and live Postgres integration for distinct
       concurrent claims.
-- [ ] Run verification, commit, push, and watch CI.
+- [x] Run verification, commit, push, and watch CI.
 
 ## Decisions
 
@@ -86,16 +86,18 @@ configuration can leave jobs queued for an external worker command.
   Result: `.venv/bin/alembic upgrade head --sql >/tmp/ads_growth_alembic_worker.sql && tail -n 80 /tmp/ads_growth_alembic_worker.sql` passed after changing the migration to use `op.execute`.
 - [x] CLI registration:
   Result: `.venv/bin/ads-growth-agent --help` lists `process-strategy-jobs`.
-- [ ] Live Postgres integration:
-  Result: Not run in this turn because `docker compose up -d postgres` was blocked by the Codex usage-limit approval gate before the container could start.
-- [ ] Commit/push:
-  Result: Blocked. `git add ...` could not write `.git/index.lock` inside the sandbox, and the required escalation was rejected by the Codex usage-limit approval gate.
-- [ ] CI:
+- [x] Live Postgres integration:
+  Result: Local Docker startup was blocked earlier by the Codex usage-limit
+  approval gate, but GitHub Actions `postgres-integration` passed in CI run
+  `25782218067`.
+- [x] Commit/push:
+  Result: Commit `afca4d5` was pushed to `origin/main`.
+- [x] CI:
+  Result: GitHub Actions CI run `25782218067` passed, including unit, lint,
+  e2e-smoke, postgres-integration, and release-readiness.
 
 ## Final Status
 
-Implementation is complete and local verification passed. The change adds
-durable strategy job worker claiming, lease metadata, an external worker mode,
-and `process-strategy-jobs`. Commit, push, CI, and live Postgres integration are
-blocked until the Codex usage-limit approval gate allows escalated Docker/Git
-operations again.
+Complete. The change adds durable strategy job worker claiming, lease metadata,
+an external worker mode, and `process-strategy-jobs`. Local unit/lint/offline
+migration checks passed, and remote CI passed with PostgreSQL integration.
