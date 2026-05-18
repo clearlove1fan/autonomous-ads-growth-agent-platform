@@ -38,7 +38,7 @@
 
 ### 1.3 Engineering Change Workflow
 
-This workflow is the v0.1 engineering standard. GitHub Actions quality gates, dependency locking, deterministic end-to-end smoke coverage, and release-readiness checks are implemented in the repository. Branch protection remains a GitHub repository setting and must be configured before a collaborative launch readiness claim.
+This workflow is the v0.1 engineering standard. GitHub Actions quality gates, dependency locking, deterministic end-to-end smoke coverage, and release-readiness checks are implemented in the repository. Branch protection remains a GitHub repository setting and must be configured before a collaborative launch readiness claim; for the current private repository, GitHub returned `403` because branch protection requires GitHub Pro or a public repository.
 
 | Item | Standard |
 |---|---|
@@ -699,8 +699,8 @@ protection, which must be configured as a repository setting.
 | Demo readiness | End-to-end workflow runs with seeded sample advertiser cases | Ready for deterministic local MVP demo; screenshots/log excerpts remain optional |
 | CI/CD readiness | Automated CI runs lint, unit tests, and deterministic end-to-end smoke checks | Implemented in GitHub Actions; branch protection pending |
 | Dependency lock readiness | Reproducible lock file is committed and used by CI/demo install instructions | Implemented |
-| Branch protection readiness | `main` requires PR review and passing checks before merge | Planned; repository protection not verified |
-| Release readiness | Version tag, changelog entry, and release verification notes exist for each demo/release milestone | Changelog entry started; version tag and final release verification pending |
+| Branch protection readiness | `main` requires PR review and passing checks before merge | Blocked by GitHub private-repository plan limits; documented policy is ready to apply |
+| Release readiness | Version tag, changelog entry, and release verification notes exist for each demo/release milestone | `v0.1.0` changelog and release verification notes prepared; tag pending after release-hygiene CI |
 
 ## 17. Open Questions
 
@@ -818,11 +818,11 @@ The first version should prioritize a complete, traceable, and recoverable end-t
 
 | Field | Value |
 |---|---|
-| Status | Accepted for v0.1 plan; implementation pending |
+| Status | Accepted for v0.1 plan; blocked by current GitHub plan |
 | Decision | Use a stable protected `main` branch, implementation branches, and at least one required PR approval once collaboration begins |
 | Context | RACI defines ownership, but the original RFC did not define the code collaboration workflow |
 | Rationale | Branch protection and PR review provide a lightweight quality gate appropriate for a small project |
-| Consequences | Launch readiness now depends on repository settings as well as code and test status |
+| Consequences | Launch readiness now depends on repository settings as well as code and test status; private repositories require GitHub Pro or public visibility for branch protection |
 
 ## 20. Decision Log
 
@@ -847,3 +847,4 @@ The first version should prioritize a complete, traceable, and recoverable end-t
 | 2026-05-18 | Add strategy-linked feedback context | Final strategies expose `feedback_context` so campaign events can match optimization rules back to the original plan | Accepted |
 | 2026-05-18 | Expand local agent eval coverage | Eval suite now scores planner orchestration, retrieval grounding, critic quality gate, revision behavior, strategy completeness, safety, and observability | Accepted |
 | 2026-05-18 | Complete Phase 1 MVP readiness pass | README, RFC/HLD, roadmap, eval scope, and changelog now describe the implemented deterministic MVP path; branch protection remains a Phase 1.5 external repository setting | Accepted |
+| 2026-05-18 | Prepare v0.1.0 demo release | `CHANGELOG.md` now has a `v0.1.0` entry, release verification references CI run `26022065806`, and branch protection is recorded as blocked by GitHub private-repository plan limits | Accepted |

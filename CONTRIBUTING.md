@@ -18,6 +18,11 @@ Pull requests should pass these GitHub Actions jobs before merge:
 request approval before merge. Repository settings enforce this; this file
 records the expected policy for reviewers and future setup.
 
+Current status as of 2026-05-18: GitHub returned `403` for branch protection on
+this private repository because the feature requires GitHub Pro or a public
+repository. Once that account/repository setting changes, apply the required
+checks listed above to `main`.
+
 ## Dependency Lock
 
 `requirements-lock.txt` is the v0.1 reproducibility lock. Refresh it from a
@@ -37,3 +42,9 @@ Dependency lock changes should be deliberate and reviewed like source changes.
 Before tagging a milestone such as `v0.1.0`, update `CHANGELOG.md` with the
 user-visible or architecture-visible changes and record the verification that
 passed for the release candidate.
+
+For the `v0.1.0` demo milestone, the functional MVP verification baseline is
+commit `53806c0`, with CI run `26022065806` passing `lint`, `unit`,
+`e2e-smoke`, `postgres-integration`, and `release-readiness`. The final
+`v0.1.0` tag should point to the release-hygiene commit that contains the
+versioned changelog.

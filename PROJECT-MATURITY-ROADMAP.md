@@ -7,11 +7,11 @@ This roadmap defines the order in which the Autonomous Ads Growth Agent Platform
 | Dimension | Current Estimate | Target Before Moving On | Status |
 |---|---:|---:|---|
 | Interview-quality technical project | 90-95% | 85-90% | Phase 1 MVP complete for v0.1 |
-| Engineering workflow and quality gates | 75%+ | 75%+ | CI split, lock, release notes, and policy docs added; branch protection still external |
+| Engineering workflow and quality gates | 80%+ | 75%+ | CI split, lock, release notes, and policy docs added; branch protection blocked by GitHub plan |
 | Production architecture skeleton | 55-60% | 75-80% | In progress |
 | True production-ready system | 15-20% | 60%+ for this repo | Early |
 
-These numbers are intentionally conservative. The project now has a credible agent-runtime and production-skeleton foundation, including persistence, tenant scoping, retry/resume, checkpointing, async strategy jobs, event feedback, dependency locking, explicit CI quality gates, a deterministic one-command MVP demo, and local agent evals for planner orchestration, retrieval grounding, critic quality, and revision behavior. Phase 1 is complete for the v0.1 MVP, while branch protection remains a GitHub repository setting tracked in Phase 1.5. The project should still not claim production-grade availability, security, or distributed-system readiness yet.
+These numbers are intentionally conservative. The project now has a credible agent-runtime and production-skeleton foundation, including persistence, tenant scoping, retry/resume, checkpointing, async strategy jobs, event feedback, dependency locking, explicit CI quality gates, a deterministic one-command MVP demo, and local agent evals for planner orchestration, retrieval grounding, critic quality, and revision behavior. Phase 1 is complete for the v0.1 MVP, while branch protection remains a GitHub repository setting tracked in Phase 1.5 and is currently blocked for the private repo by GitHub plan limits. The project should still not claim production-grade availability, security, or distributed-system readiness yet.
 
 ## Phase 1: Interview-Quality Technical Project
 
@@ -94,14 +94,14 @@ Current state:
 - `.github/workflows/ci.yml` now separates lint, unit, deterministic E2E smoke, Postgres integration, and release-readiness jobs.
 - `requirements-lock.txt` is committed for reproducible v0.1 CI and demo installs.
 - `CHANGELOG.md` records the Phase 1 MVP completion scope.
-- Branch protection and required PR approval are not verified.
+- Branch protection and required PR approval are documented but blocked by GitHub private-repository plan limits unless GitHub Pro is enabled or the repository is made public.
 - Deterministic product smoke coverage exists for direct API, async job, and CLI boundaries.
-- Release tagging and changelog expectations are documented, with `CHANGELOG.md` started.
+- Release tagging and changelog expectations are documented, with `CHANGELOG.md` prepared for `v0.1.0`.
 
 Planned work:
 
-- Configure GitHub branch protection for `main` once repository settings are available.
-- Cut a `v0.1.0` demo tag after the final Phase 1 review and CI confirmation.
+- Configure GitHub branch protection for `main` after GitHub Pro is enabled or the repository is made public.
+- Cut and publish a `v0.1.0` demo tag after the release-hygiene commit passes CI.
 - Keep dependency lock refreshes deliberate and tied to full verification.
 
 Exit criteria:
@@ -229,8 +229,8 @@ Exit criteria:
 
 ## Next Recommended Backlog
 
-1. Configure branch protection for `main`, including required checks and PR review expectations.
-2. Cut a `v0.1.0` demo tag after final review and CI confirmation.
+1. Cut and publish a `v0.1.0` demo tag after final release-hygiene CI confirmation.
+2. Configure branch protection for `main` after GitHub Pro is enabled or the repository is made public.
 3. Add curated demo script and expected output excerpts for the fitness app scenario.
 4. Add negative demo cases for safe failure, idempotency conflict, and event conflict.
 5. Replace in-process background jobs with a durable worker queue design and outbox/DLQ plan.
