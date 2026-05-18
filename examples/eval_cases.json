@@ -25,6 +25,9 @@
         ]
       },
       "expectations": {
+        "expected_revision_count": 0,
+        "min_critic_score": 7.0,
+        "require_feedback_context": true,
         "min_retrieved_source_count": 3,
         "required_retrieved_source_types": [
           "advertiser_memory",
@@ -63,6 +66,9 @@
         ]
       },
       "expectations": {
+        "expected_revision_count": 0,
+        "min_critic_score": 7.0,
+        "require_feedback_context": true,
         "min_retrieved_source_count": 1,
         "required_retrieved_source_types": [
           "rag_document"
@@ -96,6 +102,9 @@
         ]
       },
       "expectations": {
+        "expected_revision_count": 0,
+        "min_critic_score": 7.0,
+        "require_feedback_context": true,
         "min_retrieved_source_count": 1,
         "required_retrieved_source_types": [
           "rag_document"

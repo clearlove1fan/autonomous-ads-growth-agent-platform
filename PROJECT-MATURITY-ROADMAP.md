@@ -6,12 +6,12 @@ This roadmap defines the order in which the Autonomous Ads Growth Agent Platform
 
 | Dimension | Current Estimate | Target Before Moving On | Status |
 |---|---:|---:|---|
-| Interview-quality technical project | 65-70% | 85-90% | In progress |
-| Engineering workflow and quality gates | 65-70% | 75%+ | CI split and lock added; branch protection still external |
-| Production architecture skeleton | 50-55% | 75-80% | In progress |
+| Interview-quality technical project | 85-90% | 85-90% | MVP functionality implemented; final docs and external settings remain |
+| Engineering workflow and quality gates | 70-75% | 75%+ | CI split and lock added; branch protection still external |
+| Production architecture skeleton | 55-60% | 75-80% | In progress |
 | True production-ready system | 15-20% | 60%+ for this repo | Early |
 
-These numbers are intentionally conservative. The project now has a credible agent-runtime and production-skeleton foundation, including persistence, tenant scoping, retry/resume, checkpointing, async strategy jobs, event feedback, dependency locking, and explicit CI quality gates. Branch protection remains a GitHub repository setting, and the project should still not claim production-grade availability, security, or distributed-system readiness yet.
+These numbers are intentionally conservative. The project now has a credible agent-runtime and production-skeleton foundation, including persistence, tenant scoping, retry/resume, checkpointing, async strategy jobs, event feedback, dependency locking, explicit CI quality gates, a deterministic one-command MVP demo, and local agent evals for planner orchestration, retrieval grounding, critic quality, and revision behavior. Branch protection remains a GitHub repository setting, and the project should still not claim production-grade availability, security, or distributed-system readiness yet.
 
 ## Phase 1: Interview-Quality Technical Project
 
@@ -50,16 +50,18 @@ Completed:
 - Run detail, retry, and resume APIs.
 - Campaign performance event ingestion and deterministic feedback analysis.
 - Performance event idempotency and conflict protection.
+- Strategy-linked feedback context in final strategies.
+- One-command deterministic Phase 1 demo through the CLI.
+- Negative demo coverage for structured safe failure.
+- Agent eval scores for planner orchestration, retrieval grounding, critic quality gate, and revision behavior.
+- README mapping from project features to TikTok AI Agent role themes.
 - HLD implementation-sync sections with current architecture and sequence diagrams.
 - Liveness/readiness health endpoints with configured dependency checks.
 - Async strategy job API with pollable memory/Postgres job state and v0.1 background execution.
 
 Remaining:
 
-- Add a curated demo script with expected outputs and screenshots/log excerpts.
-- Add agent-eval cases for planner, retrieval grounding, critic, and revision behavior.
-- Add a resume/interview mapping section that ties project features to the TikTok JD.
-- Add negative demo cases that show safe failure rather than silent bad output.
+- Finish README/HLD/RFC wording so the documented demo path matches the implemented CLI/API flow.
 - Configure GitHub branch protection so the implemented quality gates are enforced before merge.
 
 Exit criteria:

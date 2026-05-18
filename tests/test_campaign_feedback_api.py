@@ -71,6 +71,33 @@ def test_campaign_performance_event_api_returns_feedback_analysis(monkeypatch) -
     assert store.requested_event_ids == ["evt_perf_001"]
 
 
+def test_campaign_performance_event_api_uses_strategy_context() -> None:
+    api_app.dependency_overrides[get_runtime_settings] = lambda: Settings(
+        performance_event_persistence_backend="none"
+    )
+    try:
+        response = TestClient(api_app).post(
+            "/campaign-events/performance",
+            json=_event_payload_with_strategy_context(),
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["analysis"]["strategy_id"] == "strategy_001"
+    assert payload["analysis"]["draft_id"] == "draft_fittrack"
+    assert payload["analysis"]["matched_strategy_rules"][0]["rule_id"] == (
+        "strategy_001:rule:cpa_guardrail"
+    )
+    assert payload["analysis"]["recommendations"][0]["params"]["strategy_id"] == (
+        "strategy_001"
+    )
+    assert payload["analysis"]["recommendations"][0]["params"][
+        "matched_strategy_rule_ids"
+    ] == ["strategy_001:rule:cpa_guardrail"]
+
+
 def test_campaign_performance_event_api_uses_noop_persistence_by_default() -> None:
     api_app.dependency_overrides[get_runtime_settings] = lambda: Settings(
         performance_event_persistence_backend="none"
@@ -421,3 +448,35 @@ def _event_payload() -> dict[str, object]:
         "target_cpa": "20.00",
         "attribution_window_days": 7,
     }
+
+
+def _event_payload_with_strategy_context() -> dict[str, object]:
+    payload = _event_payload()
+    payload.pop("target_cpa")
+    payload["draft_id"] = "draft_fittrack"
+    payload["strategy_context"] = {
+        "strategy_id": "strategy_001",
+        "draft_id": "draft_fittrack",
+        "target_cpa": "20.00",
+        "optimization_rules": [
+            {
+                "rule_id": "strategy_001:rule:cpa_guardrail",
+                "trigger_metric": "cost_per_result",
+                "condition": "Observed CPA exceeds target by more than 20%.",
+                "recommended_action": "Shift budget toward the best converting lane.",
+                "owner_role": "budget_optimizer",
+                "priority": 1,
+                "rationale": "CPA is the primary efficiency guardrail.",
+            },
+            {
+                "rule_id": "strategy_001:rule:creative_learning",
+                "trigger_metric": "creative_cell_conversions",
+                "condition": "One creative angle wins.",
+                "recommended_action": "Generate close variants of the winning hook.",
+                "owner_role": "creative_strategist",
+                "priority": 2,
+                "rationale": "Creative learning should happen before broad scaling.",
+            },
+        ],
+    }
+    return payload

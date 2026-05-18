@@ -1,7 +1,7 @@
 # ruff: noqa: E402
 import json
 import warnings
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict
 from uuid import NAMESPACE_URL, uuid5
 
 from langchain_core._api.deprecation import LangChainPendingDeprecationWarning
@@ -19,9 +19,17 @@ from ads_growth_agent.config import Settings, get_settings
 from ads_growth_agent.contracts import (
     AdvertiserBrief,
     AgentRole,
+    AudienceSegmentPlan,
+    CampaignDraftSummary,
+    CampaignObjectivePlan,
+    CreativeTestPlan,
     CritiqueReport,
+    FeedbackStrategyContext,
     FinalGrowthStrategy,
     GrowthStrategyResponse,
+    MeasurementEventPlan,
+    OptimizationRule,
+    PerformanceForecast,
     RecommendedAction,
     RiskAssessment,
     RiskLevel,
@@ -901,6 +909,65 @@ def _knowledge_source_citations(retrieval: Any) -> list[SourceCitation]:
     ]
 
 
+def _audience_segment_plans(
+    audience: AudienceRecommendationOutput,
+) -> list[AudienceSegmentPlan]:
+    plans = [
+        AudienceSegmentPlan(
+            segment_name=segment,
+            purpose=_audience_segment_purpose(segment),
+            rationale=audience.rationale,
+            source=audience.source_id,
+        )
+        for segment in audience.segments
+    ]
+    plans.extend(
+        AudienceSegmentPlan(
+            segment_name=exclusion,
+            purpose="exclusion",
+            rationale="Exclude users who should not receive launch or conversion ads.",
+            source=audience.source_id,
+        )
+        for exclusion in audience.exclusions
+    )
+    return plans
+
+
+def _audience_segment_purpose(
+    segment: str,
+) -> Literal["prospecting", "retargeting", "expansion", "exclusion"]:
+    normalized = segment.lower()
+    if "retarget" in normalized or "visitor" in normalized or "engaged" in normalized:
+        return "retargeting"
+    if "lookalike" in normalized:
+        return "expansion"
+    return "prospecting"
+
+
+def _creative_test_plans(
+    creative: CreativeBriefOutput,
+) -> list[CreativeTestPlan]:
+    formats = [
+        "Short-form product demo",
+        "Creator-style before-and-after narrative",
+        "Social proof and walkthrough clip",
+    ]
+    return [
+        CreativeTestPlan(
+            angle=angle,
+            hook=_creative_hook_for_angle(angle),
+            format=formats[index % len(formats)],
+            call_to_action=creative.call_to_action,
+            compliance_notes=creative.messaging_constraints,
+        )
+        for index, angle in enumerate(creative.creative_angles)
+    ]
+
+
+def _creative_hook_for_angle(angle: str) -> str:
+    return f"Open with the advertiser's clearest user value: {angle}"
+
+
 def _json_dump(value: Any) -> str:
     return json.dumps(value, sort_keys=True, default=str)
 
@@ -933,20 +1000,126 @@ def _finalizer_node(state: GrowthStrategyState) -> GrowthStrategyState:
         f"Critic revision context applied: {revision_note}"
         for revision_note in revision_notes
     )
+    campaign_summary = (
+        f"Draft a {brief.duration_days}-day {brief.objective.value.replace('_', ' ')} "
+        f"growth plan for {brief.product_name} with a {brief.currency} {brief.budget} budget. "
+        f"The plan prioritizes prospecting, retargeting, and creative learning before scale."
+    )
+    target_cpa = brief.target_cpa or performance.estimated_cpa
+    audience_segments = _audience_segment_plans(audience)
+    creative_tests = _creative_test_plans(creative)
+    campaign_draft = CampaignDraftSummary(
+        draft_id=draft.draft_id,
+        campaign_name=draft.campaign_name,
+        status=draft.status,
+        total_budget=draft.total_budget,
+        daily_budget=draft.daily_budget,
+        currency=brief.currency,
+        safety_note=draft.safety_note,
+    )
+    performance_forecast = PerformanceForecast(
+        estimated_conversions=performance.estimated_conversions,
+        estimated_cpa=performance.estimated_cpa,
+        confidence_level=performance.confidence_level,
+        forecast_window_days=brief.duration_days,
+        basis=performance.assumptions,
+    )
+    measurement_events = [
+        MeasurementEventPlan(
+            event_name=brief.primary_kpi,
+            event_type="primary_conversion",
+            success_signal=f"CPA trends at or below {target_cpa} {brief.currency}.",
+            review_cadence="Daily during the first learning period.",
+        ),
+        MeasurementEventPlan(
+            event_name="cost_per_result",
+            event_type="guardrail",
+            success_signal=(
+                f"Observed CPA stays within 20% of the target {target_cpa} {brief.currency}."
+            ),
+            review_cadence="Review after each 24-hour delivery window.",
+        ),
+        MeasurementEventPlan(
+            event_name="creative_cell_readout",
+            event_type="diagnostic",
+            success_signal="At least one creative angle earns enough conversions to scale.",
+            review_cadence="Review after the first meaningful conversion sample.",
+        ),
+    ]
+    optimization_rules = [
+        OptimizationRule(
+            rule_id=f"{strategy_id}:rule:cpa_guardrail",
+            trigger_metric="cost_per_result",
+            condition=f"Observed CPA exceeds {target_cpa} {brief.currency} by more than 20%.",
+            recommended_action=(
+                "Pause the weakest ad cell, move budget to the best-performing audience, "
+                "and keep the campaign in draft-review mode before any live mutation."
+            ),
+            owner_role=AgentRole.BUDGET_OPTIMIZER,
+            priority=1,
+            rationale="CPA is the primary efficiency guardrail for conversion growth.",
+        ),
+        OptimizationRule(
+            rule_id=f"{strategy_id}:rule:creative_learning",
+            trigger_metric="creative_cell_conversions",
+            condition="One creative angle materially outperforms the other test cells.",
+            recommended_action=(
+                "Generate two close variants of the winning hook and reduce spend on weak angles."
+            ),
+            owner_role=AgentRole.CREATIVE_STRATEGIST,
+            priority=2,
+            rationale="Creative learning should happen before broad budget scaling.",
+        ),
+        OptimizationRule(
+            rule_id=f"{strategy_id}:rule:pacing",
+            trigger_metric="budget_pacing",
+            condition="Spend is materially under or over the expected daily budget pace.",
+            recommended_action=(
+                "Adjust daily budget pacing and verify attribution events before changing bids."
+            ),
+            owner_role=AgentRole.PERFORMANCE_ANALYST,
+            priority=3,
+            rationale="Pacing issues can hide delivery, tracking, or audience-size problems.",
+        ),
+    ]
+    feedback_context = FeedbackStrategyContext(
+        strategy_id=strategy_id,
+        draft_id=draft.draft_id,
+        target_cpa=target_cpa,
+        performance_forecast=performance_forecast,
+        measurement_events=measurement_events,
+        optimization_rules=optimization_rules,
+    )
 
     strategy = FinalGrowthStrategy(
         strategy_id=strategy_id,
         advertiser_id=brief.advertiser_id,
         objective=brief.objective,
-        summary=(
-            f"Draft a {brief.duration_days}-day {brief.objective.value.replace('_', ' ')} "
-            f"growth plan for {brief.product_name} with a {brief.currency} {brief.budget} budget. "
-            f"The plan prioritizes prospecting, retargeting, and creative learning before scale."
+        campaign_objective=CampaignObjectivePlan(
+            product_name=brief.product_name,
+            product_category=brief.product_category,
+            objective=brief.objective,
+            target_market=brief.target_market,
+            primary_kpi=brief.primary_kpi,
+            budget=brief.budget,
+            currency=brief.currency,
+            duration_days=brief.duration_days,
+            target_cpa=brief.target_cpa,
+            landing_page_url=brief.landing_page_url,
+            summary=campaign_summary,
         ),
+        summary=campaign_summary,
         audience_strategy=audience.segments,
+        audience_segments=audience_segments,
         creative_strategy=creative.creative_angles,
+        creative_tests=creative_tests,
         bidding_strategy=budget.bidding_strategy,
+        campaign_draft=campaign_draft,
+        performance_forecast=performance_forecast,
         measurement_plan=measurement_plan,
+        measurement_events=measurement_events,
+        optimization_rules=optimization_rules,
+        feedback_context=feedback_context,
         budget_plan=budget.budget_plan,
         actions=[
             RecommendedAction(

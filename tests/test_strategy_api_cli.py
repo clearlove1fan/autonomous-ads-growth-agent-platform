@@ -240,6 +240,9 @@ def test_plan_text_cli_generates_strategy_from_plain_language_text() -> None:
         == "adv_cli_text_strategy"
     )
     assert payload["growth_strategy"]["run_metadata"]["tool_count"] == 5
+    strategy = payload["growth_strategy"]["strategy"]
+    assert strategy["feedback_context"]["strategy_id"] == strategy["strategy_id"]
+    assert strategy["feedback_context"]["draft_id"] == strategy["campaign_draft"]["draft_id"]
 
 
 def test_growth_strategy_api_idempotency_replays_completed_response() -> None:
@@ -593,6 +596,56 @@ def test_plan_cli_accepts_brief_file(tmp_path) -> None:
     assert payload["run_metadata"]["tool_count"] == 5
 
 
+def test_analyze_performance_cli_outputs_strategy_linked_feedback(tmp_path) -> None:
+    event_file = tmp_path / "event.json"
+    event_file.write_text(json.dumps(_performance_event_payload_with_strategy_context()))
+
+    result = CliRunner().invoke(cli_app, ["analyze-performance", str(event_file)])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["health_status"] == "underperforming"
+    assert payload["strategy_id"] == "strategy_001"
+    assert payload["matched_strategy_rules"][0]["rule_id"] == (
+        "strategy_001:rule:cpa_guardrail"
+    )
+    assert payload["recommendations"][0]["params"]["strategy_id"] == "strategy_001"
+
+
+def test_demo_cli_runs_phase1_mvp_flow() -> None:
+    result = CliRunner().invoke(cli_app, ["demo"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    strategy = payload["growth_strategy"]["strategy"]
+    feedback = payload["feedback_analysis"]
+
+    assert payload["demo_case"] == "phase1_fitness_app_underperforming_feedback"
+    assert payload["intake"]["brief"]["advertiser_id"] == "adv_fitness_001"
+    assert strategy["feedback_context"]["strategy_id"] == strategy["strategy_id"]
+    assert payload["performance_event"]["strategy_context"] == strategy["feedback_context"]
+    assert feedback["health_status"] == "underperforming"
+    assert feedback["strategy_id"] == strategy["strategy_id"]
+    assert feedback["draft_id"] == strategy["campaign_draft"]["draft_id"]
+    assert feedback["matched_strategy_rules"][0]["rule_id"] == (
+        f"{strategy['strategy_id']}:rule:cpa_guardrail"
+    )
+
+
+def test_analyze_performance_cli_safe_failure_for_orphan_event(tmp_path) -> None:
+    event_file = tmp_path / "orphan_event.json"
+    payload = _performance_event_payload_with_strategy_context()
+    payload.pop("run_id")
+    payload.pop("draft_id")
+    payload["strategy_context"].pop("draft_id")
+    event_file.write_text(json.dumps(payload))
+
+    result = CliRunner().invoke(cli_app, ["analyze-performance", str(event_file)])
+
+    assert result.exit_code == 2
+    assert "performance events require run_id, campaign_id, or draft_id" in result.stderr
+
+
 def test_cli_version_option_works_without_subcommand() -> None:
     result = CliRunner().invoke(cli_app, ["--version"])
 
@@ -827,4 +880,38 @@ def _brief_payload() -> dict[str, object]:
             "Home workout beginners",
             "Wearable fitness tracker users",
         ],
+    }
+
+
+def _performance_event_payload_with_strategy_context() -> dict[str, object]:
+    return {
+        "event_id": "evt_cli_strategy_context",
+        "advertiser_id": "adv_fitness_001",
+        "run_id": "run_001",
+        "draft_id": "draft_fittrack",
+        "objective": "registrations",
+        "event_type": "performance_snapshot",
+        "occurred_at": "2026-05-12T12:00:00Z",
+        "metrics": {
+            "impressions": 10000,
+            "clicks": 500,
+            "spend": "1000.00",
+            "conversions": 20,
+        },
+        "strategy_context": {
+            "strategy_id": "strategy_001",
+            "draft_id": "draft_fittrack",
+            "target_cpa": "20.00",
+            "optimization_rules": [
+                {
+                    "rule_id": "strategy_001:rule:cpa_guardrail",
+                    "trigger_metric": "cost_per_result",
+                    "condition": "Observed CPA exceeds target by more than 20%.",
+                    "recommended_action": "Shift budget toward the best converting lane.",
+                    "owner_role": "budget_optimizer",
+                    "priority": 1,
+                    "rationale": "CPA is the primary efficiency guardrail.",
+                }
+            ],
+        },
     }

@@ -6,7 +6,7 @@ The platform turns advertiser goals into structured campaign strategies across a
 
 ## Current Status
 
-This repository is in v0.1 bootstrap. The first implementation milestone is an end-to-end local workflow:
+This repository is in v0.1 Phase 1. The current milestone is a deterministic local MVP workflow:
 
 1. Accept an advertiser growth goal through FastAPI or CLI.
 2. Convert the request into a structured advertiser brief.
@@ -14,7 +14,8 @@ This repository is in v0.1 bootstrap. The first implementation milestone is an e
 4. Call typed mock ads tools.
 5. Retrieve campaign knowledge from PostgreSQL + pgvector.
 6. Run a critic pass.
-7. Return a validated campaign growth strategy.
+7. Return a validated campaign growth strategy with a reusable feedback context.
+8. Analyze a campaign performance event and return draft-only optimization recommendations.
 
 ## Architecture Direction
 
@@ -71,12 +72,58 @@ Run the CLI:
 
 ```bash
 ads-growth-agent health
+ads-growth-agent demo
 ads-growth-agent plan examples/fitness_app_brief.json
 ads-growth-agent parse-brief-text "Use $2000 to promote a fitness app and improve registrations" --advertiser-id adv_fitness_001
 ads-growth-agent plan-text "Use $2000 to promote a fitness app and improve registrations" --advertiser-id adv_fitness_001
+ads-growth-agent analyze-performance examples/performance_event_underperforming.json
 ads-growth-agent seed-knowledge
 ads-growth-agent eval examples/eval_cases.json
 ```
+
+Run the Phase 1 MVP demo without external model keys:
+
+```bash
+ads-growth-agent demo
+```
+
+The demo executes the complete deterministic product loop:
+
+```text
+plain-language advertiser goal
+-> AdvertiserBrief
+-> LangGraph strategy workflow
+-> FinalGrowthStrategy.feedback_context
+-> simulated underperforming performance event
+-> matched strategy rule and draft-only optimization recommendations
+```
+
+Expected high-level output:
+
+- `intake.brief` includes the parsed advertiser goal, budget, market, and objective.
+- `growth_strategy.strategy` includes campaign objective, audience, creative, budget, measurement, campaign draft, performance forecast, risks, sources, and `feedback_context`.
+- `performance_event.strategy_context` is copied from the generated strategy.
+- `feedback_analysis.health_status` is `underperforming`.
+- `feedback_analysis.matched_strategy_rules` includes the CPA guardrail rule from the strategy.
+- Recommendations remain draft-only and require approval before live spend or targeting changes.
+
+## TikTok AI Agent Role Mapping
+
+This project is designed around the same engineering themes as an AI Agent-powered advertiser growth platform:
+
+| Role theme | Project evidence |
+|---|---|
+| ReAct / Plan-and-Execute | Explicit LangGraph workflow from planner to retriever, tool executor, critic, and finalizer |
+| Tool use / function calling | Internal typed tool registry validates and executes audience, creative, budget, performance, and campaign draft tools |
+| Short-term workflow memory | `GrowthStrategyState` carries brief, retrieved context, tool results, critique, revision notes, and final strategy through the graph |
+| Advertiser memory | In-memory default corpus plus optional PostgreSQL-backed advertiser memory and usage tracking |
+| RAG | Strategy playbooks, historical cases, and advertiser memory are retrieved and cited in final outputs |
+| Multi-agent orchestration | Planner, retriever, tool executor, critic, revision, and finalizer nodes model role-based agent responsibilities |
+| Structured output | Pydantic contracts validate briefs, tool intents/results, critique reports, final strategies, feedback analyses, and eval reports |
+| Event-driven feedback | Campaign performance events produce health status, matched optimization rules, and draft-only recommendations |
+| Self-reflection / critique loop | Critic report gates finalization; optional LLM critic can route through a bounded revision loop |
+| LLMOps / observability | LangSmith-compatible run metadata, structured JSON logs, local eval suite, and CI smoke coverage |
+| Ads growth domain | Output covers audience, creative, budget, bidding, measurement, campaign drafts, performance forecasts, and optimization rules |
 
 Run tests:
 
@@ -223,12 +270,20 @@ ads-growth-agent eval examples/eval_cases.json
 
 The local suite currently evaluates:
 
+- planner orchestration and expected graph/tool ordering
 - budget consistency
 - tool use correctness
 - strategy completeness
 - retrieval grounding, including expected source IDs/types and minimum relevance
+- critic quality gate behavior
+- bounded revision behavior
 - draft-only safety
 - observability metadata
+
+The seeded cases in `examples/eval_cases.json` cover fitness app registrations,
+DTC skincare purchases, and B2B SaaS lead generation. Each case can assert
+retrieved source IDs/types, critic score thresholds, expected revision count,
+and whether the final strategy must include a reusable feedback context.
 
 The `retriever` node uses the v0.1 knowledge layer to attach deterministic local RAG results before tool execution. The default seed corpus includes campaign strategy playbooks, historical cases, and advertiser profile memory. Final strategies cite retrieved sources as `rag_document`, `historical_case`, or `advertiser_memory`.
 
@@ -284,7 +339,14 @@ curl -X POST http://localhost:8000/runs/run_failed_abc/resume \
 
 Resume uses the original `advertiser_brief` stored in `agent_runs.metadata`, rejects completed runs, and returns the normal `GrowthStrategyResponse` with `Resumed-Run-ID` and `Resume-Mode` headers. If `GRAPH_CHECKPOINTER_BACKEND=postgres`, the same LangGraph checkpoint thread is reused; otherwise v0.1 resume is same-run replay with honest API semantics.
 
-Campaign performance events can trigger a first-pass feedback analysis loop:
+Campaign performance events can trigger a first-pass feedback analysis loop.
+For a static CLI example:
+
+```bash
+ads-growth-agent analyze-performance examples/performance_event_underperforming.json
+```
+
+For the API:
 
 ```bash
 curl -X POST http://localhost:8000/campaign-events/performance \
@@ -293,7 +355,13 @@ curl -X POST http://localhost:8000/campaign-events/performance \
   -d '{"event_id":"evt_perf_001","advertiser_id":"adv_fitness_001","campaign_id":"cmp_fitness_001","objective":"registrations","event_type":"performance_snapshot","occurred_at":"2026-05-12T12:00:00Z","metrics":{"impressions":10000,"clicks":500,"spend":"1000.00","conversions":20},"target_cpa":"20.00","attribution_window_days":7}'
 ```
 
-The response includes `health_status`, metric summaries such as CTR/CVR/CPA, draft-only feedback recommendations, and guardrails requiring human approval before budget or targeting changes. Set `PERFORMANCE_EVENT_PERSISTENCE_BACKEND=postgres` to persist events and analyses in `campaign_performance_events`.
+The response includes `health_status`, metric summaries such as CTR/CVR/CPA,
+draft-only feedback recommendations, matched strategy rules when
+`strategy_context` is supplied, and guardrails requiring human approval before
+budget or targeting changes. `FinalGrowthStrategy.feedback_context` is designed
+to be copied into a performance event so feedback can be tied back to the
+strategy's own optimization rules. Set `PERFORMANCE_EVENT_PERSISTENCE_BACKEND=postgres`
+to persist events and analyses in `campaign_performance_events`.
 
 Set `ADVERTISER_MEMORY_PERSISTENCE_BACKEND=postgres` to also write analyzed feedback into `advertiser_memories` as `historical_performance` memory. For production-style/high-concurrency ingestion, also set `OUTBOX_BACKEND=postgres`; the API will enqueue a durable `campaign_performance_analyzed` event and return `Advertiser-Memory-Status: queued` instead of doing the memory write on the request path. A bounded worker can then process the queue:
 

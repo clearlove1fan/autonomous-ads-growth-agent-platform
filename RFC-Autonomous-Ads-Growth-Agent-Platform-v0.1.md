@@ -12,7 +12,7 @@
 | DRI | TBD |
 | Reviewers | Product, Ads Engineering, ML Platform, Data Engineering, Privacy/Safety, LLMOps |
 | Audience | Product, Engineering, ML/LLMOps, Data, Ads Platform, Leadership |
-| Last Updated | 2026-05-12 |
+| Last Updated | 2026-05-18 |
 
 ### 1.1 Review Protocol
 
@@ -570,7 +570,7 @@ These decisions close a gap in the original RFC: v0.1 had a technical test plan,
 | Capability | Status | Evidence |
 |---|---|---|
 | FastAPI strategy generation | Implemented | `POST /growth-strategies` returns a validated `GrowthStrategyResponse` |
-| CLI demo and eval | Implemented | `ads-growth-agent plan`, `health`, `seed-knowledge`, and `eval` commands |
+| CLI demo and eval | Implemented | `ads-growth-agent demo`, `plan`, `plan-text`, `analyze-performance`, `health`, `seed-knowledge`, and `eval` commands |
 | Deterministic LangGraph workflow | Implemented | Graph nodes run planner, retriever, tool_executor, critic, and finalizer |
 | Internal typed tool registry | Implemented | Unknown tools, invalid params, permission errors, and failures return structured results |
 | LiteLLM gateway | Implemented behind feature flags | Optional LLM planner/critic and structured output fallback route through LiteLLM |
@@ -582,13 +582,13 @@ These decisions close a gap in the original RFC: v0.1 had a technical test plan,
 | Async strategy job API | Implemented with v0.1 in-process executor | Jobs are queued through `/growth-strategies/jobs`, executed by FastAPI background tasks, and pollable through job detail API |
 | API idempotency | Implemented as opt-in Postgres backend | Same key/body replays response; same key/different body returns conflict |
 | Campaign draft persistence | Implemented as opt-in Postgres backend | Drafts remain `status=draft` and no live spend action is executed |
-| Campaign performance feedback loop | Implemented | Performance snapshots produce metrics, health status, recommendations, and guardrails |
+| Campaign performance feedback loop | Implemented | Performance snapshots produce metrics, health status, matched strategy rules from `feedback_context`, recommendations, and guardrails |
 | Performance event idempotency | Implemented | Same event payload replays persisted analysis; same event ID with changed payload returns `409` |
 | Dependency readiness checks | Implemented | `/health/live` is shallow; `/health/ready` checks configured Postgres and LiteLLM dependencies |
-| Basic GitHub Actions CI | Implemented but incomplete | `.github/workflows/ci.yml` runs install, `ruff check .`, and `pytest` on PRs and pushes to `main` |
-| Dependency lock file | Not implemented | `pyproject.toml` still uses lower-bound dependency ranges without a committed lock file |
+| Basic GitHub Actions CI | Implemented; branch protection still external | `.github/workflows/ci.yml` separates lint, unit, deterministic E2E smoke, Postgres integration, and release-readiness checks |
+| Dependency lock file | Implemented | `requirements-lock.txt` is committed and used by CI/demo install instructions |
 | Branch protection and PR review gate | Not verified | RFC now defines the target workflow, but repository protection settings still need to be configured |
-| Deterministic E2E CI smoke gate | Not implemented | Tests cover many contracts, but CI does not yet call out a seeded API or CLI E2E smoke test as a distinct merge gate |
+| Deterministic E2E CI smoke gate | Implemented | CI has a dedicated `e2e-smoke` job and local tests cover API, async job, CLI, and strategy-to-feedback smoke paths |
 | Native table partitioning | Not implemented | Schema is partition-aware, but local migrations do not create native partitions |
 | Replica-aware query routing | Not implemented | Replica strategy is documented but runtime routing still uses one database URL |
 | Full production auth and rate limits | Not implemented | Tenant context is caller-supplied; no authentication/authorization boundary yet |
@@ -693,12 +693,12 @@ protection, which must be configured as a repository setting.
 | Technology decision sign-off | Technology choices and ADR appendix reviewed | ADR-001 through ADR-007 drafted; review pending |
 | Data sign-off | RAG documents and mock datasets reviewed | Seed corpus and eval cases exist; data review pending |
 | Safety sign-off | Guardrails for policy risk and autonomous actions approved | Draft-only guardrails implemented; formal safety review pending |
-| Eval sign-off | Minimum eval dataset and pass thresholds defined | Local eval suite exists; broader agent eval coverage pending |
+| Eval sign-off | Minimum eval dataset and pass thresholds defined | Local eval suite covers planner orchestration, retrieval grounding, critic quality, revision behavior, budget, tool use, safety, and observability; broader dataset review pending |
 | Observability sign-off | LangSmith traces and error metadata verified | Run metadata and JSON logs implemented; metrics/dashboard pending |
 | Local stack readiness | Docker Compose starts FastAPI, PostgreSQL with pgvector, and LiteLLM Proxy | Implemented; local environment verification required per machine |
-| Demo readiness | End-to-end workflow runs with seeded sample advertiser cases | Partially ready; curated walkthrough and expected outputs pending |
-| CI/CD readiness | Automated CI runs lint, unit tests, and deterministic end-to-end smoke checks | Basic CI exists; E2E smoke and branch protection pending |
-| Dependency lock readiness | Reproducible lock file is committed and used by CI/demo install instructions | Planned; not implemented |
+| Demo readiness | End-to-end workflow runs with seeded sample advertiser cases | Deterministic CLI demo implemented with expected output shape documented; screenshots/log excerpts remain optional |
+| CI/CD readiness | Automated CI runs lint, unit tests, and deterministic end-to-end smoke checks | Implemented in GitHub Actions; branch protection pending |
+| Dependency lock readiness | Reproducible lock file is committed and used by CI/demo install instructions | Implemented |
 | Branch protection readiness | `main` requires PR review and passing checks before merge | Planned; repository protection not verified |
 | Release readiness | Version tag, changelog entry, and release verification notes exist for each demo/release milestone | Planned; not implemented |
 
@@ -808,7 +808,7 @@ The first version should prioritize a complete, traceable, and recoverable end-t
 
 | Field | Value |
 |---|---|
-| Status | Accepted for v0.1 plan; implementation pending |
+| Status | Accepted and implemented for v0.1 |
 | Decision | Commit a generated `requirements-lock.txt` for CI and demo installs while keeping `pyproject.toml` as the package metadata source |
 | Context | The current dependency ranges use lower bounds such as `>=`, which is appropriate for package metadata but unsafe as the only install contract |
 | Rationale | A lock file pins transitive versions for reproducible local demos and CI without forcing an immediate migration to Poetry |
@@ -843,3 +843,6 @@ The first version should prioritize a complete, traceable, and recoverable end-t
 | 2026-05-12 | Add DevOps and engineering quality gates to the v0.1 plan | CI/CD, branch strategy, dependency locking, and true E2E automation were not explicit enough in the original RFC and should be launch blockers | Accepted |
 | 2026-05-12 | Select GitHub Actions for v0.1 CI | Native GitHub integration is sufficient for lint, unit, integration, and deterministic E2E checks | Accepted |
 | 2026-05-12 | Select committed dependency lock for v0.1 reproducibility | Lower-bound dependency ranges alone do not protect local demos or CI from upstream breakage | Accepted |
+| 2026-05-18 | Add one-command deterministic Phase 1 demo | `ads-growth-agent demo` runs natural-language intake, strategy generation, feedback context reuse, and performance feedback analysis without external model keys | Accepted |
+| 2026-05-18 | Add strategy-linked feedback context | Final strategies expose `feedback_context` so campaign events can match optimization rules back to the original plan | Accepted |
+| 2026-05-18 | Expand local agent eval coverage | Eval suite now scores planner orchestration, retrieval grounding, critic quality gate, revision behavior, strategy completeness, safety, and observability | Accepted |

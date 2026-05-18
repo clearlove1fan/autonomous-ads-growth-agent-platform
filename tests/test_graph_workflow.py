@@ -45,6 +45,38 @@ def test_langgraph_workflow_runs_expected_node_path() -> None:
     assert any(source.source_type == "rag_document" for source in response.strategy.sources)
 
 
+def test_langgraph_workflow_returns_mvp_strategy_package() -> None:
+    response = run_growth_strategy_graph(_brief())
+    strategy = response.strategy
+
+    assert strategy.campaign_objective.product_name == "FitTrack Pro"
+    assert strategy.campaign_objective.target_market == "United States"
+    assert strategy.campaign_objective.budget == Decimal("2000.00")
+    assert strategy.campaign_objective.duration_days == 14
+    assert strategy.campaign_draft.status == "draft"
+    assert strategy.campaign_draft.safety_note.startswith("Draft only.")
+    assert strategy.performance_forecast.estimated_conversions > 0
+    assert strategy.performance_forecast.forecast_window_days == 14
+    assert len(strategy.audience_segments) >= len(strategy.audience_strategy)
+    assert {segment.purpose for segment in strategy.audience_segments}.issuperset(
+        {"prospecting", "retargeting", "exclusion"}
+    )
+    assert len(strategy.creative_tests) == len(strategy.creative_strategy)
+    assert all(test.call_to_action for test in strategy.creative_tests)
+    assert {event.event_type for event in strategy.measurement_events} == {
+        "primary_conversion",
+        "guardrail",
+        "diagnostic",
+    }
+    assert [rule.priority for rule in strategy.optimization_rules] == [1, 2, 3]
+    assert all(rule.recommended_action for rule in strategy.optimization_rules)
+    assert strategy.feedback_context.strategy_id == strategy.strategy_id
+    assert strategy.feedback_context.draft_id == strategy.campaign_draft.draft_id
+    assert strategy.feedback_context.performance_forecast == strategy.performance_forecast
+    assert strategy.feedback_context.measurement_events == strategy.measurement_events
+    assert strategy.feedback_context.optimization_rules == strategy.optimization_rules
+
+
 def test_langgraph_workflow_preserves_budget_validation() -> None:
     response = run_growth_strategy_graph(_brief())
 

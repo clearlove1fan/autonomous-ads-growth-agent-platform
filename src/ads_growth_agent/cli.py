@@ -12,11 +12,13 @@ from ads_growth_agent.config import get_settings
 from ads_growth_agent.contracts import (
     AdvertiserBrief,
     AdvertiserBriefIntakeRequest,
+    CampaignPerformanceEventRequest,
     GrowthStrategyRequest,
     StrategyJobListResponse,
     StrategyJobStatus,
 )
 from ads_growth_agent.evaluation import load_eval_cases, run_local_eval_suite
+from ads_growth_agent.feedback import analyze_campaign_performance_event
 from ads_growth_agent.logging_config import configure_logging
 from ads_growth_agent.outbox import process_configured_outbox
 from ads_growth_agent.persistence.knowledge_seed import seed_default_knowledge
@@ -64,6 +66,22 @@ BRIEF_TEXT_ADVERTISER_ID_OPTION = typer.Option(None, "--advertiser-id")
 BRIEF_TEXT_TARGET_MARKET_OPTION = typer.Option("United States", "--target-market")
 BRIEF_TEXT_CURRENCY_OPTION = typer.Option("USD", "--currency")
 BRIEF_TEXT_DURATION_OPTION = typer.Option(14, "--duration-days", min=1, max=365)
+DEMO_TEXT_OPTION = typer.Option(
+    (
+        "I want to use a $2000 budget to promote a fitness app in the "
+        "United States and increase trial registrations over 14 days."
+    ),
+    "--text",
+    help="Plain-language advertiser goal for the deterministic Phase 1 demo.",
+)
+DEMO_ADVERTISER_ID_OPTION = typer.Option("adv_fitness_001", "--advertiser-id")
+PERFORMANCE_EVENT_FILE_ARGUMENT = typer.Argument(
+    ...,
+    exists=True,
+    dir_okay=False,
+    readable=True,
+    help="Path to a campaign performance event JSON file.",
+)
 
 
 @app.command()
@@ -91,7 +109,7 @@ def plan(brief_file: Path = BRIEF_FILE_ARGUMENT) -> None:
         typer.echo(f"Invalid JSON: {exc}", err=True)
         raise typer.Exit(2) from exc
     except ValidationError as exc:
-        typer.echo(json.dumps(exc.errors(include_url=False), indent=2), err=True)
+        typer.echo(_validation_errors_json(exc), err=True)
         raise typer.Exit(2) from exc
     except StrategyGenerationError as exc:
         typer.echo(f"Strategy generation failed: {exc}", err=True)
@@ -122,7 +140,7 @@ def parse_brief_text(
             settings=settings,
         )
     except ValidationError as exc:
-        typer.echo(json.dumps(exc.errors(include_url=False), indent=2), err=True)
+        typer.echo(_validation_errors_json(exc), err=True)
         raise typer.Exit(2) from exc
 
     typer.echo(response.model_dump_json(indent=2))
@@ -151,7 +169,7 @@ def plan_text(
         )
         response = generate_growth_strategy(intake.brief, settings=settings)
     except ValidationError as exc:
-        typer.echo(json.dumps(exc.errors(include_url=False), indent=2), err=True)
+        typer.echo(_validation_errors_json(exc), err=True)
         raise typer.Exit(2) from exc
     except StrategyGenerationError as exc:
         typer.echo(f"Strategy generation failed: {exc}", err=True)
@@ -162,6 +180,77 @@ def plan_text(
             {
                 "intake": intake.model_dump(mode="json"),
                 "growth_strategy": response.model_dump(mode="json"),
+            },
+            indent=2,
+        )
+    )
+
+
+@app.command("analyze-performance")
+def analyze_performance(
+    event_file: Path = PERFORMANCE_EVENT_FILE_ARGUMENT,
+) -> None:
+    """Analyze a campaign performance event and return draft optimization guidance."""
+    try:
+        payload = json.loads(event_file.read_text())
+        event = CampaignPerformanceEventRequest.model_validate(payload)
+        analysis = analyze_campaign_performance_event(event)
+    except json.JSONDecodeError as exc:
+        typer.echo(f"Invalid JSON: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    except ValidationError as exc:
+        typer.echo(_validation_errors_json(exc), err=True)
+        raise typer.Exit(2) from exc
+
+    typer.echo(analysis.model_dump_json(indent=2))
+
+
+@app.command("demo")
+def demo(
+    text: str = DEMO_TEXT_OPTION,
+    advertiser_id: str = DEMO_ADVERTISER_ID_OPTION,
+    target_market: str = BRIEF_TEXT_TARGET_MARKET_OPTION,
+    currency: str = BRIEF_TEXT_CURRENCY_OPTION,
+    duration_days: int = BRIEF_TEXT_DURATION_OPTION,
+) -> None:
+    """Run the deterministic Phase 1 MVP flow end to end."""
+    try:
+        settings = get_settings()
+        intake = parse_advertiser_brief(
+            AdvertiserBriefIntakeRequest(
+                text=text,
+                advertiser_id=advertiser_id,
+                default_target_market=target_market,
+                default_currency=currency,
+                default_duration_days=duration_days,
+            ),
+            settings=settings,
+        )
+        growth_strategy = generate_growth_strategy(intake.brief, settings=settings)
+        event = _demo_performance_event(
+            advertiser_id=intake.brief.advertiser_id,
+            run_id=growth_strategy.run_metadata.run_id,
+            objective=growth_strategy.strategy.objective,
+            draft_id=growth_strategy.strategy.campaign_draft.draft_id,
+            strategy_context=growth_strategy.strategy.feedback_context,
+        )
+        feedback_analysis = analyze_campaign_performance_event(event)
+    except ValidationError as exc:
+        typer.echo(_validation_errors_json(exc), err=True)
+        raise typer.Exit(2) from exc
+    except StrategyGenerationError as exc:
+        typer.echo(f"Strategy generation failed: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(
+        json.dumps(
+            {
+                "demo_case": "phase1_fitness_app_underperforming_feedback",
+                "input_text": text,
+                "intake": intake.model_dump(mode="json"),
+                "growth_strategy": growth_strategy.model_dump(mode="json"),
+                "performance_event": event.model_dump(mode="json"),
+                "feedback_analysis": feedback_analysis.model_dump(mode="json"),
             },
             indent=2,
         )
@@ -308,7 +397,7 @@ def run_eval(eval_file: Path = EVAL_FILE_ARGUMENT) -> None:
         typer.echo(f"Invalid JSON: {exc}", err=True)
         raise typer.Exit(2) from exc
     except ValidationError as exc:
-        typer.echo(json.dumps(exc.errors(include_url=False), indent=2), err=True)
+        typer.echo(_validation_errors_json(exc), err=True)
         raise typer.Exit(2) from exc
 
     typer.echo(report.model_dump_json(indent=2))
@@ -322,6 +411,41 @@ def _parse_strategy_request(payload: object) -> GrowthStrategyRequest:
 
 def _safe_database_url(database_url: str) -> str:
     return make_url(database_url).render_as_string(hide_password=True)
+
+
+def _validation_errors_json(exc: ValidationError) -> str:
+    return json.dumps(
+        exc.errors(include_url=False, include_context=False),
+        indent=2,
+    )
+
+
+def _demo_performance_event(
+    *,
+    advertiser_id: str,
+    run_id: str,
+    objective,
+    draft_id: str,
+    strategy_context,
+) -> CampaignPerformanceEventRequest:
+    return CampaignPerformanceEventRequest.model_validate(
+        {
+            "event_id": f"evt_demo_{run_id}",
+            "advertiser_id": advertiser_id,
+            "run_id": run_id,
+            "draft_id": draft_id,
+            "objective": objective,
+            "event_type": "performance_snapshot",
+            "occurred_at": "2026-05-12T12:00:00Z",
+            "metrics": {
+                "impressions": 10_000,
+                "clicks": 500,
+                "spend": "1000.00",
+                "conversions": 20,
+            },
+            "strategy_context": strategy_context,
+        }
+    )
 
 
 @app.callback(invoke_without_command=True)

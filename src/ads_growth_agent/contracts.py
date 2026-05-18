@@ -246,6 +246,105 @@ class SuccessMetric(BaseModel):
     measurement_window: str = Field(min_length=1, max_length=120)
 
 
+class CampaignObjectivePlan(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    product_name: str = Field(min_length=1, max_length=160)
+    product_category: str = Field(min_length=1, max_length=120)
+    objective: CampaignObjective
+    target_market: str = Field(min_length=1, max_length=120)
+    primary_kpi: str = Field(min_length=1, max_length=80)
+    budget: Decimal = Field(gt=0, decimal_places=2)
+    currency: str = Field(default="USD", min_length=3, max_length=3)
+    duration_days: int = Field(ge=1, le=365)
+    target_cpa: Decimal | None = Field(default=None, gt=0, decimal_places=2)
+    landing_page_url: str | None = Field(default=None, max_length=512)
+    summary: str = Field(min_length=1, max_length=800)
+
+    @field_validator("currency")
+    @classmethod
+    def normalize_currency(cls, value: str) -> str:
+        return value.upper()
+
+
+class AudienceSegmentPlan(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    segment_name: str = Field(min_length=1, max_length=240)
+    purpose: Literal["prospecting", "retargeting", "expansion", "exclusion"]
+    rationale: str = Field(min_length=1, max_length=800)
+    source: str = Field(min_length=1, max_length=160)
+
+
+class CreativeTestPlan(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    angle: str = Field(min_length=1, max_length=240)
+    hook: str = Field(min_length=1, max_length=240)
+    format: str = Field(min_length=1, max_length=160)
+    call_to_action: str = Field(min_length=1, max_length=160)
+    compliance_notes: list[str] = Field(default_factory=list)
+
+
+class CampaignDraftSummary(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    draft_id: str = Field(min_length=1, max_length=160)
+    campaign_name: str = Field(min_length=1, max_length=240)
+    status: Literal["draft"]
+    total_budget: Decimal = Field(gt=0, decimal_places=2)
+    daily_budget: Decimal = Field(gt=0, decimal_places=2)
+    currency: str = Field(default="USD", min_length=3, max_length=3)
+    safety_note: str = Field(min_length=1, max_length=500)
+
+    @field_validator("currency")
+    @classmethod
+    def normalize_currency(cls, value: str) -> str:
+        return value.upper()
+
+
+class PerformanceForecast(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    estimated_conversions: int = Field(ge=0)
+    estimated_cpa: Decimal = Field(gt=0, decimal_places=2)
+    confidence_level: Literal["low", "medium", "high"]
+    forecast_window_days: int = Field(ge=1, le=365)
+    basis: list[str] = Field(min_length=1)
+
+
+class MeasurementEventPlan(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    event_name: str = Field(min_length=1, max_length=160)
+    event_type: Literal["primary_conversion", "secondary_signal", "guardrail", "diagnostic"]
+    success_signal: str = Field(min_length=1, max_length=500)
+    review_cadence: str = Field(min_length=1, max_length=160)
+
+
+class OptimizationRule(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    rule_id: str = Field(min_length=1, max_length=128)
+    trigger_metric: str = Field(min_length=1, max_length=120)
+    condition: str = Field(min_length=1, max_length=300)
+    recommended_action: str = Field(min_length=1, max_length=800)
+    owner_role: AgentRole
+    priority: int = Field(ge=1, le=5)
+    rationale: str = Field(min_length=1, max_length=800)
+
+
+class FeedbackStrategyContext(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    strategy_id: str = Field(min_length=1, max_length=128)
+    draft_id: str | None = Field(default=None, min_length=1, max_length=160)
+    target_cpa: Decimal | None = Field(default=None, gt=0, decimal_places=2)
+    performance_forecast: PerformanceForecast | None = None
+    measurement_events: list[MeasurementEventPlan] = Field(default_factory=list)
+    optimization_rules: list[OptimizationRule] = Field(default_factory=list)
+
+
 class SourceCitation(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -293,11 +392,19 @@ class FinalGrowthStrategy(BaseModel):
     strategy_id: str = Field(min_length=1, max_length=128)
     advertiser_id: str = Field(min_length=1, max_length=128)
     objective: CampaignObjective
+    campaign_objective: CampaignObjectivePlan
     summary: str = Field(min_length=1, max_length=1_200)
     audience_strategy: list[str] = Field(min_length=1)
+    audience_segments: list[AudienceSegmentPlan] = Field(min_length=1)
     creative_strategy: list[str] = Field(min_length=1)
+    creative_tests: list[CreativeTestPlan] = Field(min_length=1)
     bidding_strategy: str = Field(min_length=1, max_length=800)
+    campaign_draft: CampaignDraftSummary
+    performance_forecast: PerformanceForecast
     measurement_plan: list[str] = Field(min_length=1)
+    measurement_events: list[MeasurementEventPlan] = Field(min_length=1)
+    optimization_rules: list[OptimizationRule] = Field(min_length=1)
+    feedback_context: FeedbackStrategyContext
     budget_plan: BudgetPlan
     actions: list[RecommendedAction] = Field(min_length=1)
     risks: list[RiskAssessment] = Field(default_factory=list)
@@ -471,6 +578,7 @@ class CampaignPerformanceEventRequest(BaseModel):
     metrics: PerformanceMetrics
     target_cpa: Decimal | None = Field(default=None, gt=0, decimal_places=2)
     attribution_window_days: int = Field(default=7, ge=1, le=90)
+    strategy_context: FeedbackStrategyContext | None = None
     notes: str | None = Field(default=None, max_length=1_000)
 
     @model_validator(mode="after")
@@ -493,6 +601,17 @@ class FeedbackRecommendation(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
+class StrategyRuleMatch(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    rule_id: str = Field(min_length=1, max_length=128)
+    trigger_metric: str = Field(min_length=1, max_length=120)
+    recommended_action: str = Field(min_length=1, max_length=800)
+    owner_role: AgentRole
+    priority: int = Field(ge=1, le=5)
+    match_reason: str = Field(min_length=1, max_length=500)
+
+
 class CampaignFeedbackAnalysis(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -500,9 +619,12 @@ class CampaignFeedbackAnalysis(BaseModel):
     event_id: str = Field(min_length=1, max_length=128)
     advertiser_id: str = Field(min_length=1, max_length=128)
     run_id: str | None = Field(default=None, min_length=1, max_length=128)
+    strategy_id: str | None = Field(default=None, min_length=1, max_length=128)
+    draft_id: str | None = Field(default=None, min_length=1, max_length=160)
     health_status: FeedbackHealthStatus
     metrics_summary: dict[str, Any] = Field(default_factory=dict)
     recommendations: list[FeedbackRecommendation] = Field(min_length=1)
+    matched_strategy_rules: list[StrategyRuleMatch] = Field(default_factory=list)
     guardrails: list[str] = Field(default_factory=list)
     created_at: datetime
 

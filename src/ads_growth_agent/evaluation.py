@@ -32,8 +32,11 @@ class EvalExpectations(BaseModel):
 
     required_tools: list[str] = Field(default_factory=lambda: list(REQUIRED_TOOLS))
     required_node_path: list[str] = Field(default_factory=lambda: list(REQUIRED_NODE_PATH))
+    expected_revision_count: int = Field(default=0, ge=0)
+    min_critic_score: float = Field(default=7.0, ge=0, le=10)
     max_budget: Decimal | None = Field(default=None, gt=0, decimal_places=2)
     require_draft_only: bool = True
+    require_feedback_context: bool = True
     min_retrieved_source_count: int = Field(default=1, ge=0)
     min_retrieval_relevance: float = Field(default=0.3, ge=0, le=1)
     required_retrieved_source_ids: list[str] = Field(default_factory=list)
@@ -119,10 +122,13 @@ def evaluate_growth_strategy(
     evaluators: Sequence[Evaluator] | None = None,
 ) -> EvaluationReport:
     evaluators = evaluators or [
+        evaluate_planner_orchestration,
         evaluate_budget_consistency,
         evaluate_tool_use_correctness,
         evaluate_strategy_completeness,
         evaluate_retrieval_grounding,
+        evaluate_critic_quality_gate,
+        evaluate_revision_behavior,
         evaluate_draft_only_safety,
         evaluate_observability_metadata,
     ]
@@ -169,6 +175,50 @@ def evaluate_budget_consistency(
     )
 
 
+def evaluate_planner_orchestration(
+    case: EvalCase,
+    response: GrowthStrategyResponse,
+) -> EvaluationScore:
+    tool_names = [result.tool_name for result in response.tool_results]
+    required_tools = case.expectations.required_tools
+    checks = {
+        "starts_with_planner": bool(response.node_path)
+        and response.node_path[0] == "planner",
+        "retriever_before_tool_executor": _appears_before(
+            response.node_path,
+            "retriever",
+            "tool_executor",
+        ),
+        "tool_executor_before_critic": _appears_before(
+            response.node_path,
+            "tool_executor",
+            "critic",
+        ),
+        "critic_before_finalizer": _appears_before(
+            response.node_path,
+            "critic",
+            "finalizer",
+        ),
+        "required_tools_in_order": _contains_ordered_subsequence(tool_names, required_tools),
+        "no_unexpected_initial_tools": set(tool_names).issuperset(required_tools),
+    }
+    passed = all(checks.values())
+    return EvaluationScore(
+        name="planner_orchestration",
+        passed=passed,
+        score=sum(1 for value in checks.values() if value) / len(checks),
+        message="Planner orchestration follows the expected Phase 1 graph and tool plan."
+        if passed
+        else "Planner orchestration deviates from the expected node or tool order.",
+        details={
+            "node_path": response.node_path,
+            "tool_names": tool_names,
+            "required_tools": required_tools,
+            "checks": checks,
+        },
+    )
+
+
 def evaluate_tool_use_correctness(
     case: EvalCase,
     response: GrowthStrategyResponse,
@@ -205,10 +255,18 @@ def evaluate_strategy_completeness(
     strategy = response.strategy
     checks = {
         "objective_matches": strategy.objective == case.brief.objective,
+        "has_campaign_objective": strategy.campaign_objective.objective
+        == case.brief.objective,
         "has_summary": bool(strategy.summary),
         "has_audience_strategy": bool(strategy.audience_strategy),
+        "has_audience_segments": bool(strategy.audience_segments),
         "has_creative_strategy": bool(strategy.creative_strategy),
+        "has_creative_tests": bool(strategy.creative_tests),
         "has_measurement_plan": bool(strategy.measurement_plan),
+        "has_measurement_events": bool(strategy.measurement_events),
+        "has_optimization_rules": bool(strategy.optimization_rules),
+        "has_feedback_context": (not case.expectations.require_feedback_context)
+        or strategy.feedback_context.strategy_id == strategy.strategy_id,
         "has_actions": bool(strategy.actions),
         "has_success_metrics": bool(strategy.success_metrics),
         "has_sources": bool(strategy.sources),
@@ -223,6 +281,78 @@ def evaluate_strategy_completeness(
         if passed
         else "Strategy is missing one or more required sections.",
         details={"checks": checks},
+    )
+
+
+def evaluate_critic_quality_gate(
+    case: EvalCase,
+    response: GrowthStrategyResponse,
+) -> EvaluationScore:
+    critique = response.strategy.critique
+    checks = {
+        "critic_node_present": "critic" in response.node_path,
+        "critic_precedes_finalizer": _appears_before(
+            response.node_path,
+            "critic",
+            "finalizer",
+        ),
+        "critique_passed": critique.passed,
+        "critic_score_meets_threshold": critique.score
+        >= case.expectations.min_critic_score,
+        "critique_has_rationale": bool(critique.rationale),
+        "passing_critique_has_no_required_revisions": (
+            not critique.passed or not critique.required_revisions
+        ),
+    }
+    passed = all(checks.values())
+    return EvaluationScore(
+        name="critic_quality_gate",
+        passed=passed,
+        score=sum(1 for value in checks.values() if value) / len(checks),
+        message="Critic quality gate passed before finalization."
+        if passed
+        else "Critic quality gate is missing, below threshold, or inconsistent.",
+        details={
+            "score": critique.score,
+            "passed": critique.passed,
+            "required_revisions": critique.required_revisions,
+            "node_path": response.node_path,
+            "checks": checks,
+        },
+    )
+
+
+def evaluate_revision_behavior(
+    case: EvalCase,
+    response: GrowthStrategyResponse,
+) -> EvaluationScore:
+    revision_count = response.node_path.count("revision")
+    has_revision_notes = any(
+        "Critic revision" in item
+        for item in [*response.strategy.measurement_plan, *response.strategy.assumptions]
+    )
+    checks = {
+        "revision_count_matches_expectation": revision_count
+        == case.expectations.expected_revision_count,
+        "revision_routes_back_to_critic": revision_count == 0
+        or _appears_before(response.node_path, "revision", "critic", start_after_first=True),
+        "revision_context_recorded_when_used": revision_count == 0 or has_revision_notes,
+        "finalizer_runs_after_revision_flow": response.node_path[-1:] == ["finalizer"],
+    }
+    passed = all(checks.values())
+    return EvaluationScore(
+        name="revision_behavior",
+        passed=passed,
+        score=sum(1 for value in checks.values() if value) / len(checks),
+        message="Revision behavior matches the expected bounded critique loop."
+        if passed
+        else "Revision behavior does not match the expected bounded critique loop.",
+        details={
+            "expected_revision_count": case.expectations.expected_revision_count,
+            "actual_revision_count": revision_count,
+            "node_path": response.node_path,
+            "checks": checks,
+        },
     )
 
 
@@ -362,3 +492,29 @@ def evaluate_observability_metadata(
             "checks": checks,
         },
     )
+
+
+def _appears_before(
+    items: Sequence[str],
+    first: str,
+    second: str,
+    *,
+    start_after_first: bool = False,
+) -> bool:
+    try:
+        first_index = items.index(first)
+        if start_after_first:
+            second_index = items.index(second, first_index + 1)
+        else:
+            second_index = items.index(second)
+    except ValueError:
+        return False
+    return first_index < second_index
+
+
+def _contains_ordered_subsequence(items: Sequence[str], required: Sequence[str]) -> bool:
+    cursor = 0
+    for item in items:
+        if cursor < len(required) and item == required[cursor]:
+            cursor += 1
+    return cursor == len(required)

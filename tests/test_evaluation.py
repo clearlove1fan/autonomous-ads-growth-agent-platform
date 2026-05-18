@@ -9,8 +9,11 @@ from ads_growth_agent.contracts import AdvertiserBrief
 from ads_growth_agent.evaluation import (
     EvalCase,
     evaluate_budget_consistency,
+    evaluate_critic_quality_gate,
     evaluate_growth_strategy,
+    evaluate_planner_orchestration,
     evaluate_retrieval_grounding,
+    evaluate_revision_behavior,
     load_eval_cases,
     run_local_eval_suite,
 )
@@ -47,13 +50,49 @@ def test_evaluation_report_contains_expected_score_names() -> None:
 
     assert report.passed is True
     assert [score.name for score in report.scores] == [
+        "planner_orchestration",
         "budget_consistency",
         "tool_use_correctness",
         "strategy_completeness",
         "retrieval_grounding",
+        "critic_quality_gate",
+        "revision_behavior",
         "draft_only_safety",
         "observability_metadata",
     ]
+
+
+def test_planner_orchestration_evaluator_passes_expected_phase1_flow() -> None:
+    case = load_eval_cases(Path("examples/eval_cases.json"))[0]
+    response = generate_mock_growth_strategy(case.brief)
+
+    score = evaluate_planner_orchestration(case, response)
+
+    assert score.passed is True
+    assert score.details["checks"]["starts_with_planner"] is True
+    assert score.details["checks"]["required_tools_in_order"] is True
+
+
+def test_critic_quality_gate_evaluator_requires_passing_critique() -> None:
+    case = load_eval_cases(Path("examples/eval_cases.json"))[0]
+    response = generate_mock_growth_strategy(case.brief)
+
+    score = evaluate_critic_quality_gate(case, response)
+
+    assert score.passed is True
+    assert score.details["passed"] is True
+    assert score.details["score"] >= 7
+
+
+def test_revision_behavior_evaluator_expects_no_revision_for_deterministic_cases() -> None:
+    case = load_eval_cases(Path("examples/eval_cases.json"))[0]
+    response = generate_mock_growth_strategy(case.brief)
+
+    score = evaluate_revision_behavior(case, response)
+
+    assert score.passed is True
+    assert score.details["expected_revision_count"] == 0
+    assert score.details["actual_revision_count"] == 0
 
 
 def test_budget_evaluator_fails_when_case_budget_is_lower_than_strategy_budget() -> None:

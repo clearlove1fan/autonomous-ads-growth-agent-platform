@@ -1,0 +1,40 @@
+{
+  "event_id": "evt_demo_underperforming_001",
+  "advertiser_id": "adv_fitness_001",
+  "run_id": "run_demo_static",
+  "draft_id": "draft_adv_fitness_001_fitness_app_registrations",
+  "objective": "registrations",
+  "event_type": "performance_snapshot",
+  "occurred_at": "2026-05-12T12:00:00Z",
+  "metrics": {
+    "impressions": 10000,
+    "clicks": 500,
+    "spend": "1000.00",
+    "conversions": 20
+  },
+  "strategy_context": {
+    "strategy_id": "strategy_demo_static",
+    "draft_id": "draft_adv_fitness_001_fitness_app_registrations",
+    "target_cpa": "20.00",
+    "optimization_rules": [
+      {
+        "rule_id": "strategy_demo_static:rule:cpa_guardrail",
+        "trigger_metric": "cost_per_result",
+        "condition": "Observed CPA exceeds 20.00 USD by more than 20%.",
+        "recommended_action": "Pause the weakest ad cell, move budget to the best-performing audience, and keep the campaign in draft-review mode before any live mutation.",
+        "owner_role": "budget_optimizer",
+        "priority": 1,
+        "rationale": "CPA is the primary efficiency guardrail for conversion growth."
+      },
+      {
+        "rule_id": "strategy_demo_static:rule:creative_learning",
+        "trigger_metric": "creative_cell_conversions",
+        "condition": "One creative angle materially outperforms the other test cells.",
+        "recommended_action": "Generate two close variants of the winning hook and reduce spend on weak angles.",
+        "owner_role": "creative_strategist",
+        "priority": 2,
+        "rationale": "Creative learning should happen before broad budget scaling."
+      }
+    ]
+  }
+}

@@ -88,6 +88,61 @@ def test_async_strategy_job_product_smoke() -> None:
     _assert_strategy_smoke(GrowthStrategyResponse.model_validate(detail_payload["result"]))
 
 
+def test_text_strategy_to_feedback_product_smoke() -> None:
+    api_app.dependency_overrides[get_runtime_settings] = _deterministic_settings
+    try:
+        client = TestClient(api_app)
+        strategy_response = client.post(
+            "/growth-strategies/from-text",
+            json={
+                "text": (
+                    "I want to use a $2000 budget to promote a fitness app in the "
+                    "United States and increase trial registrations over 14 days."
+                ),
+                "advertiser_id": "adv_fitness_001",
+            },
+            headers={"X-Tenant-ID": "tenant_smoke"},
+        )
+        strategy_payload = strategy_response.json()["growth_strategy"]
+        strategy = strategy_payload["strategy"]
+        feedback_response = client.post(
+            "/campaign-events/performance",
+            json={
+                "event_id": "evt_strategy_to_feedback_smoke",
+                "advertiser_id": "adv_fitness_001",
+                "run_id": strategy_payload["run_metadata"]["run_id"],
+                "draft_id": strategy["campaign_draft"]["draft_id"],
+                "objective": strategy["objective"],
+                "event_type": "performance_snapshot",
+                "occurred_at": "2026-05-12T12:00:00Z",
+                "metrics": {
+                    "impressions": 10_000,
+                    "clicks": 500,
+                    "spend": "1000.00",
+                    "conversions": 20,
+                },
+                "strategy_context": strategy["feedback_context"],
+            },
+            headers={"X-Tenant-ID": "tenant_smoke"},
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    feedback_payload = feedback_response.json()
+    assert strategy_response.status_code == 200
+    assert feedback_response.status_code == 200
+    assert feedback_response.headers["x-tenant-id"] == "tenant_smoke"
+    assert feedback_payload["analysis"]["health_status"] == "underperforming"
+    assert feedback_payload["analysis"]["strategy_id"] == strategy["strategy_id"]
+    assert feedback_payload["analysis"]["draft_id"] == strategy["campaign_draft"]["draft_id"]
+    assert feedback_payload["analysis"]["matched_strategy_rules"][0]["rule_id"] == (
+        f"{strategy['strategy_id']}:rule:cpa_guardrail"
+    )
+    assert feedback_payload["analysis"]["recommendations"][0]["params"]["strategy_id"] == (
+        strategy["strategy_id"]
+    )
+
+
 def test_cli_plan_product_smoke() -> None:
     result = CliRunner().invoke(cli_app, ["plan", "examples/fitness_app_brief.json"])
 
@@ -118,8 +173,18 @@ def _assert_strategy_smoke(response: GrowthStrategyResponse) -> None:
     assert {result.tool_name for result in response.tool_results} == expected_tools
     assert all(result.success for result in response.tool_results)
     assert strategy.advertiser_id == "adv_fitness_001"
+    assert strategy.campaign_objective.product_name
+    assert strategy.campaign_objective.product_category == "fitness app"
+    assert strategy.campaign_objective.primary_kpi
     assert strategy.budget_plan.total_budget == Decimal("2000.00")
     assert strategy.budget_plan.allocated_budget <= strategy.budget_plan.total_budget
+    assert strategy.campaign_draft.status == "draft"
+    assert strategy.performance_forecast.estimated_conversions > 0
+    assert strategy.measurement_events
+    assert strategy.optimization_rules
+    assert strategy.feedback_context.strategy_id == strategy.strategy_id
+    assert strategy.feedback_context.draft_id == strategy.campaign_draft.draft_id
+    assert any(rule.trigger_metric == "cost_per_result" for rule in strategy.optimization_rules)
     assert strategy.critique.passed is True
     assert strategy.actions
     assert {"advertiser_memory", "rag_document"}.issubset(source_types)
