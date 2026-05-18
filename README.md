@@ -252,6 +252,10 @@ not a complete production identity, RBAC, or per-tenant authorization system.
 Submit a strategy generation job and poll it:
 
 ```bash
+curl -i -X POST http://localhost:8000/growth-strategies/jobs/from-text \
+  -H "Content-Type: application/json" \
+  -d '{"text":"I want to use a $2000 budget to promote a fitness app in the United States and increase trial registrations over 14 days.","advertiser_id":"adv_fitness_001"}'
+
 curl -i -X POST http://localhost:8000/growth-strategies/jobs \
   -H "Content-Type: application/json" \
   -d '{"brief":{"advertiser_id":"adv_fitness_001","product_name":"FitTrack Pro","product_category":"fitness app","objective":"registrations","budget":"2000.00","currency":"USD","duration_days":14,"target_market":"United States","primary_kpi":"trial registrations","target_cpa":"20.00"}}'

@@ -88,6 +88,43 @@ def test_async_strategy_job_product_smoke() -> None:
     _assert_strategy_smoke(GrowthStrategyResponse.model_validate(detail_payload["result"]))
 
 
+def test_async_strategy_job_from_text_product_smoke() -> None:
+    clear_memory_strategy_job_store()
+    api_app.dependency_overrides[get_runtime_settings] = _deterministic_settings
+    try:
+        client = TestClient(api_app)
+        accepted = client.post(
+            "/growth-strategies/jobs/from-text",
+            json={
+                "text": (
+                    "I want to use a $2000 budget to promote a fitness app in the "
+                    "United States and increase trial registrations over 14 days."
+                ),
+                "advertiser_id": "adv_fitness_001",
+            },
+            headers={"X-Tenant-ID": "tenant_smoke"},
+        )
+        detail = client.get(
+            accepted.json()["job"]["polling_url"],
+            headers={"X-Tenant-ID": "tenant_smoke"},
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+        clear_memory_strategy_job_store()
+
+    accepted_payload = accepted.json()
+    job_payload = accepted_payload["job"]
+    detail_payload = detail.json()
+    assert accepted.status_code == 202
+    assert accepted_payload["intake"]["mode"] == "heuristic"
+    assert accepted.headers["location"] == job_payload["polling_url"]
+    assert detail.status_code == 200
+    assert detail_payload["status"] == "completed"
+    assert detail_payload["run_id"] == job_payload["run_id"]
+    assert detail_payload["result"] is not None
+    _assert_strategy_smoke(GrowthStrategyResponse.model_validate(detail_payload["result"]))
+
+
 def test_text_strategy_to_feedback_product_smoke() -> None:
     api_app.dependency_overrides[get_runtime_settings] = _deterministic_settings
     try:

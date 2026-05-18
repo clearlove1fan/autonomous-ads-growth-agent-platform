@@ -580,7 +580,7 @@ These decisions close a gap in the original RFC: v0.1 had a technical test plan,
 | Run detail API | Implemented | `GET /runs/{run_id}` returns status, strategy/error, metadata, and steps |
 | Retry API | Implemented | Failed runs can be retried as a new execution under the same strategy identity |
 | Resume API | Implemented with honest v0.1 semantics | Failed/running runs reuse the same run ID; Postgres checkpointer enables checkpoint-thread reuse |
-| Async strategy job API | Implemented with v0.1 in-process executor | Jobs are queued through `/growth-strategies/jobs`, executed by FastAPI background tasks, and pollable through job detail API |
+| Async strategy job API | Implemented with v0.1 in-process executor | Jobs are queued through `/growth-strategies/jobs` or `/growth-strategies/jobs/from-text`, executed by FastAPI background tasks, and pollable through job detail API |
 | API idempotency | Implemented as opt-in Postgres backend | Same key/body replays response; same key/different body returns conflict |
 | Campaign draft persistence | Implemented as opt-in Postgres backend | Drafts remain `status=draft` and no live spend action is executed |
 | Campaign performance feedback loop | Implemented | Performance snapshots produce metrics, health status, matched strategy rules from `feedback_context`, recommendations, and guardrails |

@@ -29,6 +29,7 @@ from ads_growth_agent.contracts import (
     StrategyJobAcceptedResponse,
     StrategyJobCancelRequest,
     StrategyJobDetailResponse,
+    StrategyJobFromTextResponse,
     StrategyJobListResponse,
     StrategyJobStatus,
 )
@@ -345,6 +346,50 @@ def create_growth_strategy_job(
         StrategyJobStore,
         Depends(get_runtime_strategy_job_store),
     ],
+) -> StrategyJobAcceptedResponse:
+    return _create_strategy_job(
+        request,
+        response=response,
+        background_tasks=background_tasks,
+        settings=settings,
+        job_store=job_store,
+    )
+
+
+@app.post(
+    "/growth-strategies/jobs/from-text",
+    response_model=StrategyJobFromTextResponse,
+    status_code=202,
+    dependencies=[Depends(require_api_auth)],
+)
+def create_growth_strategy_job_from_text(
+    request: GrowthStrategyFromTextRequest,
+    response: Response,
+    background_tasks: BackgroundTasks,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    job_store: Annotated[
+        StrategyJobStore,
+        Depends(get_runtime_strategy_job_store),
+    ],
+) -> StrategyJobFromTextResponse:
+    intake = parse_advertiser_brief(request, settings=settings)
+    job = _create_strategy_job(
+        GrowthStrategyRequest(brief=intake.brief),
+        response=response,
+        background_tasks=background_tasks,
+        settings=settings,
+        job_store=job_store,
+    )
+    return StrategyJobFromTextResponse(intake=intake, job=job)
+
+
+def _create_strategy_job(
+    request: GrowthStrategyRequest,
+    *,
+    response: Response,
+    background_tasks: BackgroundTasks,
+    settings: Settings,
+    job_store: StrategyJobStore,
 ) -> StrategyJobAcceptedResponse:
     response.headers["X-Tenant-ID"] = settings.tenant_id
     job_id = f"job_{uuid4().hex[:16]}"

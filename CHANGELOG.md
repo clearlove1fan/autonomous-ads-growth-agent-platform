@@ -10,6 +10,8 @@
   keeping health probes public.
 - Added `run_id` filtering for async strategy job discovery in the API, CLI,
   memory store, and PostgreSQL store.
+- Added natural-language async strategy job submission through
+  `/growth-strategies/jobs/from-text`.
 
 ## v0.1.0 - 2026-05-18
 

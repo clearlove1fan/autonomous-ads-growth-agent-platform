@@ -508,6 +508,13 @@ class StrategyJobAcceptedResponse(BaseModel):
     created_at: datetime
 
 
+class StrategyJobFromTextResponse(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    intake: AdvertiserBriefIntakeResponse
+    job: StrategyJobAcceptedResponse
+
+
 class StrategyJobDetailResponse(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 

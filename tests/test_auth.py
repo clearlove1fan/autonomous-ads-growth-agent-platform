@@ -11,6 +11,7 @@ PROTECTED_PATHS = {
     "/growth-strategies",
     "/growth-strategies/from-text",
     "/growth-strategies/jobs",
+    "/growth-strategies/jobs/from-text",
     "/growth-strategies/jobs/{job_id}",
     "/growth-strategies/jobs/{job_id}/cancel",
     "/growth-strategies/jobs/{job_id}/retry",

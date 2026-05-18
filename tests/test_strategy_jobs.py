@@ -70,6 +70,50 @@ def test_growth_strategy_job_accepts_request_and_completes_in_background() -> No
     assert detail_payload["locked_by"] is None
 
 
+def test_growth_strategy_job_from_text_parses_brief_and_completes() -> None:
+    store = InMemoryStrategyJobStore()
+    api_app.dependency_overrides[get_runtime_settings] = lambda: Settings(
+        strategy_job_backend="memory"
+    )
+    api_app.dependency_overrides[get_runtime_strategy_job_store] = lambda: store
+    try:
+        accepted = TestClient(api_app).post(
+            "/growth-strategies/jobs/from-text",
+            json={
+                "text": (
+                    "Use $2000 to promote a fitness app in the United States "
+                    "and increase trial registrations over 14 days."
+                ),
+                "advertiser_id": "adv_fitness_text_job",
+            },
+            headers={"X-Tenant-ID": "tenant_jobs"},
+        )
+        detail = TestClient(api_app).get(
+            accepted.json()["job"]["polling_url"],
+            headers={"X-Tenant-ID": "tenant_jobs"},
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    accepted_payload = accepted.json()
+    detail_payload = detail.json()
+    job_payload = accepted_payload["job"]
+    assert accepted.status_code == 202
+    assert accepted.headers["x-tenant-id"] == "tenant_jobs"
+    assert accepted.headers["strategy-job-id"] == job_payload["job_id"]
+    assert accepted.headers["run-id"] == job_payload["run_id"]
+    assert accepted.headers["location"] == job_payload["polling_url"]
+    assert accepted_payload["intake"]["brief"]["advertiser_id"] == "adv_fitness_text_job"
+    assert accepted_payload["intake"]["brief"]["budget"] == "2000.00"
+    assert job_payload["status"] == "queued"
+    assert job_payload["advertiser_id"] == "adv_fitness_text_job"
+    assert detail.status_code == 200
+    assert detail_payload["status"] == "completed"
+    assert detail_payload["job_id"] == job_payload["job_id"]
+    assert detail_payload["request"]["brief"]["advertiser_id"] == "adv_fitness_text_job"
+    assert detail_payload["result"]["strategy"]["advertiser_id"] == "adv_fitness_text_job"
+
+
 def test_growth_strategy_job_records_failed_background_execution(monkeypatch) -> None:
     store = InMemoryStrategyJobStore()
 
