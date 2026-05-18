@@ -14,6 +14,7 @@ from ads_growth_agent.contracts import (
     AdvertiserBriefIntakeRequest,
     CampaignPerformanceEventRequest,
     GrowthStrategyRequest,
+    StrategyJobFromTextResponse,
     StrategyJobListResponse,
     StrategyJobStatus,
 )
@@ -24,6 +25,7 @@ from ads_growth_agent.outbox import process_configured_outbox
 from ads_growth_agent.persistence.knowledge_seed import seed_default_knowledge
 from ads_growth_agent.strategy import StrategyGenerationError, generate_growth_strategy
 from ads_growth_agent.strategy_job_store_factory import build_configured_strategy_job_store
+from ads_growth_agent.strategy_job_submission import enqueue_strategy_job
 from ads_growth_agent.strategy_job_worker import process_configured_strategy_jobs
 
 app = typer.Typer(
@@ -307,6 +309,71 @@ def process_strategy_jobs(
         lock_seconds=lock_seconds,
     )
     typer.echo(report.model_dump_json(indent=2))
+
+
+@app.command("submit-strategy-job")
+def submit_strategy_job(brief_file: Path = BRIEF_FILE_ARGUMENT) -> None:
+    """Queue a strategy-generation job from a structured advertiser brief."""
+    try:
+        payload = json.loads(brief_file.read_text())
+        request = _parse_strategy_request(payload)
+        settings = get_settings()
+        store = build_configured_strategy_job_store(settings)
+        job = enqueue_strategy_job(request, settings=settings, job_store=store)
+    except json.JSONDecodeError as exc:
+        typer.echo(f"Invalid JSON: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    except ValidationError as exc:
+        typer.echo(_validation_errors_json(exc), err=True)
+        raise typer.Exit(2) from exc
+
+    typer.echo(job.model_dump_json(indent=2))
+
+
+@app.command("submit-strategy-job-text")
+def submit_strategy_job_text(
+    text: str = BRIEF_TEXT_ARGUMENT,
+    advertiser_id: str | None = BRIEF_TEXT_ADVERTISER_ID_OPTION,
+    target_market: str = BRIEF_TEXT_TARGET_MARKET_OPTION,
+    currency: str = BRIEF_TEXT_CURRENCY_OPTION,
+    duration_days: int = BRIEF_TEXT_DURATION_OPTION,
+) -> None:
+    """Queue a strategy-generation job from a plain-language advertiser request."""
+    try:
+        settings = get_settings()
+        intake = parse_advertiser_brief(
+            AdvertiserBriefIntakeRequest(
+                text=text,
+                advertiser_id=advertiser_id,
+                default_target_market=target_market,
+                default_currency=currency,
+                default_duration_days=duration_days,
+            ),
+            settings=settings,
+        )
+        store = build_configured_strategy_job_store(settings)
+        job = enqueue_strategy_job(
+            GrowthStrategyRequest(brief=intake.brief),
+            settings=settings,
+            job_store=store,
+        )
+    except ValidationError as exc:
+        typer.echo(_validation_errors_json(exc), err=True)
+        raise typer.Exit(2) from exc
+
+    typer.echo(StrategyJobFromTextResponse(intake=intake, job=job).model_dump_json(indent=2))
+
+
+@app.command("get-strategy-job")
+def get_strategy_job(job_id: str = STRATEGY_JOB_ID_ARGUMENT) -> None:
+    """Fetch one strategy-generation job by ID."""
+    settings = get_settings()
+    store = build_configured_strategy_job_store(settings)
+    job = store.get_job(job_id)
+    if job is None:
+        typer.echo(f"Strategy job not found: {job_id}", err=True)
+        raise typer.Exit(1)
+    typer.echo(job.model_dump_json(indent=2))
 
 
 @app.command("list-strategy-jobs")

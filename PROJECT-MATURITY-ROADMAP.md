@@ -57,7 +57,7 @@ Completed:
 - README mapping from project features to TikTok AI Agent role themes.
 - HLD implementation-sync sections with current architecture and sequence diagrams.
 - Liveness/readiness health endpoints with configured dependency checks.
-- Async strategy job API with natural-language submission, pollable
+- Async strategy job API and CLI with natural-language submission, pollable
   memory/Postgres job state, `run_id` discovery, and v0.1 background execution.
 
 Remaining Phase 1 blockers:
@@ -150,6 +150,7 @@ Planned work:
 - Campaign performance event persistence and idempotency.
 - Async strategy job store and API.
 - Async strategy job submission from natural-language advertiser goals.
+- Async strategy job submission and detail lookup from the CLI.
 - Async strategy job discovery by `run_id` from API and CLI.
 - Optional local API key authentication boundary for product endpoints.
 

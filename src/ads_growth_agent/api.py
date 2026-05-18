@@ -2,7 +2,6 @@ import re
 import secrets
 from collections.abc import Callable
 from typing import Annotated
-from uuid import uuid4
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query, Response
 from pydantic import BaseModel, ValidationError
@@ -65,6 +64,7 @@ from ads_growth_agent.persistence.strategy_job_store import StrategyJobStore
 from ads_growth_agent.run_store_factory import build_configured_run_read_store
 from ads_growth_agent.strategy import StrategyGenerationError, generate_growth_strategy
 from ads_growth_agent.strategy_job_store_factory import build_configured_strategy_job_store
+from ads_growth_agent.strategy_job_submission import enqueue_strategy_job
 from ads_growth_agent.strategy_job_worker import execute_background_strategy_job
 
 
@@ -392,19 +392,12 @@ def _create_strategy_job(
     job_store: StrategyJobStore,
 ) -> StrategyJobAcceptedResponse:
     response.headers["X-Tenant-ID"] = settings.tenant_id
-    job_id = f"job_{uuid4().hex[:16]}"
-    strategy_id = strategy_id_for_brief(request.brief)
-    run_context = create_run_context(strategy_id=strategy_id, settings=settings)
-    job = job_store.create_queued(
+    job = enqueue_strategy_job(
         request,
-        job_id=job_id,
-        strategy_id=strategy_id,
-        run_id=run_context.run_id,
-        trace_id=run_context.trace_id,
-        max_attempts=settings.strategy_job_max_attempts,
+        settings=settings,
+        job_store=job_store,
     )
-    polling_url = f"/growth-strategies/jobs/{job.job_id}"
-    response.headers["Location"] = polling_url
+    response.headers["Location"] = job.polling_url
     response.headers["Strategy-Job-ID"] = job.job_id
     response.headers["Run-ID"] = job.run_id
     response.headers["Strategy-Job-Execution-Mode"] = settings.strategy_job_execution_mode
@@ -415,17 +408,7 @@ def _create_strategy_job(
             job_id=job.job_id,
             settings=settings,
         )
-    return StrategyJobAcceptedResponse(
-        job_id=job.job_id,
-        status=job.status,
-        strategy_id=job.strategy_id,
-        advertiser_id=job.advertiser_id,
-        objective=job.objective,
-        run_id=job.run_id,
-        trace_id=job.trace_id,
-        polling_url=polling_url,
-        created_at=job.created_at,
-    )
+    return job
 
 
 @app.get(

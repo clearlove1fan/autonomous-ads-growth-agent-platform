@@ -280,7 +280,15 @@ The default job executor uses FastAPI background tasks for local development. Se
 For a production-style worker path, set `STRATEGY_JOB_BACKEND=postgres` and `STRATEGY_JOB_EXECUTION_MODE=external`. The API will leave jobs in `queued` state, and bounded workers can claim distinct jobs with PostgreSQL row locks:
 
 ```bash
+STRATEGY_JOB_BACKEND=postgres ads-growth-agent submit-strategy-job examples/advertiser_brief.json
+
+STRATEGY_JOB_BACKEND=postgres ads-growth-agent submit-strategy-job-text \
+  "I want to use a $2000 budget to promote a fitness app in the United States and increase trial registrations over 14 days." \
+  --advertiser-id adv_fitness_001
+
 STRATEGY_JOB_BACKEND=postgres STRATEGY_JOB_EXECUTION_MODE=external ads-growth-agent process-strategy-jobs --limit 10 --worker-id worker_a
+
+STRATEGY_JOB_BACKEND=postgres ads-growth-agent get-strategy-job job_abc123
 
 STRATEGY_JOB_BACKEND=postgres ads-growth-agent list-strategy-jobs --status failed --limit 20
 

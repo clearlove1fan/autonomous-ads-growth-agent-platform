@@ -571,7 +571,7 @@ These decisions close a gap in the original RFC: v0.1 had a technical test plan,
 | Capability | Status | Evidence |
 |---|---|---|
 | FastAPI strategy generation | Implemented | `POST /growth-strategies` returns a validated `GrowthStrategyResponse` |
-| CLI demo and eval | Implemented | `ads-growth-agent demo`, `plan`, `plan-text`, `analyze-performance`, `health`, `seed-knowledge`, and `eval` commands |
+| CLI demo and eval | Implemented | `ads-growth-agent demo`, `plan`, `plan-text`, `submit-strategy-job`, `submit-strategy-job-text`, `get-strategy-job`, `process-strategy-jobs`, `list-strategy-jobs`, `analyze-performance`, `health`, `seed-knowledge`, and `eval` commands |
 | Deterministic LangGraph workflow | Implemented | Graph nodes run planner, retriever, tool_executor, critic, and finalizer |
 | Internal typed tool registry | Implemented | Unknown tools, invalid params, permission errors, and failures return structured results |
 | LiteLLM gateway | Implemented behind feature flags | Optional LLM planner/critic and structured output fallback route through LiteLLM |

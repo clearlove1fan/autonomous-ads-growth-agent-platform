@@ -12,6 +12,8 @@
   memory store, and PostgreSQL store.
 - Added natural-language async strategy job submission through
   `/growth-strategies/jobs/from-text`.
+- Added CLI commands to submit structured or natural-language strategy jobs and
+  fetch a single job by ID.
 
 ## v0.1.0 - 2026-05-18
 

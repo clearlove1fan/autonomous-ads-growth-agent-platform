@@ -560,6 +560,117 @@ def test_in_memory_strategy_job_claims_distinct_jobs_per_worker() -> None:
     assert worker_two[0].attempt_count == 1
 
 
+def test_submit_strategy_job_cli_queues_structured_job(monkeypatch, tmp_path) -> None:
+    store = InMemoryStrategyJobStore()
+    brief_file = tmp_path / "brief.json"
+    brief_file.write_text(json.dumps({"brief": _brief_payload()}))
+
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.get_settings",
+        lambda: Settings(tenant_id="tenant_cli", strategy_job_max_attempts=4),
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_strategy_job_store",
+        lambda settings: store,
+    )
+
+    result = CliRunner().invoke(cli_app, ["submit-strategy-job", str(brief_file)])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    persisted = store.get_job(payload["job_id"])
+    assert payload["status"] == "queued"
+    assert payload["advertiser_id"] == "adv_fitness_001"
+    assert payload["polling_url"] == f"/growth-strategies/jobs/{payload['job_id']}"
+    assert persisted is not None
+    assert persisted.job_id == payload["job_id"]
+    assert persisted.max_attempts == 4
+    assert persisted.request.brief.advertiser_id == "adv_fitness_001"
+
+
+def test_submit_strategy_job_text_cli_parses_and_queues_job(monkeypatch) -> None:
+    store = InMemoryStrategyJobStore()
+
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.get_settings",
+        lambda: Settings(tenant_id="tenant_cli"),
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_strategy_job_store",
+        lambda settings: store,
+    )
+
+    result = CliRunner().invoke(
+        cli_app,
+        [
+            "submit-strategy-job-text",
+            (
+                "Use $2000 to promote a fitness app in the United States "
+                "and increase trial registrations over 14 days."
+            ),
+            "--advertiser-id",
+            "adv_cli_text",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    job_payload = payload["job"]
+    persisted = store.get_job(job_payload["job_id"])
+    assert payload["intake"]["mode"] == "heuristic"
+    assert payload["intake"]["brief"]["advertiser_id"] == "adv_cli_text"
+    assert payload["intake"]["brief"]["budget"] == "2000.00"
+    assert job_payload["status"] == "queued"
+    assert job_payload["advertiser_id"] == "adv_cli_text"
+    assert persisted is not None
+    assert persisted.request.brief.advertiser_id == "adv_cli_text"
+
+
+def test_get_strategy_job_cli_returns_detail(monkeypatch) -> None:
+    store = InMemoryStrategyJobStore()
+    request = GrowthStrategyRequest.model_validate({"brief": _brief_payload()})
+    store.create_queued(
+        request,
+        job_id="job_cli_get",
+        strategy_id="strategy_cli_get",
+        run_id="run_cli_get",
+        trace_id="trace_cli_get",
+    )
+
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.get_settings",
+        lambda: Settings(tenant_id="tenant_cli"),
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_strategy_job_store",
+        lambda settings: store,
+    )
+
+    result = CliRunner().invoke(cli_app, ["get-strategy-job", "job_cli_get"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["job_id"] == "job_cli_get"
+    assert payload["run_id"] == "run_cli_get"
+    assert payload["status"] == "queued"
+
+
+def test_get_strategy_job_cli_reports_missing_job(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.get_settings",
+        lambda: Settings(tenant_id="tenant_cli"),
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_strategy_job_store",
+        lambda settings: InMemoryStrategyJobStore(),
+    )
+
+    result = CliRunner().invoke(cli_app, ["get-strategy-job", "missing_job"])
+
+    assert result.exit_code == 1
+    assert "Strategy job not found: missing_job" in result.stderr
+
+
 def test_list_strategy_jobs_cli_filters_jobs(monkeypatch) -> None:
     store = InMemoryStrategyJobStore()
     request = GrowthStrategyRequest.model_validate({"brief": _brief_payload()})
