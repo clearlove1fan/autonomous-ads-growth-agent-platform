@@ -129,7 +129,7 @@ def test_strategy_job_uses_configured_max_attempts_in_external_mode() -> None:
     assert detail_payload["next_attempt_at"] is not None
 
 
-def test_growth_strategy_jobs_list_filters_by_status_and_advertiser() -> None:
+def test_growth_strategy_jobs_list_filters_by_status_advertiser_and_run_id() -> None:
     store = InMemoryStrategyJobStore()
     settings = Settings(strategy_job_backend="memory", strategy_job_execution_mode="external")
     api_app.dependency_overrides[get_runtime_settings] = lambda: settings
@@ -154,10 +154,19 @@ def test_growth_strategy_jobs_list_filters_by_status_and_advertiser() -> None:
             },
             headers={"X-Tenant-ID": "tenant_jobs"},
         )
+        run_list_response = TestClient(api_app).get(
+            "/growth-strategies/jobs",
+            params={
+                "run_id": first.json()["run_id"],
+                "limit": "10",
+            },
+            headers={"X-Tenant-ID": "tenant_jobs"},
+        )
     finally:
         api_app.dependency_overrides.clear()
 
     payload = list_response.json()
+    run_payload = run_list_response.json()
     assert first.status_code == 202
     assert second.status_code == 202
     assert list_response.status_code == 200
@@ -166,9 +175,14 @@ def test_growth_strategy_jobs_list_filters_by_status_and_advertiser() -> None:
     assert payload["limit"] == 10
     assert payload["status"] == "queued"
     assert payload["advertiser_id"] == "adv_fitness_001"
+    assert payload["run_id"] is None
     assert payload["items"][0]["advertiser_id"] == "adv_fitness_001"
     assert payload["items"][0]["status"] == "queued"
     assert payload["items"][0]["next_attempt_at"] is not None
+    assert run_list_response.status_code == 200
+    assert run_payload["count"] == 1
+    assert run_payload["run_id"] == first.json()["run_id"]
+    assert run_payload["items"][0]["job_id"] == first.json()["job_id"]
 
 
 def test_failed_strategy_job_can_be_manually_retried_via_api(monkeypatch) -> None:
@@ -530,6 +544,8 @@ def test_list_strategy_jobs_cli_filters_jobs(monkeypatch) -> None:
             "queued",
             "--advertiser-id",
             "adv_fitness_001",
+            "--run-id",
+            "run_cli_001",
             "--limit",
             "5",
         ],
@@ -541,6 +557,7 @@ def test_list_strategy_jobs_cli_filters_jobs(monkeypatch) -> None:
     assert parsed["limit"] == 5
     assert parsed["status"] == "queued"
     assert parsed["advertiser_id"] == "adv_fitness_001"
+    assert parsed["run_id"] == "run_cli_001"
     assert parsed["items"][0]["job_id"] == "job_cli_001"
 
 

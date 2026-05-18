@@ -102,6 +102,7 @@ class StrategyJobStore(Protocol):
         *,
         status: StrategyJobStatus | None = None,
         advertiser_id: str | None = None,
+        run_id: str | None = None,
         limit: int = 50,
     ) -> list[StrategyJobDetailResponse]:
         """Return recent strategy jobs for the configured tenant."""
@@ -371,6 +372,7 @@ class InMemoryStrategyJobStore:
         *,
         status: StrategyJobStatus | None = None,
         advertiser_id: str | None = None,
+        run_id: str | None = None,
         limit: int = 50,
     ) -> list[StrategyJobDetailResponse]:
         with self._lock:
@@ -379,6 +381,7 @@ class InMemoryStrategyJobStore:
                 for job in self._jobs.values()
                 if (status is None or job.status == status)
                 and (advertiser_id is None or job.advertiser_id == advertiser_id)
+                and (run_id is None or job.run_id == run_id)
             ]
         return sorted(jobs, key=lambda job: (job.updated_at, job.job_id), reverse=True)[
             :limit
@@ -737,6 +740,7 @@ class PostgresStrategyJobStore:
         *,
         status: StrategyJobStatus | None = None,
         advertiser_id: str | None = None,
+        run_id: str | None = None,
         limit: int = 50,
     ) -> list[StrategyJobDetailResponse]:
         with _connection(self._bind) as connection:
@@ -747,6 +751,8 @@ class PostgresStrategyJobStore:
                 stmt = stmt.where(strategy_jobs.c.status == status.value)
             if advertiser_id is not None:
                 stmt = stmt.where(strategy_jobs.c.advertiser_id == advertiser_id)
+            if run_id is not None:
+                stmt = stmt.where(strategy_jobs.c.run_id == run_id)
             rows = (
                 connection.execute(
                     stmt.order_by(

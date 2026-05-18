@@ -8,6 +8,8 @@
   idempotency conflict, and performance event conflict.
 - Added optional local API key authentication for product API endpoints while
   keeping health probes public.
+- Added `run_id` filtering for async strategy job discovery in the API, CLI,
+  memory store, and PostgreSQL store.
 
 ## v0.1.0 - 2026-05-18
 

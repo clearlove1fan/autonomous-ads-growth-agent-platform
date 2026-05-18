@@ -397,16 +397,23 @@ def list_growth_strategy_jobs(
     ],
     status: Annotated[StrategyJobStatus | None, Query()] = None,
     advertiser_id: Annotated[str | None, Query(min_length=1, max_length=128)] = None,
+    run_id: Annotated[str | None, Query(min_length=1, max_length=128)] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> StrategyJobListResponse:
     response.headers["X-Tenant-ID"] = settings.tenant_id
-    jobs = job_store.list_jobs(status=status, advertiser_id=advertiser_id, limit=limit)
+    jobs = job_store.list_jobs(
+        status=status,
+        advertiser_id=advertiser_id,
+        run_id=run_id,
+        limit=limit,
+    )
     return StrategyJobListResponse(
         items=jobs,
         count=len(jobs),
         limit=limit,
         status=status,
         advertiser_id=advertiser_id,
+        run_id=run_id,
     )
 
 

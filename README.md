@@ -260,6 +260,8 @@ curl http://localhost:8000/growth-strategies/jobs/job_abc123
 
 curl "http://localhost:8000/growth-strategies/jobs?status=queued&limit=20"
 
+curl "http://localhost:8000/growth-strategies/jobs?run_id=run_abc123&limit=20"
+
 curl -X POST http://localhost:8000/growth-strategies/jobs/job_abc123/retry \
   -H 'X-Operator-ID: operator_a'
 
@@ -277,6 +279,8 @@ For a production-style worker path, set `STRATEGY_JOB_BACKEND=postgres` and `STR
 STRATEGY_JOB_BACKEND=postgres STRATEGY_JOB_EXECUTION_MODE=external ads-growth-agent process-strategy-jobs --limit 10 --worker-id worker_a
 
 STRATEGY_JOB_BACKEND=postgres ads-growth-agent list-strategy-jobs --status failed --limit 20
+
+STRATEGY_JOB_BACKEND=postgres ads-growth-agent list-strategy-jobs --run-id run_abc123 --limit 20
 
 STRATEGY_JOB_BACKEND=postgres ads-growth-agent retry-strategy-job job_abc123 --requested-by operator_a
 

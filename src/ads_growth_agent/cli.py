@@ -46,6 +46,7 @@ EVAL_FILE_ARGUMENT = typer.Argument(
 )
 STRATEGY_JOB_STATUS_OPTION = typer.Option(None, "--status")
 STRATEGY_JOB_ADVERTISER_ID_OPTION = typer.Option(None, "--advertiser-id")
+STRATEGY_JOB_RUN_ID_OPTION = typer.Option(None, "--run-id")
 STRATEGY_JOB_LIST_LIMIT_OPTION = typer.Option(50, "--limit", min=1, max=100)
 STRATEGY_JOB_ID_ARGUMENT = typer.Argument(..., help="Strategy job ID.")
 STRATEGY_JOB_REQUESTED_BY_OPTION = typer.Option(
@@ -312,18 +313,25 @@ def process_strategy_jobs(
 def list_strategy_jobs(
     status: StrategyJobStatus | None = STRATEGY_JOB_STATUS_OPTION,
     advertiser_id: str | None = STRATEGY_JOB_ADVERTISER_ID_OPTION,
+    run_id: str | None = STRATEGY_JOB_RUN_ID_OPTION,
     limit: int = STRATEGY_JOB_LIST_LIMIT_OPTION,
 ) -> None:
     """List recent strategy-generation jobs for queue inspection."""
     settings = get_settings()
     store = build_configured_strategy_job_store(settings)
-    jobs = store.list_jobs(status=status, advertiser_id=advertiser_id, limit=limit)
+    jobs = store.list_jobs(
+        status=status,
+        advertiser_id=advertiser_id,
+        run_id=run_id,
+        limit=limit,
+    )
     response = StrategyJobListResponse(
         items=jobs,
         count=len(jobs),
         limit=limit,
         status=status,
         advertiser_id=advertiser_id,
+        run_id=run_id,
     )
     typer.echo(response.model_dump_json(indent=2))
 

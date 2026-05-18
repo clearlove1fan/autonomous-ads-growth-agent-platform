@@ -132,7 +132,9 @@ def test_postgres_strategy_jobs_claim_distinct_jobs_with_skip_locked(monkeypatch
         _drop_temporary_database(test_url)
 
 
-def test_postgres_strategy_jobs_list_filters_status_and_advertiser(monkeypatch) -> None:
+def test_postgres_strategy_jobs_list_filters_status_advertiser_and_run_id(
+    monkeypatch,
+) -> None:
     base_url = _integration_database_url()
     test_url = _create_temporary_database(base_url)
     engine = sa.create_engine(test_url)
@@ -171,11 +173,13 @@ def test_postgres_strategy_jobs_list_filters_status_and_advertiser(monkeypatch) 
             limit=10,
         )
         first_advertiser_jobs = store.list_jobs(advertiser_id="adv_fitness_001", limit=10)
+        first_run_jobs = store.list_jobs(run_id=first.run_id, limit=10)
 
         assert claimed[0].job_id == first.job_id
         assert [job.job_id for job in running] == [first.job_id]
         assert [job.job_id for job in queued_for_second_advertiser] == [second.job_id]
         assert [job.job_id for job in first_advertiser_jobs] == [first.job_id]
+        assert [job.job_id for job in first_run_jobs] == [first.job_id]
     finally:
         engine.dispose()
         _drop_temporary_database(test_url)
