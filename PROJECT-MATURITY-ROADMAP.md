@@ -44,7 +44,8 @@ Completed:
 - PostgreSQL-backed knowledge store adapter with seed loader.
 - Runtime knowledge-store backend switch for memory or Postgres retrieval.
 - Optional PostgreSQL run persistence for `agent_runs` and `agent_run_steps`.
-- Optional PostgreSQL campaign draft persistence for draft-only business artifacts.
+- Optional PostgreSQL campaign draft persistence and read APIs/CLI for
+  draft-only business artifacts.
 - Optional PostgreSQL API idempotency for duplicate request replay and conflict detection.
 - Optional LangGraph memory/PostgreSQL checkpointer for durable graph state.
 - Run detail, retry, and resume APIs.
@@ -138,7 +139,7 @@ Planned work:
 - `advertiser_memories` table.
 - `retrieval_events` table.
 - `agent_runs` and `agent_run_steps` tables.
-- `campaign_drafts` persistence.
+- `campaign_drafts` persistence and tenant-scoped read APIs/CLI.
 - Seed loader for local knowledge corpus.
 - `PostgresKnowledgeStore` adapter.
 - `PostgresAgentRunStore` adapter.
@@ -159,6 +160,7 @@ Exit criteria:
 - The in-memory knowledge store can be swapped for Postgres without changing graph logic.
 - Agent runs and steps are persisted with enough detail for replay/debugging.
 - Campaign drafts are stored as drafts only.
+- Persisted campaign drafts can be retrieved for review and audit.
 - Campaign performance events are persisted, replayable, and conflict-safe.
 - Failed runs can be retried and failed/running runs can be resumed with clear semantics.
 - Strategy generation can be submitted as a pollable job with persisted status.

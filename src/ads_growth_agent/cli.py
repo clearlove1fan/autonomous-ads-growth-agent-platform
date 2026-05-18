@@ -8,10 +8,12 @@ from sqlalchemy.engine import make_url
 
 from ads_growth_agent import __version__
 from ads_growth_agent.brief_intake import parse_advertiser_brief
+from ads_growth_agent.campaign_draft_store_factory import build_configured_campaign_draft_store
 from ads_growth_agent.config import get_settings
 from ads_growth_agent.contracts import (
     AdvertiserBrief,
     AdvertiserBriefIntakeRequest,
+    CampaignDraftListResponse,
     CampaignPerformanceEventRequest,
     GrowthStrategyRequest,
     StrategyJobFromTextResponse,
@@ -61,6 +63,9 @@ STRATEGY_JOB_CANCEL_REASON_OPTION = typer.Option(
     "--reason",
     help="Human-readable cancellation reason.",
 )
+CAMPAIGN_DRAFT_ID_ARGUMENT = typer.Argument(..., help="Campaign draft ID.")
+CAMPAIGN_DRAFT_ADVERTISER_ID_OPTION = typer.Option(None, "--advertiser-id")
+CAMPAIGN_DRAFT_LIST_LIMIT_OPTION = typer.Option(50, "--limit", min=1, max=100)
 BRIEF_TEXT_ARGUMENT = typer.Argument(
     ...,
     help="Plain-language advertiser goal or campaign brief.",
@@ -292,6 +297,36 @@ def process_outbox(
     settings = get_settings()
     report = process_configured_outbox(settings, limit=limit, worker_id=worker_id)
     typer.echo(report.model_dump_json(indent=2))
+
+
+@app.command("get-campaign-draft")
+def get_campaign_draft(draft_id: str = CAMPAIGN_DRAFT_ID_ARGUMENT) -> None:
+    """Fetch one persisted campaign draft by ID."""
+    settings = get_settings()
+    store = build_configured_campaign_draft_store(settings)
+    draft = store.get_draft(draft_id)
+    if draft is None:
+        typer.echo(f"Campaign draft not found: {draft_id}", err=True)
+        raise typer.Exit(1)
+    typer.echo(draft.model_dump_json(indent=2))
+
+
+@app.command("list-campaign-drafts")
+def list_campaign_drafts(
+    advertiser_id: str | None = CAMPAIGN_DRAFT_ADVERTISER_ID_OPTION,
+    limit: int = CAMPAIGN_DRAFT_LIST_LIMIT_OPTION,
+) -> None:
+    """List recent persisted campaign drafts."""
+    settings = get_settings()
+    store = build_configured_campaign_draft_store(settings)
+    drafts = store.list_drafts(advertiser_id=advertiser_id, limit=limit)
+    response = CampaignDraftListResponse(
+        items=drafts,
+        count=len(drafts),
+        limit=limit,
+        advertiser_id=advertiser_id,
+    )
+    typer.echo(response.model_dump_json(indent=2))
 
 
 @app.command("process-strategy-jobs")

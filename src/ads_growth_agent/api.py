@@ -11,12 +11,15 @@ from ads_growth_agent.advertiser_memory_store_factory import (
     build_configured_advertiser_memory_store,
 )
 from ads_growth_agent.brief_intake import parse_advertiser_brief
+from ads_growth_agent.campaign_draft_store_factory import build_configured_campaign_draft_store
 from ads_growth_agent.config import Settings, get_settings
 from ads_growth_agent.contracts import (
     AdvertiserBrief,
     AdvertiserBriefIntakeRequest,
     AdvertiserBriefIntakeResponse,
     AgentRunDetailResponse,
+    CampaignDraftDetailResponse,
+    CampaignDraftListResponse,
     CampaignFeedbackAnalysis,
     CampaignPerformanceEventDetailResponse,
     CampaignPerformanceEventRequest,
@@ -48,6 +51,7 @@ from ads_growth_agent.persistence.advertiser_memory_store import (
     AdvertiserMemoryStore,
     AdvertiserMemoryWriteResult,
 )
+from ads_growth_agent.persistence.campaign_draft_store import CampaignDraftStore
 from ads_growth_agent.persistence.idempotency_store import (
     IdempotencyConflictError,
     IdempotencyStore,
@@ -209,6 +213,12 @@ def get_runtime_advertiser_memory_store(
     settings: Annotated[Settings, Depends(get_request_settings)],
 ) -> AdvertiserMemoryStore:
     return build_configured_advertiser_memory_store(settings)
+
+
+def get_runtime_campaign_draft_store(
+    settings: Annotated[Settings, Depends(get_request_settings)],
+) -> CampaignDraftStore:
+    return build_configured_campaign_draft_store(settings)
 
 
 def get_runtime_outbox_store(
@@ -471,6 +481,59 @@ def get_growth_strategy_job(
             },
         )
     return job
+
+
+@app.get(
+    "/campaign-drafts",
+    response_model=CampaignDraftListResponse,
+    dependencies=[Depends(require_api_auth)],
+)
+def list_campaign_drafts(
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    draft_store: Annotated[
+        CampaignDraftStore,
+        Depends(get_runtime_campaign_draft_store),
+    ],
+    advertiser_id: Annotated[str | None, Query(min_length=1, max_length=128)] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> CampaignDraftListResponse:
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    drafts = draft_store.list_drafts(advertiser_id=advertiser_id, limit=limit)
+    return CampaignDraftListResponse(
+        items=drafts,
+        count=len(drafts),
+        limit=limit,
+        advertiser_id=advertiser_id,
+    )
+
+
+@app.get(
+    "/campaign-drafts/{draft_id}",
+    response_model=CampaignDraftDetailResponse,
+    dependencies=[Depends(require_api_auth)],
+)
+def get_campaign_draft(
+    draft_id: str,
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    draft_store: Annotated[
+        CampaignDraftStore,
+        Depends(get_runtime_campaign_draft_store),
+    ],
+) -> CampaignDraftDetailResponse:
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    draft = draft_store.get_draft(draft_id)
+    if draft is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": "Campaign draft was not found for the effective tenant.",
+                "error_code": "CAMPAIGN_DRAFT_NOT_FOUND",
+                "draft_id": draft_id,
+            },
+        )
+    return draft
 
 
 @app.post(

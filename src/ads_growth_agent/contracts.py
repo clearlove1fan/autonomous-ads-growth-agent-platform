@@ -414,6 +414,39 @@ class FinalGrowthStrategy(BaseModel):
     sources: list[SourceCitation] = Field(default_factory=list)
 
 
+class CampaignDraftDetailResponse(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    draft_id: str = Field(min_length=1, max_length=160)
+    advertiser_id: str = Field(min_length=1, max_length=128)
+    objective: CampaignObjective
+    status: Literal["draft"]
+    budget: Decimal = Field(gt=0, decimal_places=2)
+    currency: str = Field(default="USD", min_length=3, max_length=3)
+    campaign_name: str | None = Field(default=None, max_length=240)
+    daily_budget: Decimal | None = Field(default=None, gt=0, decimal_places=2)
+    safety_note: str | None = Field(default=None, max_length=500)
+    created_by_run_id: str | None = Field(default=None, min_length=1, max_length=128)
+    strategy: FinalGrowthStrategy
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+
+    @field_validator("currency")
+    @classmethod
+    def normalize_currency(cls, value: str) -> str:
+        return value.upper()
+
+
+class CampaignDraftListResponse(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    items: list[CampaignDraftDetailResponse] = Field(default_factory=list)
+    count: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    advertiser_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+
 class AgentRunStepRecord(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 

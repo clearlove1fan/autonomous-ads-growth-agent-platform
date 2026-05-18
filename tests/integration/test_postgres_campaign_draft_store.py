@@ -13,6 +13,7 @@ from ads_growth_agent.campaign_draft_store_factory import (
 )
 from ads_growth_agent.config import Settings
 from ads_growth_agent.contracts import AdvertiserBrief, CampaignObjective
+from ads_growth_agent.persistence.campaign_draft_store import PostgresCampaignDraftStore
 from ads_growth_agent.strategy import generate_growth_strategy
 
 pytestmark = pytest.mark.integration
@@ -39,6 +40,9 @@ def test_strategy_generation_persists_campaign_draft(monkeypatch) -> None:
         response = generate_growth_strategy(_fitness_brief(), settings=settings)
         response_again = generate_growth_strategy(_fitness_brief(), settings=settings)
         draft_id = _draft_id(response)
+        draft_store = PostgresCampaignDraftStore(engine, tenant_id="default")
+        draft_detail = draft_store.get_draft(draft_id)
+        draft_list = draft_store.list_drafts(advertiser_id="adv_fitness_001", limit=10)
 
         assert response_again.run_metadata.run_id != response.run_metadata.run_id
         assert response_again.strategy.strategy_id == response.strategy.strategy_id
@@ -73,6 +77,11 @@ def test_strategy_generation_persists_campaign_draft(monkeypatch) -> None:
         assert len(draft["metadata"]["audience_segments"]) >= 1
         assert len(draft["metadata"]["creative_angles"]) >= 1
         assert 0 <= draft["partition_bucket"] < 128
+        assert draft_detail is not None
+        assert draft_detail.draft_id == draft_id
+        assert draft_detail.status == "draft"
+        assert draft_detail.strategy.strategy_id == response.strategy.strategy_id
+        assert [item.draft_id for item in draft_list] == [draft_id]
     finally:
         dispose_cached_campaign_draft_store_engines()
         engine.dispose()

@@ -450,6 +450,16 @@ Campaign draft persistence is separately opt-in. Set `CAMPAIGN_DRAFT_PERSISTENCE
 
 ```bash
 CAMPAIGN_DRAFT_PERSISTENCE_BACKEND=postgres ads-growth-agent plan examples/fitness_app_brief.json
+
+curl http://localhost:8000/campaign-drafts/draft_adv_fitness_001_fittrack_pro_registrations \
+  -H "X-Tenant-ID: tenant_demo"
+
+curl "http://localhost:8000/campaign-drafts?advertiser_id=adv_fitness_001&limit=20" \
+  -H "X-Tenant-ID: tenant_demo"
+
+CAMPAIGN_DRAFT_PERSISTENCE_BACKEND=postgres ads-growth-agent get-campaign-draft draft_adv_fitness_001_fittrack_pro_registrations
+
+CAMPAIGN_DRAFT_PERSISTENCE_BACKEND=postgres ads-growth-agent list-campaign-drafts --advertiser-id adv_fitness_001 --limit 20
 ```
 
 Persisted drafts keep `status=draft`, store the final strategy JSON for explainability, and include metadata such as campaign name, daily budget, audience segments, creative angles, and the safety note. No live campaign launch or spend mutation is performed.

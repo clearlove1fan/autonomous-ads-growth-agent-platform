@@ -582,7 +582,7 @@ These decisions close a gap in the original RFC: v0.1 had a technical test plan,
 | Resume API | Implemented with honest v0.1 semantics | Failed/running runs reuse the same run ID; Postgres checkpointer enables checkpoint-thread reuse |
 | Async strategy job API | Implemented with v0.1 in-process executor | Jobs are queued through `/growth-strategies/jobs` or `/growth-strategies/jobs/from-text`, executed by FastAPI background tasks, and pollable through job detail API |
 | API idempotency | Implemented as opt-in Postgres backend | Same key/body replays response; same key/different body returns conflict |
-| Campaign draft persistence | Implemented as opt-in Postgres backend | Drafts remain `status=draft` and no live spend action is executed |
+| Campaign draft persistence | Implemented as opt-in Postgres backend | Drafts remain `status=draft`, are queryable through API/CLI for review, and no live spend action is executed |
 | Campaign performance feedback loop | Implemented | Performance snapshots produce metrics, health status, matched strategy rules from `feedback_context`, recommendations, and guardrails |
 | Performance event idempotency | Implemented | Same event payload replays persisted analysis; same event ID with changed payload returns `409` |
 | Dependency readiness checks | Implemented | `/health/live` is shallow; `/health/ready` checks configured Postgres and LiteLLM dependencies |

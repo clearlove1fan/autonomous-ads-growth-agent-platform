@@ -14,6 +14,8 @@
   `/growth-strategies/jobs/from-text`.
 - Added CLI commands to submit structured or natural-language strategy jobs and
   fetch a single job by ID.
+- Added campaign draft detail/list read APIs and CLI commands for persisted
+  draft review.
 
 ## v0.1.0 - 2026-05-18
 

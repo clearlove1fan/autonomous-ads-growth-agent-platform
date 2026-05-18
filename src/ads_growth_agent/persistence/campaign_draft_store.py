@@ -6,7 +6,13 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Connection, Engine
 
-from ads_growth_agent.contracts import AdvertiserBrief, GrowthStrategyResponse, ToolResult
+from ads_growth_agent.contracts import (
+    AdvertiserBrief,
+    CampaignDraftDetailResponse,
+    FinalGrowthStrategy,
+    GrowthStrategyResponse,
+    ToolResult,
+)
 from ads_growth_agent.persistence.identity import upsert_tenant_and_advertiser
 from ads_growth_agent.persistence.partitioning import partition_bucket
 from ads_growth_agent.persistence.schema import campaign_drafts
@@ -19,10 +25,32 @@ class CampaignDraftStore(Protocol):
     def record_completed(self, brief: AdvertiserBrief, response: GrowthStrategyResponse) -> None:
         """Persist draft artifacts from a completed strategy run."""
 
+    def get_draft(self, draft_id: str) -> CampaignDraftDetailResponse | None:
+        """Return one campaign draft for the configured tenant."""
+
+    def list_drafts(
+        self,
+        *,
+        advertiser_id: str | None = None,
+        limit: int = 50,
+    ) -> list[CampaignDraftDetailResponse]:
+        """Return recent campaign drafts for the configured tenant."""
+
 
 class NoopCampaignDraftStore:
     def record_completed(self, brief: AdvertiserBrief, response: GrowthStrategyResponse) -> None:
         return None
+
+    def get_draft(self, draft_id: str) -> CampaignDraftDetailResponse | None:
+        return None
+
+    def list_drafts(
+        self,
+        *,
+        advertiser_id: str | None = None,
+        limit: int = 50,
+    ) -> list[CampaignDraftDetailResponse]:
+        return []
 
 
 class PostgresCampaignDraftStore:
@@ -44,11 +72,55 @@ class PostgresCampaignDraftStore:
             )
             _upsert_campaign_draft(connection, brief, response, draft, tenant_id=self._tenant_id)
 
+    def get_draft(self, draft_id: str) -> CampaignDraftDetailResponse | None:
+        with _connection(self._bind) as connection:
+            row = connection.execute(
+                sa.select(campaign_drafts)
+                .where(campaign_drafts.c.tenant_id == self._tenant_id)
+                .where(campaign_drafts.c.draft_id == draft_id)
+            ).mappings().one_or_none()
+        if row is None:
+            return None
+        return _row_to_campaign_draft(row)
+
+    def list_drafts(
+        self,
+        *,
+        advertiser_id: str | None = None,
+        limit: int = 50,
+    ) -> list[CampaignDraftDetailResponse]:
+        with _connection(self._bind) as connection:
+            stmt = sa.select(campaign_drafts).where(
+                campaign_drafts.c.tenant_id == self._tenant_id
+            )
+            if advertiser_id is not None:
+                stmt = stmt.where(campaign_drafts.c.advertiser_id == advertiser_id)
+            rows = (
+                connection.execute(
+                    stmt.order_by(
+                        campaign_drafts.c.updated_at.desc(),
+                        campaign_drafts.c.draft_id.desc(),
+                    ).limit(limit)
+                )
+                .mappings()
+                .all()
+            )
+        return [_row_to_campaign_draft(row) for row in rows]
+
 
 @contextmanager
 def _transaction(bind: Engine | Connection) -> Iterator[Connection]:
     if isinstance(bind, Engine):
         with bind.begin() as connection:
+            yield connection
+    else:
+        yield bind
+
+
+@contextmanager
+def _connection(bind: Engine | Connection) -> Iterator[Connection]:
+    if isinstance(bind, Engine):
+        with bind.connect() as connection:
             yield connection
     else:
         yield bind
@@ -120,3 +192,23 @@ def _upsert_campaign_draft(
         )
     )
     connection.execute(stmt)
+
+
+def _row_to_campaign_draft(row) -> CampaignDraftDetailResponse:
+    metadata = dict(row["metadata"] or {})
+    return CampaignDraftDetailResponse(
+        draft_id=row["draft_id"],
+        advertiser_id=row["advertiser_id"],
+        objective=row["objective"],
+        status=row["status"],
+        budget=row["budget"],
+        currency=row["currency"],
+        campaign_name=metadata.get("campaign_name"),
+        daily_budget=metadata.get("daily_budget"),
+        safety_note=metadata.get("safety_note"),
+        created_by_run_id=row["created_by_run_id"],
+        strategy=FinalGrowthStrategy.model_validate(row["strategy_json"]),
+        metadata=metadata,
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )

@@ -6,6 +6,8 @@ from ads_growth_agent.config import Settings
 
 PROTECTED_PATHS = {
     "/advertiser-briefs/parse",
+    "/campaign-drafts",
+    "/campaign-drafts/{draft_id}",
     "/campaign-events/performance",
     "/campaign-events/performance/{event_id}",
     "/growth-strategies",
