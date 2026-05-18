@@ -1,4 +1,5 @@
 import re
+import secrets
 from collections.abc import Callable
 from typing import Annotated
 from uuid import uuid4
@@ -89,6 +90,77 @@ def get_runtime_settings() -> Settings:
 
 def get_runtime_readiness_checker() -> Callable[[Settings], ReadinessResponse]:
     return check_readiness
+
+
+def require_api_auth(
+    settings: Annotated[Settings, Depends(get_runtime_settings)],
+    x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
+    authorization: Annotated[str | None, Header()] = None,
+) -> None:
+    if settings.auth_mode == "none":
+        return
+
+    if settings.auth_mode == "api_key":
+        expected_key = settings.ads_growth_api_key
+        if not expected_key:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "message": (
+                        "API key auth is enabled but ADS_GROWTH_API_KEY is not configured."
+                    ),
+                    "error_code": "AUTH_NOT_CONFIGURED",
+                },
+            )
+
+        presented_keys = _presented_api_keys(x_api_key=x_api_key, authorization=authorization)
+        if not presented_keys:
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "message": "API authentication is required.",
+                    "error_code": "AUTH_REQUIRED",
+                },
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        if not any(
+            secrets.compare_digest(presented_key, expected_key)
+            for presented_key in presented_keys
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "message": "API credentials are invalid.",
+                    "error_code": "AUTH_FORBIDDEN",
+                },
+            )
+        return
+
+    raise HTTPException(
+        status_code=503,
+        detail={
+            "message": "Configured auth mode is not supported.",
+            "error_code": "AUTH_MODE_UNSUPPORTED",
+        },
+    )
+
+
+def _presented_api_keys(
+    *,
+    x_api_key: str | None,
+    authorization: str | None,
+) -> list[str]:
+    keys: list[str] = []
+    if x_api_key:
+        normalized = x_api_key.strip()
+        if normalized:
+            keys.append(normalized)
+    if authorization:
+        scheme, _, token = authorization.strip().partition(" ")
+        if scheme.lower() == "bearer" and token.strip():
+            keys.append(token.strip())
+    return keys
 
 
 def get_request_settings(
@@ -188,7 +260,11 @@ def _health_response(settings: Settings) -> HealthResponse:
     )
 
 
-@app.post("/growth-strategies", response_model=GrowthStrategyResponse)
+@app.post(
+    "/growth-strategies",
+    response_model=GrowthStrategyResponse,
+    dependencies=[Depends(require_api_auth)],
+)
 def create_growth_strategy(
     request: GrowthStrategyRequest,
     response: Response,
@@ -213,7 +289,11 @@ def create_growth_strategy(
     return _generate_growth_strategy_response(request, settings=settings)
 
 
-@app.post("/advertiser-briefs/parse", response_model=AdvertiserBriefIntakeResponse)
+@app.post(
+    "/advertiser-briefs/parse",
+    response_model=AdvertiserBriefIntakeResponse,
+    dependencies=[Depends(require_api_auth)],
+)
 def parse_advertiser_brief_text(
     request: AdvertiserBriefIntakeRequest,
     response: Response,
@@ -223,7 +303,11 @@ def parse_advertiser_brief_text(
     return parse_advertiser_brief(request, settings=settings)
 
 
-@app.post("/growth-strategies/from-text", response_model=GrowthStrategyFromTextResponse)
+@app.post(
+    "/growth-strategies/from-text",
+    response_model=GrowthStrategyFromTextResponse,
+    dependencies=[Depends(require_api_auth)],
+)
 def create_growth_strategy_from_text(
     request: GrowthStrategyFromTextRequest,
     response: Response,
@@ -250,6 +334,7 @@ def create_growth_strategy_from_text(
     "/growth-strategies/jobs",
     response_model=StrategyJobAcceptedResponse,
     status_code=202,
+    dependencies=[Depends(require_api_auth)],
 )
 def create_growth_strategy_job(
     request: GrowthStrategyRequest,
@@ -298,7 +383,11 @@ def create_growth_strategy_job(
     )
 
 
-@app.get("/growth-strategies/jobs", response_model=StrategyJobListResponse)
+@app.get(
+    "/growth-strategies/jobs",
+    response_model=StrategyJobListResponse,
+    dependencies=[Depends(require_api_auth)],
+)
 def list_growth_strategy_jobs(
     response: Response,
     settings: Annotated[Settings, Depends(get_request_settings)],
@@ -324,6 +413,7 @@ def list_growth_strategy_jobs(
 @app.get(
     "/growth-strategies/jobs/{job_id}",
     response_model=StrategyJobDetailResponse,
+    dependencies=[Depends(require_api_auth)],
 )
 def get_growth_strategy_job(
     job_id: str,
@@ -351,6 +441,7 @@ def get_growth_strategy_job(
 @app.post(
     "/growth-strategies/jobs/{job_id}/retry",
     response_model=StrategyJobDetailResponse,
+    dependencies=[Depends(require_api_auth)],
 )
 def retry_growth_strategy_job(
     job_id: str,
@@ -405,6 +496,7 @@ def retry_growth_strategy_job(
 @app.post(
     "/growth-strategies/jobs/{job_id}/cancel",
     response_model=StrategyJobDetailResponse,
+    dependencies=[Depends(require_api_auth)],
 )
 def cancel_growth_strategy_job(
     job_id: str,
@@ -464,7 +556,11 @@ def _operator_id_or_default(operator_id: str | None, *, default: str) -> str:
     return normalized or default
 
 
-@app.post("/campaign-events/performance", response_model=CampaignPerformanceEventResponse)
+@app.post(
+    "/campaign-events/performance",
+    response_model=CampaignPerformanceEventResponse,
+    dependencies=[Depends(require_api_auth)],
+)
 def ingest_campaign_performance_event(
     request: CampaignPerformanceEventRequest,
     response: Response,
@@ -544,6 +640,7 @@ def ingest_campaign_performance_event(
 @app.get(
     "/campaign-events/performance/{event_id}",
     response_model=CampaignPerformanceEventDetailResponse,
+    dependencies=[Depends(require_api_auth)],
 )
 def get_campaign_performance_event(
     event_id: str,
@@ -609,7 +706,11 @@ def _set_advertiser_memory_headers(
         response.headers["Advertiser-Memory-Source-ID"] = result.source_id
 
 
-@app.get("/runs/{run_id}", response_model=AgentRunDetailResponse)
+@app.get(
+    "/runs/{run_id}",
+    response_model=AgentRunDetailResponse,
+    dependencies=[Depends(require_api_auth)],
+)
 def get_agent_run(
     run_id: str,
     response: Response,
@@ -633,7 +734,11 @@ def get_agent_run(
     return run
 
 
-@app.post("/runs/{run_id}/resume", response_model=GrowthStrategyResponse)
+@app.post(
+    "/runs/{run_id}/resume",
+    response_model=GrowthStrategyResponse,
+    dependencies=[Depends(require_api_auth)],
+)
 def resume_agent_run(
     run_id: str,
     response: Response,
@@ -696,7 +801,11 @@ def resume_agent_run(
     )
 
 
-@app.post("/runs/{run_id}/retry", response_model=GrowthStrategyResponse)
+@app.post(
+    "/runs/{run_id}/retry",
+    response_model=GrowthStrategyResponse,
+    dependencies=[Depends(require_api_auth)],
+)
 def retry_agent_run(
     run_id: str,
     request: GrowthStrategyRequest,

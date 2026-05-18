@@ -9,6 +9,8 @@ class Settings(BaseSettings):
 
     ads_growth_env: str = "local"
     ads_growth_log_level: str = "INFO"
+    auth_mode: Literal["none", "api_key"] = "none"
+    ads_growth_api_key: str | None = None
     tenant_id: str = "default"
     database_url: str = "postgresql+psycopg://ads_growth:ads_growth@localhost:5432/ads_growth"
     knowledge_store_backend: Literal["memory", "postgres"] = "memory"

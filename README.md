@@ -222,6 +222,33 @@ the product works without external API keys. Set `USE_LLM_BRIEF_INTAKE=true` to
 use LiteLLM-backed structured extraction; if extraction fails, the system falls
 back to heuristic parsing and records extraction errors in the intake response.
 
+Optional local API authentication is disabled by default. To require an API key
+for product endpoints while keeping health probes public, set:
+
+```bash
+AUTH_MODE=api_key
+ADS_GROWTH_API_KEY=local-demo-secret
+```
+
+Then call protected endpoints with either header:
+
+```bash
+curl -X POST http://localhost:8000/advertiser-briefs/parse \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: local-demo-secret" \
+  -d '{"text":"Use $2000 to promote a fitness app and improve registrations.","advertiser_id":"adv_fitness_001"}'
+
+curl -X POST http://localhost:8000/advertiser-briefs/parse \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer local-demo-secret" \
+  -d '{"text":"Use $2000 to promote a fitness app and improve registrations.","advertiser_id":"adv_fitness_001"}'
+```
+
+When enabled, missing credentials return `AUTH_REQUIRED`, invalid credentials
+return `AUTH_FORBIDDEN`, and missing server-side key configuration returns
+`AUTH_NOT_CONFIGURED`. This is a local auth boundary for v0.1/v0.2 hardening,
+not a complete production identity, RBAC, or per-tenant authorization system.
+
 Submit a strategy generation job and poll it:
 
 ```bash

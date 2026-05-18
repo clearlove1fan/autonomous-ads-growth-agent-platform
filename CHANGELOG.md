@@ -6,6 +6,8 @@
   fitness app scenario.
 - Added curated negative demo coverage for invalid LLM planner safe failure,
   idempotency conflict, and performance event conflict.
+- Added optional local API key authentication for product API endpoints while
+  keeping health probes public.
 
 ## v0.1.0 - 2026-05-18
 

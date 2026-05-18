@@ -240,6 +240,7 @@ The product aims to create an autonomous agent workflow that can reason over adv
 | NFR-15 | Sensitive input should not be exposed unnecessarily | P1 | Logs avoid raw secrets or credentials |
 | NFR-16 | Creative recommendations should include policy risk checks | P0 | Policy-sensitive claims are flagged |
 | NFR-17 | Autonomous actions should require confirmation in v0.1 | P0 | System creates drafts and recommendations, not live campaigns |
+| NFR-30 | Product APIs should support an explicit local authentication boundary | P1 | Optional API key auth protects product endpoints while health probes remain public |
 
 ### 9.6 Observability and Operability
 
@@ -591,7 +592,8 @@ These decisions close a gap in the original RFC: v0.1 had a technical test plan,
 | Deterministic E2E CI smoke gate | Implemented | CI has a dedicated `e2e-smoke` job and local tests cover API, async job, CLI, and strategy-to-feedback smoke paths |
 | Native table partitioning | Not implemented | Schema is partition-aware, but local migrations do not create native partitions |
 | Replica-aware query routing | Not implemented | Replica strategy is documented but runtime routing still uses one database URL |
-| Full production auth and rate limits | Not implemented | Tenant context is caller-supplied; no authentication/authorization boundary yet |
+| Local API key auth boundary | Implemented | `AUTH_MODE=api_key` protects product API endpoints through `X-API-Key` or bearer token while health probes remain public |
+| Full production auth, RBAC, and rate limits | Not implemented | Tenant context is still caller-supplied; JWT validation, identity-provider integration, and per-tenant authorization remain future work |
 | External async queue / outbox / DLQ | Not implemented | v0.1 has pollable jobs but uses an in-process executor rather than a durable worker queue |
 
 ### 13.2 Out-of-Scope Until Later Versions
@@ -674,7 +676,8 @@ protection, which must be configured as a repository setting.
 | Structured output degrades across providers | Invalid tool intents or final outputs | Use Validate + Repair and safe failure after bounded retries |
 | PostgreSQL checkpoint contention under high concurrency | Slower workflow execution | Accept for v0.1, monitor query latency, and revisit partitioning or dedicated checkpoint storage if needed |
 | LiteLLM Proxy adds another service | More local setup and runtime failure modes | Use Docker Compose health checks and clear fallback/error handling |
-| Caller-supplied tenant header is spoofable | Incorrect tenant isolation in any externally exposed environment | Treat `X-Tenant-ID` as local/demo only until real auth maps callers to tenants |
+| Caller-supplied tenant header is spoofable | Incorrect tenant isolation in any externally exposed environment | Treat `X-Tenant-ID` as local/demo only until production auth maps callers to tenants |
+| Local API key auth is mistaken for production IAM | Overstated security posture | Document it as a first auth boundary only; add JWT validation, RBAC, and per-tenant authorization before external exposure |
 | Synchronous workflow ties API latency to graph execution | Slow or failed dependencies can hold request workers | Add async job queue, timeout budgets, and worker separation before production launch |
 | In-process background jobs can be lost on process crash | Accepted local v0.1 limitation; not production durable | Persist job state and replace executor with an external queue/worker before production launch |
 | Partition-aware schema is mistaken for implemented partitioning | Overstated scalability claims | Document native partitioning and replica routing as future production hardening work |
@@ -692,7 +695,7 @@ protection, which must be configured as a repository setting.
 | Architecture sign-off | Graph architecture, agent boundaries, and tool interfaces approved | Implemented for v0.1 skeleton; review pending |
 | Technology decision sign-off | Technology choices and ADR appendix reviewed | ADR-001 through ADR-010 drafted; review pending |
 | Data sign-off | RAG documents and mock datasets reviewed | Seed corpus and eval cases exist; data review pending |
-| Safety sign-off | Guardrails for policy risk and autonomous actions approved | Draft-only guardrails implemented; formal safety review pending |
+| Safety sign-off | Guardrails for policy risk and autonomous actions approved | Draft-only guardrails and optional local API key boundary implemented; formal safety review pending |
 | Eval sign-off | Minimum eval dataset and pass thresholds defined | Local eval suite covers planner orchestration, retrieval grounding, critic quality, revision behavior, budget, tool use, safety, and observability; broader dataset review pending |
 | Observability sign-off | LangSmith traces and error metadata verified | Run metadata and JSON logs implemented; metrics/dashboard pending |
 | Local stack readiness | Docker Compose starts FastAPI, PostgreSQL with pgvector, and LiteLLM Proxy | Implemented; local environment verification required per machine |

@@ -8,10 +8,10 @@ This roadmap defines the order in which the Autonomous Ads Growth Agent Platform
 |---|---:|---:|---|
 | Interview-quality technical project | 90-95% | 85-90% | Phase 1 MVP complete for v0.1 |
 | Engineering workflow and quality gates | 80%+ | 75%+ | CI split, lock, release notes, and policy docs added; branch protection blocked by GitHub plan |
-| Production architecture skeleton | 55-60% | 75-80% | In progress |
+| Production architecture skeleton | 60-65% | 75-80% | In progress |
 | True production-ready system | 15-20% | 60%+ for this repo | Early |
 
-These numbers are intentionally conservative. The project now has a credible agent-runtime and production-skeleton foundation, including persistence, tenant scoping, retry/resume, checkpointing, async strategy jobs, event feedback, dependency locking, explicit CI quality gates, a deterministic one-command MVP demo, and local agent evals for planner orchestration, retrieval grounding, critic quality, and revision behavior. Phase 1 is complete for the v0.1 MVP, while branch protection remains a GitHub repository setting tracked in Phase 1.5 and is currently blocked for the private repo by GitHub plan limits. The project should still not claim production-grade availability, security, or distributed-system readiness yet.
+These numbers are intentionally conservative. The project now has a credible agent-runtime and production-skeleton foundation, including persistence, tenant scoping, retry/resume, checkpointing, async strategy jobs, event feedback, dependency locking, explicit CI quality gates, a deterministic one-command MVP demo, local agent evals, curated positive/negative demo verifiers, and an optional local API key boundary. Phase 1 is complete for the v0.1 MVP, while branch protection remains a GitHub repository setting tracked in Phase 1.5 and is currently blocked for the private repo by GitHub plan limits. The project should still not claim production-grade availability, full security, or distributed-system readiness yet.
 
 ## Phase 1: Interview-Quality Technical Project
 
@@ -148,6 +148,7 @@ Planned work:
 - Run detail, retry, and resume APIs.
 - Campaign performance event persistence and idempotency.
 - Async strategy job store and API.
+- Optional local API key authentication boundary for product endpoints.
 
 Exit criteria:
 
@@ -232,7 +233,7 @@ Exit criteria:
 
 1. Configure branch protection for `main` after GitHub Pro is enabled or the repository is made public.
 2. Replace in-process background jobs with a durable worker queue design and outbox/DLQ plan.
-3. Add auth boundary design and first local API key/JWT guard.
+3. Add production identity mapping, JWT validation, RBAC, and per-tenant authorization.
 4. Add production metrics endpoint for run latency, validation failures, tool failures, and feedback events.
 5. Add timeout budgets and circuit-breaker behavior for LLM, retrieval, and tool execution.
 6. Implement native partition migrations and replica-aware read routing as a later production-hardening slice.
