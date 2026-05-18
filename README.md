@@ -89,6 +89,16 @@ Run the Phase 1 MVP demo without external model keys:
 ads-growth-agent demo
 ```
 
+Run the curated demo verifier when you want a short, reviewer-friendly
+acceptance summary instead of the full raw JSON:
+
+```bash
+python scripts/verify_phase1_demo.py
+```
+
+Expected output is documented in
+[examples/phase1_demo_expected_output.md](./examples/phase1_demo_expected_output.md).
+
 The demo executes the complete deterministic product loop:
 
 ```text

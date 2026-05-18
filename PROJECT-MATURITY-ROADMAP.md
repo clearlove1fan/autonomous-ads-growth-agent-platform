@@ -96,12 +96,12 @@ Current state:
 - `CHANGELOG.md` records the Phase 1 MVP completion scope.
 - Branch protection and required PR approval are documented but blocked by GitHub private-repository plan limits unless GitHub Pro is enabled or the repository is made public.
 - Deterministic product smoke coverage exists for direct API, async job, and CLI boundaries.
-- Release tagging and changelog expectations are documented, with `CHANGELOG.md` prepared for `v0.1.0`.
+- `v0.1.0` tag and GitHub Release are published for the Phase 1 MVP demo milestone.
+- Curated demo verification is available through `python scripts/verify_phase1_demo.py`.
 
 Planned work:
 
 - Configure GitHub branch protection for `main` after GitHub Pro is enabled or the repository is made public.
-- Cut and publish a `v0.1.0` demo tag after the release-hygiene commit passes CI.
 - Keep dependency lock refreshes deliberate and tied to full verification.
 
 Exit criteria:
@@ -229,12 +229,10 @@ Exit criteria:
 
 ## Next Recommended Backlog
 
-1. Cut and publish a `v0.1.0` demo tag after final release-hygiene CI confirmation.
-2. Configure branch protection for `main` after GitHub Pro is enabled or the repository is made public.
-3. Add curated demo script and expected output excerpts for the fitness app scenario.
-4. Add negative demo cases for safe failure, idempotency conflict, and event conflict.
-5. Replace in-process background jobs with a durable worker queue design and outbox/DLQ plan.
-6. Add auth boundary design and first local API key/JWT guard.
-7. Add production metrics endpoint for run latency, validation failures, tool failures, and feedback events.
-8. Add timeout budgets and circuit-breaker behavior for LLM, retrieval, and tool execution.
-9. Implement native partition migrations and replica-aware read routing as a later production-hardening slice.
+1. Configure branch protection for `main` after GitHub Pro is enabled or the repository is made public.
+2. Add negative demo cases for safe failure, idempotency conflict, and event conflict.
+3. Replace in-process background jobs with a durable worker queue design and outbox/DLQ plan.
+4. Add auth boundary design and first local API key/JWT guard.
+5. Add production metrics endpoint for run latency, validation failures, tool failures, and feedback events.
+6. Add timeout budgets and circuit-breaker behavior for LLM, retrieval, and tool execution.
+7. Implement native partition migrations and replica-aware read routing as a later production-hardening slice.

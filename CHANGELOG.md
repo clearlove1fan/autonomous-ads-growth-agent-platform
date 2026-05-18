@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-- No unreleased changes.
+- Added a curated Phase 1 demo verifier and expected-output excerpt for the
+  fitness app scenario.
 
 ## v0.1.0 - 2026-05-18
 

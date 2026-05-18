@@ -696,11 +696,11 @@ protection, which must be configured as a repository setting.
 | Eval sign-off | Minimum eval dataset and pass thresholds defined | Local eval suite covers planner orchestration, retrieval grounding, critic quality, revision behavior, budget, tool use, safety, and observability; broader dataset review pending |
 | Observability sign-off | LangSmith traces and error metadata verified | Run metadata and JSON logs implemented; metrics/dashboard pending |
 | Local stack readiness | Docker Compose starts FastAPI, PostgreSQL with pgvector, and LiteLLM Proxy | Implemented; local environment verification required per machine |
-| Demo readiness | End-to-end workflow runs with seeded sample advertiser cases | Ready for deterministic local MVP demo; screenshots/log excerpts remain optional |
+| Demo readiness | End-to-end workflow runs with seeded sample advertiser cases | Ready for deterministic local MVP demo; curated verifier and expected output excerpt are available |
 | CI/CD readiness | Automated CI runs lint, unit tests, and deterministic end-to-end smoke checks | Implemented in GitHub Actions; branch protection pending |
 | Dependency lock readiness | Reproducible lock file is committed and used by CI/demo install instructions | Implemented |
 | Branch protection readiness | `main` requires PR review and passing checks before merge | Blocked by GitHub private-repository plan limits; documented policy is ready to apply |
-| Release readiness | Version tag, changelog entry, and release verification notes exist for each demo/release milestone | `v0.1.0` changelog and release verification notes prepared; tag pending after release-hygiene CI |
+| Release readiness | Version tag, changelog entry, and release verification notes exist for each demo/release milestone | `v0.1.0` tag and GitHub Release published after passing release-hygiene CI |
 
 ## 17. Open Questions
 
