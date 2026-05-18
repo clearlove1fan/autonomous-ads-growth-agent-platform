@@ -4,6 +4,8 @@
 
 - Added a curated Phase 1 demo verifier and expected-output excerpt for the
   fitness app scenario.
+- Added curated negative demo coverage for invalid LLM planner safe failure,
+  idempotency conflict, and performance event conflict.
 
 ## v0.1.0 - 2026-05-18
 

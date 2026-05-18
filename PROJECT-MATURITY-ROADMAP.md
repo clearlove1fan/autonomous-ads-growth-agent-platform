@@ -98,6 +98,7 @@ Current state:
 - Deterministic product smoke coverage exists for direct API, async job, and CLI boundaries.
 - `v0.1.0` tag and GitHub Release are published for the Phase 1 MVP demo milestone.
 - Curated demo verification is available through `python scripts/verify_phase1_demo.py`.
+- Curated negative demo verification is available through `python scripts/verify_negative_demos.py`.
 
 Planned work:
 
@@ -230,9 +231,8 @@ Exit criteria:
 ## Next Recommended Backlog
 
 1. Configure branch protection for `main` after GitHub Pro is enabled or the repository is made public.
-2. Add negative demo cases for safe failure, idempotency conflict, and event conflict.
-3. Replace in-process background jobs with a durable worker queue design and outbox/DLQ plan.
-4. Add auth boundary design and first local API key/JWT guard.
-5. Add production metrics endpoint for run latency, validation failures, tool failures, and feedback events.
-6. Add timeout budgets and circuit-breaker behavior for LLM, retrieval, and tool execution.
-7. Implement native partition migrations and replica-aware read routing as a later production-hardening slice.
+2. Replace in-process background jobs with a durable worker queue design and outbox/DLQ plan.
+3. Add auth boundary design and first local API key/JWT guard.
+4. Add production metrics endpoint for run latency, validation failures, tool failures, and feedback events.
+5. Add timeout budgets and circuit-breaker behavior for LLM, retrieval, and tool execution.
+6. Implement native partition migrations and replica-aware read routing as a later production-hardening slice.

@@ -99,6 +99,15 @@ python scripts/verify_phase1_demo.py
 Expected output is documented in
 [examples/phase1_demo_expected_output.md](./examples/phase1_demo_expected_output.md).
 
+Run curated negative demos for high-risk failure paths:
+
+```bash
+python scripts/verify_negative_demos.py
+```
+
+Expected output is documented in
+[examples/negative_demo_expected_output.md](./examples/negative_demo_expected_output.md).
+
 The demo executes the complete deterministic product loop:
 
 ```text
