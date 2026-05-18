@@ -50,6 +50,7 @@ The MVP is complete when a single advertiser can:
 - [x] Add or update eval cases for planner, retrieval grounding, critic, and revision behavior.
 - [x] Tighten README around the Phase 1 MVP path.
 - [x] Add TikTok AI Agent role mapping section.
+- [x] Sync README, roadmap, RFC/HLD, and changelog so Phase 1 is recorded as complete for the v0.1 MVP.
 - [x] Run focused tests.
 - [x] Commit and push the MVP slice.
 
@@ -84,6 +85,17 @@ The MVP is complete when a single advertiser can:
   Result: Passed.
 - [x] `git diff --check`
   Result: Passed.
+- [x] Final Phase 1 documentation pass
+  Result: README, roadmap, RFC/HLD, changelog, and this ExecPlan now record Phase 1 MVP completion and move branch protection to Phase 1.5.
+- [x] Final local verification for completion pass:
+  - `.venv/bin/pytest`
+    Result: 174 passed, 18 skipped.
+  - `.venv/bin/ruff check .`
+    Result: Passed.
+  - `git diff --check`
+    Result: Passed.
+  - `.venv/bin/ads-growth-agent demo`
+    Result: Passed; deterministic Phase 1 product loop still runs without external model keys.
 
 ## Final Status
 
@@ -92,4 +104,6 @@ The Phase 1 MVP product-package, strategy-linked feedback, direct
 negative coverage slices are implemented and verified. The eval suite now
 explicitly scores planner orchestration, retrieval grounding, critic quality
 gate, and revision behavior. README, roadmap, RFC status, and role mapping have
-been synced. The slice is ready to commit and push.
+been synced. Phase 1 is complete for the v0.1 functional MVP. The next work is
+Phase 1.5 repository governance and release hygiene, starting with GitHub
+branch protection and the eventual `v0.1.0` demo tag.

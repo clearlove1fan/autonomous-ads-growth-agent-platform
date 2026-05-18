@@ -38,7 +38,7 @@
 
 ### 1.3 Engineering Change Workflow
 
-This workflow is a planned v0.1 engineering standard. A basic GitHub Actions workflow exists, but branch protection, dependency locking, release gates, and true end-to-end automation still need to be completed before launch readiness is claimed.
+This workflow is the v0.1 engineering standard. GitHub Actions quality gates, dependency locking, deterministic end-to-end smoke coverage, and release-readiness checks are implemented in the repository. Branch protection remains a GitHub repository setting and must be configured before a collaborative launch readiness claim.
 
 | Item | Standard |
 |---|---|
@@ -690,17 +690,17 @@ protection, which must be configured as a repository setting.
 |---|---|---|
 | Product scope sign-off | Goals, non-goals, and v0.1 scope approved | Drafted, not formally reviewed |
 | Architecture sign-off | Graph architecture, agent boundaries, and tool interfaces approved | Implemented for v0.1 skeleton; review pending |
-| Technology decision sign-off | Technology choices and ADR appendix reviewed | ADR-001 through ADR-007 drafted; review pending |
+| Technology decision sign-off | Technology choices and ADR appendix reviewed | ADR-001 through ADR-010 drafted; review pending |
 | Data sign-off | RAG documents and mock datasets reviewed | Seed corpus and eval cases exist; data review pending |
 | Safety sign-off | Guardrails for policy risk and autonomous actions approved | Draft-only guardrails implemented; formal safety review pending |
 | Eval sign-off | Minimum eval dataset and pass thresholds defined | Local eval suite covers planner orchestration, retrieval grounding, critic quality, revision behavior, budget, tool use, safety, and observability; broader dataset review pending |
 | Observability sign-off | LangSmith traces and error metadata verified | Run metadata and JSON logs implemented; metrics/dashboard pending |
 | Local stack readiness | Docker Compose starts FastAPI, PostgreSQL with pgvector, and LiteLLM Proxy | Implemented; local environment verification required per machine |
-| Demo readiness | End-to-end workflow runs with seeded sample advertiser cases | Deterministic CLI demo implemented with expected output shape documented; screenshots/log excerpts remain optional |
+| Demo readiness | End-to-end workflow runs with seeded sample advertiser cases | Ready for deterministic local MVP demo; screenshots/log excerpts remain optional |
 | CI/CD readiness | Automated CI runs lint, unit tests, and deterministic end-to-end smoke checks | Implemented in GitHub Actions; branch protection pending |
 | Dependency lock readiness | Reproducible lock file is committed and used by CI/demo install instructions | Implemented |
 | Branch protection readiness | `main` requires PR review and passing checks before merge | Planned; repository protection not verified |
-| Release readiness | Version tag, changelog entry, and release verification notes exist for each demo/release milestone | Planned; not implemented |
+| Release readiness | Version tag, changelog entry, and release verification notes exist for each demo/release milestone | Changelog entry started; version tag and final release verification pending |
 
 ## 17. Open Questions
 
@@ -798,11 +798,11 @@ The first version should prioritize a complete, traceable, and recoverable end-t
 
 | Field | Value |
 |---|---|
-| Status | Accepted for v0.1 plan; implementation partially complete |
+| Status | Accepted and implemented for v0.1 workflow; repository enforcement pending |
 | Decision | Use GitHub Actions for PR and `main` branch quality gates |
 | Context | The original RFC listed test areas but did not define automated execution or merge-blocking checks |
 | Rationale | GitHub Actions is the simplest CI path for a GitHub-hosted project and can run deterministic checks without external model keys |
-| Consequences | The existing workflow must be expanded with explicit E2E smoke and release/integration gates before launch readiness is claimed |
+| Consequences | Repository enforcement still depends on configuring branch protection and required checks in GitHub settings |
 
 ### ADR-009: Reproducible Dependency Locking
 
@@ -846,3 +846,4 @@ The first version should prioritize a complete, traceable, and recoverable end-t
 | 2026-05-18 | Add one-command deterministic Phase 1 demo | `ads-growth-agent demo` runs natural-language intake, strategy generation, feedback context reuse, and performance feedback analysis without external model keys | Accepted |
 | 2026-05-18 | Add strategy-linked feedback context | Final strategies expose `feedback_context` so campaign events can match optimization rules back to the original plan | Accepted |
 | 2026-05-18 | Expand local agent eval coverage | Eval suite now scores planner orchestration, retrieval grounding, critic quality gate, revision behavior, strategy completeness, safety, and observability | Accepted |
+| 2026-05-18 | Complete Phase 1 MVP readiness pass | README, RFC/HLD, roadmap, eval scope, and changelog now describe the implemented deterministic MVP path; branch protection remains a Phase 1.5 external repository setting | Accepted |

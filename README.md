@@ -6,7 +6,7 @@ The platform turns advertiser goals into structured campaign strategies across a
 
 ## Current Status
 
-This repository is in v0.1 Phase 1. The current milestone is a deterministic local MVP workflow:
+v0.1 Phase 1 MVP is complete as of 2026-05-18. The current milestone is a deterministic local MVP workflow:
 
 1. Accept an advertiser growth goal through FastAPI or CLI.
 2. Convert the request into a structured advertiser brief.
@@ -16,6 +16,8 @@ This repository is in v0.1 Phase 1. The current milestone is a deterministic loc
 6. Run a critic pass.
 7. Return a validated campaign growth strategy with a reusable feedback context.
 8. Analyze a campaign performance event and return draft-only optimization recommendations.
+
+Phase 1 is intentionally a functional MVP, not a production launch claim. A single advertiser can run the core product loop locally through CLI or FastAPI without external model keys. The system still does not execute live ad spend, enforce real authentication, provide production SLO dashboards, or require GitHub branch protection in repository settings.
 
 ## Architecture Direction
 

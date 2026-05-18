@@ -6,12 +6,12 @@ This roadmap defines the order in which the Autonomous Ads Growth Agent Platform
 
 | Dimension | Current Estimate | Target Before Moving On | Status |
 |---|---:|---:|---|
-| Interview-quality technical project | 85-90% | 85-90% | MVP functionality implemented; final docs and external settings remain |
-| Engineering workflow and quality gates | 70-75% | 75%+ | CI split and lock added; branch protection still external |
+| Interview-quality technical project | 90-95% | 85-90% | Phase 1 MVP complete for v0.1 |
+| Engineering workflow and quality gates | 75%+ | 75%+ | CI split, lock, release notes, and policy docs added; branch protection still external |
 | Production architecture skeleton | 55-60% | 75-80% | In progress |
 | True production-ready system | 15-20% | 60%+ for this repo | Early |
 
-These numbers are intentionally conservative. The project now has a credible agent-runtime and production-skeleton foundation, including persistence, tenant scoping, retry/resume, checkpointing, async strategy jobs, event feedback, dependency locking, explicit CI quality gates, a deterministic one-command MVP demo, and local agent evals for planner orchestration, retrieval grounding, critic quality, and revision behavior. Branch protection remains a GitHub repository setting, and the project should still not claim production-grade availability, security, or distributed-system readiness yet.
+These numbers are intentionally conservative. The project now has a credible agent-runtime and production-skeleton foundation, including persistence, tenant scoping, retry/resume, checkpointing, async strategy jobs, event feedback, dependency locking, explicit CI quality gates, a deterministic one-command MVP demo, and local agent evals for planner orchestration, retrieval grounding, critic quality, and revision behavior. Phase 1 is complete for the v0.1 MVP, while branch protection remains a GitHub repository setting tracked in Phase 1.5. The project should still not claim production-grade availability, security, or distributed-system readiness yet.
 
 ## Phase 1: Interview-Quality Technical Project
 
@@ -59,10 +59,15 @@ Completed:
 - Liveness/readiness health endpoints with configured dependency checks.
 - Async strategy job API with pollable memory/Postgres job state and v0.1 background execution.
 
-Remaining:
+Remaining Phase 1 blockers:
 
-- Finish README/HLD/RFC wording so the documented demo path matches the implemented CLI/API flow.
-- Configure GitHub branch protection so the implemented quality gates are enforced before merge.
+- None for the v0.1 functional MVP. GitHub branch protection is an external repository setting and is tracked in Phase 1.5.
+
+Phase 1 completion note, 2026-05-18:
+
+- A reviewer can run `ads-growth-agent demo` without model provider keys and see the full natural-language intake, strategy generation, feedback-context reuse, and performance feedback loop.
+- README, RFC/HLD, roadmap, eval cases, and changelog now describe the implemented path instead of future intent.
+- The project remains draft-only and local-stack oriented; production auth, rate limits, SLO dashboards, native partitioning, replica routing, and live ad execution remain future work.
 
 Exit criteria:
 
@@ -88,14 +93,15 @@ Current state:
 
 - `.github/workflows/ci.yml` now separates lint, unit, deterministic E2E smoke, Postgres integration, and release-readiness jobs.
 - `requirements-lock.txt` is committed for reproducible v0.1 CI and demo installs.
+- `CHANGELOG.md` records the Phase 1 MVP completion scope.
 - Branch protection and required PR approval are not verified.
 - Deterministic product smoke coverage exists for direct API, async job, and CLI boundaries.
 - Release tagging and changelog expectations are documented, with `CHANGELOG.md` started.
 
 Planned work:
 
-- Add a DevOps and quality gates ExecPlan under `.agent/plans/`.
 - Configure GitHub branch protection for `main` once repository settings are available.
+- Cut a `v0.1.0` demo tag after the final Phase 1 review and CI confirmation.
 - Keep dependency lock refreshes deliberate and tied to full verification.
 
 Exit criteria:
@@ -223,14 +229,12 @@ Exit criteria:
 
 ## Next Recommended Backlog
 
-1. Expand GitHub Actions into explicit lint, unit, deterministic E2E smoke, and integration/release gates.
-2. Add a reproducible dependency lock file and update CI/demo install instructions to use it.
-3. Document and configure branch protection for `main`, including required checks and PR review expectations.
-4. Add curated demo script and expected outputs for the fitness app scenario.
-5. Add agent-eval cases for RAG grounding and critique/revision.
-6. Add negative demo cases for safe failure, idempotency conflict, and event conflict.
-7. Replace in-process background jobs with a durable worker queue design and outbox/DLQ plan.
-8. Add auth boundary design and first local API key/JWT guard.
-9. Add production metrics endpoint for run latency, validation failures, tool failures, and feedback events.
-10. Add timeout budgets and circuit-breaker behavior for LLM, retrieval, and tool execution.
-11. Implement native partition migrations and replica-aware read routing as a later production-hardening slice.
+1. Configure branch protection for `main`, including required checks and PR review expectations.
+2. Cut a `v0.1.0` demo tag after final review and CI confirmation.
+3. Add curated demo script and expected output excerpts for the fitness app scenario.
+4. Add negative demo cases for safe failure, idempotency conflict, and event conflict.
+5. Replace in-process background jobs with a durable worker queue design and outbox/DLQ plan.
+6. Add auth boundary design and first local API key/JWT guard.
+7. Add production metrics endpoint for run latency, validation failures, tool failures, and feedback events.
+8. Add timeout budgets and circuit-breaker behavior for LLM, retrieval, and tool execution.
+9. Implement native partition migrations and replica-aware read routing as a later production-hardening slice.
