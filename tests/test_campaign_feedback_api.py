@@ -1,4 +1,7 @@
+import json
+
 from fastapi.testclient import TestClient
+from typer.testing import CliRunner
 
 from ads_growth_agent import api as api_module
 from ads_growth_agent.api import app as api_app
@@ -8,8 +11,12 @@ from ads_growth_agent.api import (
     get_runtime_performance_event_store,
     get_runtime_settings,
 )
+from ads_growth_agent.cli import app as cli_app
 from ads_growth_agent.config import Settings
-from ads_growth_agent.contracts import CampaignPerformanceEventDetailResponse
+from ads_growth_agent.contracts import (
+    CampaignPerformanceEventDetailResponse,
+    PerformanceEventType,
+)
 from ads_growth_agent.feedback import analyze_campaign_performance_event
 from ads_growth_agent.persistence.advertiser_memory_store import (
     AdvertiserMemoryWriteResult,
@@ -19,6 +26,15 @@ from ads_growth_agent.persistence.performance_event_store import (
     PerformanceEventConflictError,
     hash_campaign_performance_event,
 )
+
+PerformanceEventListRequest = tuple[
+    str | None,
+    str | None,
+    str | None,
+    str | None,
+    PerformanceEventType | None,
+    int,
+]
 
 
 def test_campaign_performance_event_api_returns_feedback_analysis(monkeypatch) -> None:
@@ -344,11 +360,193 @@ def test_get_campaign_performance_event_api_returns_404_when_missing() -> None:
     assert store.requested_event_ids == ["missing_event"]
 
 
+def test_list_campaign_performance_events_api_filters_recent_events(
+    monkeypatch,
+) -> None:
+    event = api_module.CampaignPerformanceEventRequest.model_validate(
+        _event_payload_with_strategy_context()
+    )
+    detail = _event_detail(event)
+    store = CapturingPerformanceEventStore(details=[detail])
+    captured: dict[str, str] = {}
+
+    def fake_build_configured_performance_event_store(
+        settings: Settings,
+    ) -> CapturingPerformanceEventStore:
+        captured["tenant_id"] = settings.tenant_id
+        return store
+
+    monkeypatch.setattr(
+        api_module,
+        "build_configured_performance_event_store",
+        fake_build_configured_performance_event_store,
+    )
+    api_app.dependency_overrides[get_runtime_settings] = lambda: Settings(
+        performance_event_persistence_backend="postgres",
+        tenant_id="process_default",
+    )
+    try:
+        response = TestClient(api_app).get(
+            "/campaign-events/performance",
+            params={
+                "advertiser_id": event.advertiser_id,
+                "run_id": event.run_id,
+                "campaign_id": event.campaign_id,
+                "draft_id": event.draft_id,
+                "event_type": "performance_snapshot",
+                "limit": "5",
+            },
+            headers={"X-Tenant-ID": "tenant_api"},
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert response.headers["x-tenant-id"] == "tenant_api"
+    assert captured == {"tenant_id": "tenant_api"}
+    assert payload["count"] == 1
+    assert payload["limit"] == 5
+    assert payload["advertiser_id"] == event.advertiser_id
+    assert payload["run_id"] == event.run_id
+    assert payload["draft_id"] == event.draft_id
+    assert payload["event_type"] == "performance_snapshot"
+    assert payload["items"][0]["event_id"] == event.event_id
+    assert store.list_requests == [
+        (
+            event.advertiser_id,
+            event.run_id,
+            event.campaign_id,
+            event.draft_id,
+            PerformanceEventType.PERFORMANCE_SNAPSHOT,
+            5,
+        )
+    ]
+
+
+def test_get_performance_event_cli_returns_detail(monkeypatch) -> None:
+    event = api_module.CampaignPerformanceEventRequest.model_validate(_event_payload())
+    detail = _event_detail(event)
+    store = CapturingPerformanceEventStore(details=[detail])
+
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.get_settings",
+        lambda: Settings(tenant_id="tenant_cli"),
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_performance_event_store",
+        lambda settings: store,
+    )
+
+    result = CliRunner().invoke(cli_app, ["get-performance-event", event.event_id])
+
+    assert result.exit_code == 0
+    payload = result.stdout
+    assert event.event_id in payload
+    assert "underperforming" in payload
+
+
+def test_get_performance_event_cli_reports_missing_event(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.get_settings",
+        lambda: Settings(tenant_id="tenant_cli"),
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_performance_event_store",
+        lambda settings: CapturingPerformanceEventStore(),
+    )
+
+    result = CliRunner().invoke(cli_app, ["get-performance-event", "missing_event"])
+
+    assert result.exit_code == 1
+    assert "Performance event not found: missing_event" in result.stderr
+
+
+def test_list_performance_events_cli_filters_recent_events(monkeypatch) -> None:
+    event = api_module.CampaignPerformanceEventRequest.model_validate(
+        _event_payload_with_strategy_context()
+    )
+    detail = _event_detail(event)
+    store = CapturingPerformanceEventStore(details=[detail])
+
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.get_settings",
+        lambda: Settings(tenant_id="tenant_cli"),
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_performance_event_store",
+        lambda settings: store,
+    )
+
+    result = CliRunner().invoke(
+        cli_app,
+        [
+            "list-performance-events",
+            "--advertiser-id",
+            event.advertiser_id,
+            "--run-id",
+            event.run_id,
+            "--campaign-id",
+            event.campaign_id,
+            "--draft-id",
+            event.draft_id,
+            "--event-type",
+            "performance_snapshot",
+            "--limit",
+            "5",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["count"] == 1
+    assert payload["items"][0]["event_id"] == event.event_id
+    assert payload["event_type"] == "performance_snapshot"
+    assert store.list_requests == [
+        (
+            event.advertiser_id,
+            event.run_id,
+            event.campaign_id,
+            event.draft_id,
+            PerformanceEventType.PERFORMANCE_SNAPSHOT,
+            5,
+        )
+    ]
+
+
+def test_list_performance_events_cli_rejects_invalid_event_type(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.get_settings",
+        lambda: Settings(tenant_id="tenant_cli"),
+    )
+
+    result = CliRunner().invoke(
+        cli_app,
+        [
+            "list-performance-events",
+            "--event-type",
+            "unknown",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "Invalid performance event type" in result.stderr
+
+
 class CapturingPerformanceEventStore:
-    def __init__(self, *, record_error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        record_error: Exception | None = None,
+        details: list[CampaignPerformanceEventDetailResponse] | None = None,
+    ) -> None:
         self.records: list[tuple[str, str]] = []
-        self.detail: CampaignPerformanceEventDetailResponse | None = None
+        self.details = details or []
+        self.detail: CampaignPerformanceEventDetailResponse | None = (
+            self.details[0] if len(self.details) == 1 else None
+        )
         self.requested_event_ids: list[str] = []
+        self.list_requests: list[PerformanceEventListRequest] = []
         self._record_error = record_error
 
     def record_analyzed(self, event, analysis) -> None:
@@ -358,9 +556,35 @@ class CapturingPerformanceEventStore:
 
     def get_event(self, event_id: str) -> CampaignPerformanceEventDetailResponse | None:
         self.requested_event_ids.append(event_id)
-        if self.detail is None or self.detail.event_id != event_id:
-            return None
-        return self.detail
+        details = self.details or ([self.detail] if self.detail is not None else [])
+        for detail in details:
+            if detail.event_id == event_id:
+                return detail
+        return None
+
+    def list_events(
+        self,
+        *,
+        advertiser_id: str | None = None,
+        run_id: str | None = None,
+        campaign_id: str | None = None,
+        draft_id: str | None = None,
+        event_type: PerformanceEventType | None = None,
+        limit: int = 50,
+    ) -> list[CampaignPerformanceEventDetailResponse]:
+        self.list_requests.append(
+            (advertiser_id, run_id, campaign_id, draft_id, event_type, limit)
+        )
+        details = self.details or ([self.detail] if self.detail is not None else [])
+        return [
+            detail
+            for detail in details
+            if (advertiser_id is None or detail.advertiser_id == advertiser_id)
+            and (run_id is None or detail.run_id == run_id)
+            and (campaign_id is None or detail.campaign_id == campaign_id)
+            and (draft_id is None or detail.draft_id == draft_id)
+            and (event_type is None or detail.event_type == event_type)
+        ][:limit]
 
 
 class CapturingAdvertiserMemoryStore:
@@ -453,6 +677,7 @@ def _event_payload() -> dict[str, object]:
 def _event_payload_with_strategy_context() -> dict[str, object]:
     payload = _event_payload()
     payload.pop("target_cpa")
+    payload["campaign_id"] = "cmp_fittrack"
     payload["draft_id"] = "draft_fittrack"
     payload["strategy_context"] = {
         "strategy_id": "strategy_001",

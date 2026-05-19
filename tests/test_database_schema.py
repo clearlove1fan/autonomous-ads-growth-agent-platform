@@ -101,6 +101,7 @@ def test_campaign_performance_events_support_feedback_loop_access_patterns() -> 
     assert "occurred_at" in columns
     assert "ix_campaign_performance_events_advertiser_occurred" in index_names
     assert "ix_campaign_performance_events_run_occurred" in index_names
+    assert "ix_campaign_performance_events_draft_occurred" in index_names
     assert "ix_campaign_performance_events_partition_date" in index_names
     assert {
         foreign_key.column.table.name

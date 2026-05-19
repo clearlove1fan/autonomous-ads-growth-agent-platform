@@ -15,6 +15,8 @@ def test_performance_event_store_factory_defaults_to_noop_store() -> None:
     )
 
     assert isinstance(store, NoopCampaignPerformanceEventStore)
+    assert store.get_event("missing_event") is None
+    assert store.list_events(advertiser_id="adv_fitness_001", limit=10) == []
 
 
 def test_performance_event_store_factory_builds_cached_postgres_store(monkeypatch) -> None:

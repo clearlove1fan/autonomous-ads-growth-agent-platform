@@ -141,7 +141,7 @@ The product aims to create an autonomous agent workflow that can reason over adv
 | FR-4 | Generate a task plan using Plan-and-Execute workflow | P0 | Produces ordered tasks with owners, inputs, expected outputs, and dependencies |
 | FR-5 | Route tasks to role-specific agents | P0 | Supervisor can route audience, creative, budget, and performance tasks to the correct agent |
 | FR-6 | Maintain shared workflow state | P0 | State includes brief, retrieved context, intermediate outputs, tool results, critique report, and final strategy |
-| FR-7 | Support event-driven re-analysis | P1 | A campaign performance event can trigger analysis and revised recommendations |
+| FR-7 | Support event-driven re-analysis | P1 | A campaign performance event can trigger analysis and revised recommendations, and persisted feedback events can be listed for audit by advertiser, run, campaign, or draft |
 
 ### 8.3 Specialist Agents
 
@@ -372,6 +372,7 @@ flowchart TD
 | StrategyJobDetailResponse | Strategy Job Store | API caller | Job status, request, run ID, trace ID, completed strategy result, or structured failure |
 | CampaignPerformanceEventRequest | API caller | Feedback Analyzer | Campaign metrics, objective, target CPA, attribution window, and event references |
 | CampaignFeedbackAnalysis | Feedback Analyzer | API caller, Event Store | Derived metrics, health status, recommendations, guardrails, and source event ID |
+| CampaignPerformanceEventListResponse | Event Store | API caller, CLI user | Filtered list of persisted feedback events by tenant, advertiser, run, campaign, draft, or event type |
 | AdvertiserMemoryDetailResponse | Memory Store | API caller, CLI user | Public source ID, memory type, content, metadata, importance, usage count, and timestamps |
 
 ### 10.3 Strategy Generation Sequence
@@ -572,7 +573,7 @@ These decisions close a gap in the original RFC: v0.1 had a technical test plan,
 | Capability | Status | Evidence |
 |---|---|---|
 | FastAPI strategy generation | Implemented | `POST /growth-strategies` returns a validated `GrowthStrategyResponse` |
-| CLI demo and eval | Implemented | `ads-growth-agent demo`, `plan`, `plan-text`, `submit-strategy-job`, `submit-strategy-job-text`, `get-strategy-job`, `process-strategy-jobs`, `list-strategy-jobs`, `get-advertiser-memory`, `list-advertiser-memories`, `analyze-performance`, `health`, `seed-knowledge`, and `eval` commands |
+| CLI demo and eval | Implemented | `ads-growth-agent demo`, `plan`, `plan-text`, `submit-strategy-job`, `submit-strategy-job-text`, `get-strategy-job`, `process-strategy-jobs`, `list-strategy-jobs`, `get-performance-event`, `list-performance-events`, `get-advertiser-memory`, `list-advertiser-memories`, `analyze-performance`, `health`, `seed-knowledge`, and `eval` commands |
 | Deterministic LangGraph workflow | Implemented | Graph nodes run planner, retriever, tool_executor, critic, and finalizer |
 | Internal typed tool registry | Implemented | Unknown tools, invalid params, permission errors, and failures return structured results |
 | LiteLLM gateway | Implemented behind feature flags | Optional LLM planner/critic and structured output fallback route through LiteLLM |
@@ -584,7 +585,7 @@ These decisions close a gap in the original RFC: v0.1 had a technical test plan,
 | Async strategy job API | Implemented with v0.1 in-process executor | Jobs are queued through `/growth-strategies/jobs` or `/growth-strategies/jobs/from-text`, executed by FastAPI background tasks, and pollable through job detail API |
 | API idempotency | Implemented as opt-in Postgres backend | Same key/body replays response; same key/different body returns conflict |
 | Campaign draft persistence | Implemented as opt-in Postgres backend | Drafts remain `status=draft`, are queryable through API/CLI for review, and no live spend action is executed |
-| Campaign performance feedback loop | Implemented | Performance snapshots produce metrics, health status, matched strategy rules from `feedback_context`, recommendations, and guardrails |
+| Campaign performance feedback loop | Implemented | Performance snapshots produce metrics, health status, matched strategy rules from `feedback_context`, recommendations, guardrails, and persisted event discovery by advertiser/run/campaign/draft |
 | Advertiser memory review | Implemented as opt-in Postgres backend | Persisted memories can be listed by advertiser/type and inspected by source ID through API/CLI |
 | Performance event idempotency | Implemented | Same event payload replays persisted analysis; same event ID with changed payload returns `409` |
 | Dependency readiness checks | Implemented | `/health/live` is shallow; `/health/ready` checks configured Postgres and LiteLLM dependencies |
@@ -851,6 +852,7 @@ The first version should prioritize a complete, traceable, and recoverable end-t
 | 2026-05-18 | Add one-command deterministic Phase 1 demo | `ads-growth-agent demo` runs natural-language intake, strategy generation, feedback context reuse, and performance feedback analysis without external model keys | Accepted |
 | 2026-05-18 | Add strategy-linked feedback context | Final strategies expose `feedback_context` so campaign events can match optimization rules back to the original plan | Accepted |
 | 2026-05-19 | Add advertiser memory read surfaces | Persisted long-term memory is reviewable through advertiser-scoped API/CLI endpoints while retaining tenant isolation | Accepted |
+| 2026-05-19 | Add performance event discovery surfaces | Persisted feedback events are reviewable through filtered API/CLI list surfaces and draft-linked indexing | Accepted |
 | 2026-05-18 | Expand local agent eval coverage | Eval suite now scores planner orchestration, retrieval grounding, critic quality gate, revision behavior, strategy completeness, safety, and observability | Accepted |
 | 2026-05-18 | Complete Phase 1 MVP readiness pass | README, RFC/HLD, roadmap, eval scope, and changelog now describe the implemented deterministic MVP path; branch protection remains a Phase 1.5 external repository setting | Accepted |
 | 2026-05-18 | Prepare v0.1.0 demo release | `CHANGELOG.md` now has a `v0.1.0` entry, release verification references CI run `26022065806`, and branch protection is recorded as blocked by GitHub private-repository plan limits | Accepted |

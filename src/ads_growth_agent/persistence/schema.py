@@ -531,6 +531,12 @@ sa.Index(
     campaign_performance_events.c.occurred_at,
 )
 sa.Index(
+    "ix_campaign_performance_events_draft_occurred",
+    campaign_performance_events.c.tenant_id,
+    campaign_performance_events.c.draft_id,
+    campaign_performance_events.c.occurred_at,
+)
+sa.Index(
     "ix_campaign_performance_events_partition_date",
     campaign_performance_events.c.tenant_id,
     campaign_performance_events.c.partition_date,

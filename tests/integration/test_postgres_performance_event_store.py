@@ -100,6 +100,22 @@ def test_performance_event_api_persists_analysis_to_postgres(monkeypatch) -> Non
             "/campaign-events/performance/evt_perf_integration",
             headers={"X-Tenant-ID": "tenant_perf"},
         )
+        listing = client.get(
+            "/campaign-events/performance",
+            params={
+                "advertiser_id": "adv_fitness_001",
+                "campaign_id": "cmp_fitness_001",
+                "draft_id": "draft_fitness_001",
+                "event_type": "performance_snapshot",
+                "limit": "10",
+            },
+            headers={"X-Tenant-ID": "tenant_perf"},
+        )
+        listing_from_other_tenant = client.get(
+            "/campaign-events/performance",
+            params={"advertiser_id": "adv_fitness_001"},
+            headers={"X-Tenant-ID": "tenant_other"},
+        )
         missing_from_other_tenant = client.get(
             "/campaign-events/performance/evt_perf_integration",
             headers={"X-Tenant-ID": "tenant_other"},
@@ -138,6 +154,12 @@ def test_performance_event_api_persists_analysis_to_postgres(monkeypatch) -> Non
         assert detail_payload["metrics"]["spend"] == "1000.00"
         assert detail_payload["analysis"]["health_status"] == "underperforming"
         assert detail_payload["metadata"]["target_cpa"] == "20.00"
+        assert listing.status_code == 200
+        assert listing.json()["count"] == 1
+        assert listing.json()["items"][0]["event_id"] == "evt_perf_integration"
+        assert listing.json()["draft_id"] == "draft_fitness_001"
+        assert listing_from_other_tenant.status_code == 200
+        assert listing_from_other_tenant.json()["count"] == 0
         assert missing_from_other_tenant.status_code == 404
         assert (
             missing_from_other_tenant.json()["detail"]["error_code"]
@@ -230,6 +252,7 @@ def _event_payload() -> dict[str, object]:
         "event_id": "evt_perf_integration",
         "advertiser_id": "adv_fitness_001",
         "campaign_id": "cmp_fitness_001",
+        "draft_id": "draft_fitness_001",
         "objective": "registrations",
         "event_type": "performance_snapshot",
         "occurred_at": "2026-05-12T12:00:00Z",

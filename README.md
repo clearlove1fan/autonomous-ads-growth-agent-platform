@@ -15,7 +15,7 @@ v0.1 Phase 1 MVP is complete as of 2026-05-18. The current milestone is a determ
 5. Retrieve campaign knowledge from PostgreSQL + pgvector.
 6. Run a critic pass.
 7. Return a validated campaign growth strategy with a reusable feedback context.
-8. Analyze a campaign performance event and return draft-only optimization recommendations.
+8. Analyze, persist, and inspect campaign performance events.
 9. Persist and inspect advertiser memory when PostgreSQL memory persistence is enabled.
 
 Phase 1 is intentionally a functional MVP, not a production launch claim. A single advertiser can run the core product loop locally through CLI or FastAPI without external model keys. The system still does not execute live ad spend, enforce real authentication, provide production SLO dashboards, or require GitHub branch protection in repository settings.
@@ -461,6 +461,13 @@ Persisted performance events can be queried for audit and replay:
 ```bash
 curl http://localhost:8000/campaign-events/performance/evt_perf_001 \
   -H "X-Tenant-ID: tenant_demo"
+
+curl "http://localhost:8000/campaign-events/performance?advertiser_id=adv_fitness_001&campaign_id=cmp_fitness_001&limit=20" \
+  -H "X-Tenant-ID: tenant_demo"
+
+PERFORMANCE_EVENT_PERSISTENCE_BACKEND=postgres ads-growth-agent get-performance-event evt_perf_001
+
+PERFORMANCE_EVENT_PERSISTENCE_BACKEND=postgres ads-growth-agent list-performance-events --advertiser-id adv_fitness_001 --campaign-id cmp_fitness_001 --limit 20
 ```
 
 Campaign draft persistence is separately opt-in. Set `CAMPAIGN_DRAFT_PERSISTENCE_BACKEND=postgres` to store the `create_campaign_draft` tool output in `campaign_drafts`:

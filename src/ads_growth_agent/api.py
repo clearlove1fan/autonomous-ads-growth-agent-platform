@@ -25,12 +25,14 @@ from ads_growth_agent.contracts import (
     CampaignDraftListResponse,
     CampaignFeedbackAnalysis,
     CampaignPerformanceEventDetailResponse,
+    CampaignPerformanceEventListResponse,
     CampaignPerformanceEventRequest,
     CampaignPerformanceEventResponse,
     GrowthStrategyFromTextRequest,
     GrowthStrategyFromTextResponse,
     GrowthStrategyRequest,
     GrowthStrategyResponse,
+    PerformanceEventType,
     StrategyJobAcceptedResponse,
     StrategyJobCancelRequest,
     StrategyJobDetailResponse,
@@ -799,6 +801,46 @@ def ingest_campaign_performance_event(
         advertiser_memory_status=memory_result.status,
         advertiser_memory_source_id=memory_result.source_id,
         analysis=analysis,
+    )
+
+
+@app.get(
+    "/campaign-events/performance",
+    response_model=CampaignPerformanceEventListResponse,
+    dependencies=[Depends(require_api_auth)],
+)
+def list_campaign_performance_events(
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    event_store: Annotated[
+        CampaignPerformanceEventStore,
+        Depends(get_runtime_performance_event_store),
+    ],
+    advertiser_id: Annotated[str | None, Query(min_length=1, max_length=128)] = None,
+    run_id: Annotated[str | None, Query(min_length=1, max_length=128)] = None,
+    campaign_id: Annotated[str | None, Query(min_length=1, max_length=128)] = None,
+    draft_id: Annotated[str | None, Query(min_length=1, max_length=128)] = None,
+    event_type: Annotated[PerformanceEventType | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> CampaignPerformanceEventListResponse:
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    events = event_store.list_events(
+        advertiser_id=advertiser_id,
+        run_id=run_id,
+        campaign_id=campaign_id,
+        draft_id=draft_id,
+        event_type=event_type,
+        limit=limit,
+    )
+    return CampaignPerformanceEventListResponse(
+        items=events,
+        count=len(events),
+        limit=limit,
+        advertiser_id=advertiser_id,
+        run_id=run_id,
+        campaign_id=campaign_id,
+        draft_id=draft_id,
+        event_type=event_type,
     )
 
 

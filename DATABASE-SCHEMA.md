@@ -37,7 +37,7 @@ The first migration does not create native partitioned tables. Instead it create
 | `tenants` | tenant registry | lookup tenant config | small reference table |
 | `advertisers` | business data | tenant + advertiser lookup | hash by `advertiser_id` |
 | `campaign_drafts` | draft output | advertiser history, run-created drafts | advertiser hash + time range |
-| `campaign_performance_events` | feedback loop events | advertiser/run/campaign event analysis | time range + event hash |
+| `campaign_performance_events` | feedback loop events | advertiser/run/campaign/draft event analysis | time range + event hash |
 | `strategy_jobs` | async API job state | job polling, advertiser job history | job hash + time range |
 | `knowledge_documents` | RAG metadata | source/category/objective filters | source/type/category + document hash |
 | `knowledge_chunks` | vector RAG chunks | filtered vector search | source/category prefilter + document hash |
@@ -67,7 +67,7 @@ The first migration does not create native partitioned tables. Instead it create
 2. The feedback analyzer computes CTR, CVR, CPA, and optional ROAS.
 3. The system returns draft-only recommendations such as creative refresh, audience narrowing, tracking inspection, or continued monitoring.
 4. `campaign_performance_events` stores the raw metrics, normalized event hash, and analysis when persistence is enabled.
-5. The event is indexed by advertiser, run, campaign, and occurrence time for replay and later async feedback workflows. `run_id`, `draft_id`, and `campaign_id` are soft links because telemetry can arrive from external campaign systems before this platform has a local run or draft record.
+5. The event is indexed by advertiser, run, campaign, draft, and occurrence time for replay and later async feedback workflows. `run_id`, `draft_id`, and `campaign_id` are soft links because telemetry can arrive from external campaign systems before this platform has a local run or draft record.
 6. Replaying the same `event_id` with the same event hash returns the stored analysis; reusing the same `event_id` with a different payload is rejected as a conflict.
 
 ### Retrieval
@@ -150,7 +150,7 @@ Implemented now:
 - SQLAlchemy Core metadata in `src/ads_growth_agent/persistence/schema.py`.
 - Alembic scaffold.
 - Initial migration `0001_partition_aware_core_schema`.
-- Follow-up migrations for execution identity and campaign performance events.
+- Follow-up migrations for execution identity, campaign performance events, and draft-linked feedback lookup.
 - Follow-up migration for `strategy_jobs`.
 - pgvector columns for `knowledge_chunks` and `advertiser_memories`.
 - Partition-ready columns and indexes.

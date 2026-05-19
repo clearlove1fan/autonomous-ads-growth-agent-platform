@@ -736,3 +736,16 @@ class CampaignPerformanceEventDetailResponse(BaseModel):
     analysis: CampaignFeedbackAnalysis
     created_at: datetime
     updated_at: datetime
+
+
+class CampaignPerformanceEventListResponse(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    items: list[CampaignPerformanceEventDetailResponse] = Field(default_factory=list)
+    count: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    advertiser_id: str | None = Field(default=None, min_length=1, max_length=128)
+    run_id: str | None = Field(default=None, min_length=1, max_length=128)
+    campaign_id: str | None = Field(default=None, min_length=1, max_length=128)
+    draft_id: str | None = Field(default=None, min_length=1, max_length=128)
+    event_type: PerformanceEventType | None = None

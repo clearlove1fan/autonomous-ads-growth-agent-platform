@@ -20,8 +20,10 @@ from ads_growth_agent.contracts import (
     AdvertiserMemoryListResponse,
     AdvertiserMemoryType,
     CampaignDraftListResponse,
+    CampaignPerformanceEventListResponse,
     CampaignPerformanceEventRequest,
     GrowthStrategyRequest,
+    PerformanceEventType,
     StrategyJobFromTextResponse,
     StrategyJobListResponse,
     StrategyJobStatus,
@@ -30,6 +32,9 @@ from ads_growth_agent.evaluation import load_eval_cases, run_local_eval_suite
 from ads_growth_agent.feedback import analyze_campaign_performance_event
 from ads_growth_agent.logging_config import configure_logging
 from ads_growth_agent.outbox import process_configured_outbox
+from ads_growth_agent.performance_event_store_factory import (
+    build_configured_performance_event_store,
+)
 from ads_growth_agent.persistence.knowledge_seed import seed_default_knowledge
 from ads_growth_agent.strategy import StrategyGenerationError, generate_growth_strategy
 from ads_growth_agent.strategy_job_store_factory import build_configured_strategy_job_store
@@ -106,6 +111,19 @@ PERFORMANCE_EVENT_FILE_ARGUMENT = typer.Argument(
     readable=True,
     help="Path to a campaign performance event JSON file.",
 )
+PERFORMANCE_EVENT_ID_ARGUMENT = typer.Argument(..., help="Campaign performance event ID.")
+PERFORMANCE_EVENT_ADVERTISER_ID_OPTION = typer.Option(None, "--advertiser-id")
+PERFORMANCE_EVENT_RUN_ID_OPTION = typer.Option(None, "--run-id")
+PERFORMANCE_EVENT_CAMPAIGN_ID_OPTION = typer.Option(None, "--campaign-id")
+PERFORMANCE_EVENT_DRAFT_ID_OPTION = typer.Option(None, "--draft-id")
+PERFORMANCE_EVENT_TYPE_OPTION = typer.Option(None, "--event-type")
+PERFORMANCE_EVENT_LIST_LIMIT_OPTION = typer.Option(50, "--limit", min=1, max=100)
+ALLOWED_PERFORMANCE_EVENT_TYPES = {
+    "performance_snapshot",
+    "budget_pacing",
+    "creative_fatigue",
+    "conversion_drop",
+}
 
 
 @app.command()
@@ -227,6 +245,52 @@ def analyze_performance(
         raise typer.Exit(2) from exc
 
     typer.echo(analysis.model_dump_json(indent=2))
+
+
+@app.command("get-performance-event")
+def get_performance_event(event_id: str = PERFORMANCE_EVENT_ID_ARGUMENT) -> None:
+    """Fetch one persisted campaign performance event by ID."""
+    settings = get_settings()
+    store = build_configured_performance_event_store(settings)
+    event = store.get_event(event_id)
+    if event is None:
+        typer.echo(f"Performance event not found: {event_id}", err=True)
+        raise typer.Exit(1)
+    typer.echo(event.model_dump_json(indent=2))
+
+
+@app.command("list-performance-events")
+def list_performance_events(
+    advertiser_id: str | None = PERFORMANCE_EVENT_ADVERTISER_ID_OPTION,
+    run_id: str | None = PERFORMANCE_EVENT_RUN_ID_OPTION,
+    campaign_id: str | None = PERFORMANCE_EVENT_CAMPAIGN_ID_OPTION,
+    draft_id: str | None = PERFORMANCE_EVENT_DRAFT_ID_OPTION,
+    event_type: str | None = PERFORMANCE_EVENT_TYPE_OPTION,
+    limit: int = PERFORMANCE_EVENT_LIST_LIMIT_OPTION,
+) -> None:
+    """List recent persisted campaign performance events."""
+    settings = get_settings()
+    store = build_configured_performance_event_store(settings)
+    validated_event_type = _performance_event_type_or_exit(event_type)
+    events = store.list_events(
+        advertiser_id=advertiser_id,
+        run_id=run_id,
+        campaign_id=campaign_id,
+        draft_id=draft_id,
+        event_type=validated_event_type,
+        limit=limit,
+    )
+    response = CampaignPerformanceEventListResponse(
+        items=events,
+        count=len(events),
+        limit=limit,
+        advertiser_id=advertiser_id,
+        run_id=run_id,
+        campaign_id=campaign_id,
+        draft_id=draft_id,
+        event_type=validated_event_type,
+    )
+    typer.echo(response.model_dump_json(indent=2))
 
 
 @app.command("demo")
@@ -598,6 +662,18 @@ def _advertiser_memory_type_or_exit(value: str | None) -> AdvertiserMemoryType |
 
     allowed = ", ".join(sorted(ALLOWED_ADVERTISER_MEMORY_TYPES))
     typer.echo(f"Invalid advertiser memory type: {value}. Expected one of: {allowed}", err=True)
+    raise typer.Exit(2)
+
+
+def _performance_event_type_or_exit(value: str | None) -> PerformanceEventType | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if normalized in ALLOWED_PERFORMANCE_EVENT_TYPES:
+        return PerformanceEventType(normalized)
+
+    allowed = ", ".join(sorted(ALLOWED_PERFORMANCE_EVENT_TYPES))
+    typer.echo(f"Invalid performance event type: {value}. Expected one of: {allowed}", err=True)
     raise typer.Exit(2)
 
 

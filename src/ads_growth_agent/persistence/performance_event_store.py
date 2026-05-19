@@ -12,6 +12,7 @@ from ads_growth_agent.contracts import (
     CampaignFeedbackAnalysis,
     CampaignPerformanceEventDetailResponse,
     CampaignPerformanceEventRequest,
+    PerformanceEventType,
     PerformanceMetrics,
 )
 from ads_growth_agent.persistence.partitioning import partition_bucket
@@ -40,6 +41,18 @@ class CampaignPerformanceEventStore(Protocol):
     def get_event(self, event_id: str) -> CampaignPerformanceEventDetailResponse | None:
         """Return a persisted performance event for the configured tenant."""
 
+    def list_events(
+        self,
+        *,
+        advertiser_id: str | None = None,
+        run_id: str | None = None,
+        campaign_id: str | None = None,
+        draft_id: str | None = None,
+        event_type: PerformanceEventType | None = None,
+        limit: int = 50,
+    ) -> list[CampaignPerformanceEventDetailResponse]:
+        """Return recent persisted performance events for the configured tenant."""
+
 
 class NoopCampaignPerformanceEventStore:
     def record_analyzed(
@@ -51,6 +64,18 @@ class NoopCampaignPerformanceEventStore:
 
     def get_event(self, event_id: str) -> CampaignPerformanceEventDetailResponse | None:
         return None
+
+    def list_events(
+        self,
+        *,
+        advertiser_id: str | None = None,
+        run_id: str | None = None,
+        campaign_id: str | None = None,
+        draft_id: str | None = None,
+        event_type: PerformanceEventType | None = None,
+        limit: int = 50,
+    ) -> list[CampaignPerformanceEventDetailResponse]:
+        return []
 
 
 class PostgresCampaignPerformanceEventStore:
@@ -144,22 +169,44 @@ class PostgresCampaignPerformanceEventStore:
             if row is None:
                 return None
 
-        return CampaignPerformanceEventDetailResponse(
-            event_id=row["event_id"],
-            advertiser_id=row["advertiser_id"],
-            run_id=row["run_id"],
-            campaign_id=row["campaign_id"],
-            draft_id=row["draft_id"],
-            objective=row["objective"],
-            event_type=row["event_type"],
-            occurred_at=row["occurred_at"],
-            metrics=PerformanceMetrics.model_validate(row["metrics_json"]),
-            status=row["status"],
-            metadata=dict(row["metadata"] or {}),
-            analysis=CampaignFeedbackAnalysis.model_validate(row["analysis_json"]),
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
-        )
+        return _row_to_performance_event(row)
+
+    def list_events(
+        self,
+        *,
+        advertiser_id: str | None = None,
+        run_id: str | None = None,
+        campaign_id: str | None = None,
+        draft_id: str | None = None,
+        event_type: PerformanceEventType | None = None,
+        limit: int = 50,
+    ) -> list[CampaignPerformanceEventDetailResponse]:
+        with _connection(self._bind) as connection:
+            stmt = sa.select(campaign_performance_events).where(
+                campaign_performance_events.c.tenant_id == self._tenant_id
+            )
+            if advertiser_id is not None:
+                stmt = stmt.where(campaign_performance_events.c.advertiser_id == advertiser_id)
+            if run_id is not None:
+                stmt = stmt.where(campaign_performance_events.c.run_id == run_id)
+            if campaign_id is not None:
+                stmt = stmt.where(campaign_performance_events.c.campaign_id == campaign_id)
+            if draft_id is not None:
+                stmt = stmt.where(campaign_performance_events.c.draft_id == draft_id)
+            if event_type is not None:
+                stmt = stmt.where(campaign_performance_events.c.event_type == event_type.value)
+
+            rows = (
+                connection.execute(
+                    stmt.order_by(
+                        campaign_performance_events.c.occurred_at.desc(),
+                        campaign_performance_events.c.event_id.desc(),
+                    ).limit(limit)
+                )
+                .mappings()
+                .all()
+            )
+        return [_row_to_performance_event(row) for row in rows]
 
 
 @contextmanager
@@ -192,6 +239,25 @@ def _get_event_row_for_update(
         .where(campaign_performance_events.c.event_id == event_id)
         .with_for_update()
     ).mappings().one_or_none()
+
+
+def _row_to_performance_event(row) -> CampaignPerformanceEventDetailResponse:
+    return CampaignPerformanceEventDetailResponse(
+        event_id=row["event_id"],
+        advertiser_id=row["advertiser_id"],
+        run_id=row["run_id"],
+        campaign_id=row["campaign_id"],
+        draft_id=row["draft_id"],
+        objective=row["objective"],
+        event_type=row["event_type"],
+        occurred_at=row["occurred_at"],
+        metrics=PerformanceMetrics.model_validate(row["metrics_json"]),
+        status=row["status"],
+        metadata=dict(row["metadata"] or {}),
+        analysis=CampaignFeedbackAnalysis.model_validate(row["analysis_json"]),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
 
 
 def hash_campaign_performance_event(event: CampaignPerformanceEventRequest) -> str:
