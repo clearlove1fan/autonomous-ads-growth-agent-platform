@@ -864,6 +864,46 @@ class CampaignFeedbackOptimizationReviewListResponse(BaseModel):
     decision: FeedbackOptimizationReviewDecision | None = None
 
 
+class FeedbackExecutionPlanStep(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    step_id: str = Field(min_length=1, max_length=220)
+    change_id: str = Field(min_length=1, max_length=220)
+    sequence: int = Field(ge=1)
+    title: str = Field(min_length=1, max_length=160)
+    description: str = Field(min_length=1, max_length=1_000)
+    change_type: FeedbackOptimizationChangeType
+    owner_role: AgentRole
+    risk_level: RiskLevel = RiskLevel.LOW
+    tool_intent: ToolIntent
+    execution_mode: Literal["dry_run"] = "dry_run"
+    status: Literal["ready"]
+    preconditions: list[str] = Field(min_length=1)
+    rollback_plan: str = Field(min_length=1, max_length=800)
+
+
+class CampaignFeedbackExecutionPlanResponse(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    execution_plan_id: str = Field(min_length=1, max_length=160)
+    review_id: str = Field(min_length=1, max_length=160)
+    optimization_draft_id: str = Field(min_length=1, max_length=160)
+    event_id: str = Field(min_length=1, max_length=128)
+    feedback_id: str = Field(min_length=1, max_length=160)
+    advertiser_id: str = Field(min_length=1, max_length=128)
+    run_id: str | None = Field(default=None, min_length=1, max_length=128)
+    campaign_id: str | None = Field(default=None, min_length=1, max_length=128)
+    base_draft_id: str | None = Field(default=None, min_length=1, max_length=160)
+    strategy_id: str | None = Field(default=None, min_length=1, max_length=128)
+    review_decision: FeedbackOptimizationReviewDecision
+    execution_mode: Literal["dry_run"] = "dry_run"
+    status: Literal["ready"]
+    summary: str = Field(min_length=1, max_length=1_000)
+    steps: list[FeedbackExecutionPlanStep] = Field(min_length=1)
+    guardrails: list[str] = Field(default_factory=list)
+    created_at: datetime
+
+
 class CampaignPerformanceEventResponse(BaseModel):
     event_id: str = Field(min_length=1, max_length=128)
     advertiser_id: str = Field(min_length=1, max_length=128)

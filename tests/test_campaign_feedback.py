@@ -19,6 +19,10 @@ from ads_growth_agent.feedback import (
     build_campaign_feedback_optimization_draft,
     build_campaign_feedback_optimization_review,
 )
+from ads_growth_agent.feedback_execution_plan import (
+    FeedbackExecutionPlanNotApprovedError,
+    build_feedback_execution_plan,
+)
 
 
 def test_feedback_analysis_flags_underperforming_cpa() -> None:
@@ -391,3 +395,114 @@ def test_feedback_optimization_review_rejects_unknown_selected_change_id() -> No
                 selected_change_ids=["missing_change"],
             ),
         )
+
+
+def test_feedback_execution_plan_maps_approved_review_to_dry_run_tool_intents() -> None:
+    event = CampaignPerformanceEventRequest(
+        event_id="evt_execution_plan",
+        advertiser_id="adv_fitness_001",
+        run_id="run_001",
+        campaign_id="cmp_fittrack",
+        draft_id="draft_fittrack",
+        objective=CampaignObjective.REGISTRATIONS,
+        occurred_at="2026-05-12T12:00:00Z",
+        metrics=PerformanceMetrics(
+            impressions=10_000,
+            clicks=500,
+            spend="1000.00",
+            conversions=20,
+        ),
+        target_cpa="20.00",
+    )
+    analysis = analyze_campaign_performance_event(event)
+    detail = CampaignPerformanceEventDetailResponse(
+        event_id=event.event_id,
+        advertiser_id=event.advertiser_id,
+        run_id=event.run_id,
+        campaign_id=event.campaign_id,
+        draft_id=event.draft_id,
+        objective=event.objective,
+        event_type=event.event_type,
+        occurred_at=event.occurred_at,
+        metrics=event.metrics,
+        status="analyzed",
+        metadata={},
+        analysis=analysis,
+        created_at=analysis.created_at,
+        updated_at=analysis.created_at,
+    )
+    optimization_draft = build_campaign_feedback_optimization_draft(detail)
+    selected_change_id = optimization_draft.changes[0].change_id
+    review = build_campaign_feedback_optimization_review(
+        optimization_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.APPROVED,
+            reviewer_id="operator_001",
+            selected_change_ids=[selected_change_id],
+        ),
+        review_id="feedback_review_execution_001",
+    )
+
+    execution_plan = build_feedback_execution_plan(review)
+
+    assert execution_plan.execution_plan_id.startswith("feedback_execution_plan_")
+    assert execution_plan.review_id == "feedback_review_execution_001"
+    assert execution_plan.execution_mode == "dry_run"
+    assert execution_plan.status == "ready"
+    assert len(execution_plan.steps) == 1
+    step = execution_plan.steps[0]
+    assert step.change_id == selected_change_id
+    assert step.tool_intent.tool_name == "draft_budget_reallocation"
+    assert step.tool_intent.params["dry_run"] is True
+    assert step.tool_intent.params["approval_reference_id"] == review.review_id
+    assert step.tool_intent.params["campaign_id"] == "cmp_fittrack"
+    assert "second live-execution gate" in step.preconditions[-1]
+    assert step.rollback_plan.startswith("Discard the draft budget")
+    assert execution_plan.guardrails[0].startswith("Execution mode is dry_run")
+
+
+def test_feedback_execution_plan_requires_approved_review() -> None:
+    event = CampaignPerformanceEventRequest(
+        event_id="evt_execution_plan_not_approved",
+        advertiser_id="adv_fitness_001",
+        run_id="run_001",
+        draft_id="draft_fittrack",
+        objective=CampaignObjective.REGISTRATIONS,
+        occurred_at="2026-05-12T12:00:00Z",
+        metrics=PerformanceMetrics(
+            impressions=10_000,
+            clicks=500,
+            spend="1000.00",
+            conversions=20,
+        ),
+        target_cpa="20.00",
+    )
+    analysis = analyze_campaign_performance_event(event)
+    detail = CampaignPerformanceEventDetailResponse(
+        event_id=event.event_id,
+        advertiser_id=event.advertiser_id,
+        run_id=event.run_id,
+        campaign_id=event.campaign_id,
+        draft_id=event.draft_id,
+        objective=event.objective,
+        event_type=event.event_type,
+        occurred_at=event.occurred_at,
+        metrics=event.metrics,
+        status="analyzed",
+        metadata={},
+        analysis=analysis,
+        created_at=analysis.created_at,
+        updated_at=analysis.created_at,
+    )
+    optimization_draft = build_campaign_feedback_optimization_draft(detail)
+    review = build_campaign_feedback_optimization_review(
+        optimization_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.NEEDS_REVISION,
+            reviewer_id="operator_001",
+        ),
+        review_id="feedback_review_execution_blocked",
+    )
+
+    with pytest.raises(FeedbackExecutionPlanNotApprovedError):
+        build_feedback_execution_plan(review)

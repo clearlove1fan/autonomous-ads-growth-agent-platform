@@ -39,11 +39,16 @@ def test_persisted_product_loop_walkthrough() -> None:
     assert summary["review"]["decision"] == "approved"
     assert summary["review"]["selected_change_count"] == 1
     assert summary["review"]["cli_submitted_decision"] == "needs_revision"
+    assert summary["execution_plan"]["execution_mode"] == "dry_run"
+    assert summary["execution_plan"]["first_tool_name"] == "draft_budget_reallocation"
     assert summary["outbox"]["completed"] == 1
     assert summary["cli_reads"]["event_count"] == 1
     assert summary["cli_reads"]["first_action_type"] == "adjust_budget"
     assert summary["cli_reads"]["first_change_type"] == "budget"
     assert summary["cli_reads"]["review_count"] == 1
+    assert summary["cli_reads"]["execution_plan_id"] == summary["execution_plan"][
+        "execution_plan_id"
+    ]
     assert summary["cli_reads"]["memory_count"] == 1
     assert summary["memory"]["source_id"] in summary["later_strategy"][
         "retrieved_memory_source_ids"

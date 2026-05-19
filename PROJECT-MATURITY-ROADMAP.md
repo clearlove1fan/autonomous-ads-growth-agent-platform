@@ -57,6 +57,7 @@ Completed:
 - Draft-only feedback optimization draft API and CLI for concrete change review.
 - Feedback optimization review API and CLI for approval, rejection, or revision
   decisions on draft-only changes.
+- Dry-run feedback execution plan API and CLI for approved review decisions.
 - Performance event idempotency and conflict protection.
 - Strategy-linked feedback context in final strategies.
 - One-command deterministic Phase 1 demo through the CLI.
@@ -166,6 +167,7 @@ Planned work:
 - Feedback optimization draft APIs/CLI for persisted performance events.
 - Feedback optimization review APIs/CLI and PostgreSQL audit state for persisted
   performance events.
+- Feedback execution plan APIs/CLI for approved feedback optimization reviews.
 - Async strategy job store and API.
 - Async strategy job submission from natural-language advertiser goals.
 - Async strategy job submission and detail lookup from the CLI.
@@ -185,8 +187,11 @@ Exit criteria:
 - Persisted feedback optimization drafts can be retrieved for concrete draft-only changes.
 - Persisted feedback optimization reviews can be recorded and retrieved for
   approval, rejection, or revision audit.
+- Approved feedback optimization reviews can produce dry-run tool intent plans
+  without live campaign mutation.
 - A live PostgreSQL walkthrough proves strategy draft -> feedback event ->
-  optimization review -> outbox memory -> API/CLI reads -> later RAG retrieval.
+  optimization review -> dry-run execution plan -> outbox memory -> API/CLI
+  reads -> later RAG retrieval.
 - Failed runs can be retried and failed/running runs can be resumed with clear semantics.
 - Strategy generation can be submitted as a pollable job with persisted status.
 - Alembic migrations create the local database from scratch.

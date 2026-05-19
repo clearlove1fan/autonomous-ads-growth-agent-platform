@@ -17,6 +17,7 @@ PROTECTED_PATHS = {
     "/campaign-events/performance/{event_id}",
     "/feedback-optimization-reviews",
     "/feedback-optimization-reviews/{review_id}",
+    "/feedback-optimization-reviews/{review_id}/execution-plan",
     "/growth-strategies",
     "/growth-strategies/from-text",
     "/growth-strategies/jobs",

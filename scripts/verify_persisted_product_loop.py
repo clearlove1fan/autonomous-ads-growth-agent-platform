@@ -250,6 +250,26 @@ def run_persisted_product_loop(
                 review_list["count"] == 1,
                 "approved review list should contain one submitted review",
             )
+            execution_plan = _api_json(
+                client.get(
+                    f"/feedback-optimization-reviews/{review_id}/execution-plan",
+                    headers=_tenant_headers(tenant_id),
+                ),
+                label="get feedback execution plan",
+            )
+            _expect(
+                execution_plan["review_id"] == review_id,
+                "execution plan should link to approved review",
+            )
+            _expect(
+                execution_plan["execution_mode"] == "dry_run",
+                "execution plan should stay in dry-run mode",
+            )
+            _expect(
+                execution_plan["steps"][0]["tool_intent"]["tool_name"]
+                == "draft_budget_reallocation",
+                "execution plan should map approved budget change to a draft tool intent",
+            )
 
             outbox_report = _invoke_cli(
                 settings,
@@ -293,6 +313,10 @@ def run_persisted_product_loop(
             cli_review = _invoke_cli(
                 settings,
                 ["get-feedback-optimization-review", review_id],
+            )
+            cli_execution_plan = _invoke_cli(
+                settings,
+                ["get-feedback-execution-plan", review_id],
             )
             cli_review_list = _invoke_cli(
                 settings,
@@ -365,6 +389,11 @@ def run_persisted_product_loop(
                 "CLI review read should match API submitted review",
             )
             _expect(
+                cli_execution_plan["execution_plan_id"]
+                == execution_plan["execution_plan_id"],
+                "CLI execution plan should match API execution plan",
+            )
+            _expect(
                 cli_review_list["count"] == 1,
                 "CLI approved review list should find submitted review",
             )
@@ -434,6 +463,12 @@ def run_persisted_product_loop(
                 "selected_change_count": len(review["selected_change_ids"]),
                 "cli_submitted_decision": cli_submitted_review["decision"],
             },
+            "execution_plan": {
+                "execution_plan_id": execution_plan["execution_plan_id"],
+                "execution_mode": execution_plan["execution_mode"],
+                "first_tool_name": execution_plan["steps"][0]["tool_intent"]["tool_name"],
+                "step_count": len(execution_plan["steps"]),
+            },
             "outbox": outbox_report,
             "memory": {
                 "source_id": memory_source_id,
@@ -447,6 +482,7 @@ def run_persisted_product_loop(
                 "first_change_type": cli_optimization_draft["changes"][0]["change_type"],
                 "review_id": cli_review["review_id"],
                 "review_count": cli_review_list["count"],
+                "execution_plan_id": cli_execution_plan["execution_plan_id"],
                 "memory_source_id": cli_memory["source_id"],
                 "event_count": cli_event_list["count"],
                 "memory_count": cli_memory_list["count"],
@@ -516,6 +552,13 @@ def render_summary(summary: dict[str, Any]) -> str:
                 f"cli_submit={summary['review']['cli_submitted_decision']}"
             ),
             (
+                "Execution plan: "
+                f"{summary['execution_plan']['execution_plan_id']} "
+                f"mode={summary['execution_plan']['execution_mode']} "
+                f"steps={summary['execution_plan']['step_count']} "
+                f"first_tool={summary['execution_plan']['first_tool_name']}"
+            ),
+            (
                 "Outbox: "
                 f"claimed={summary['outbox']['claimed']} "
                 f"completed={summary['outbox']['completed']} "
@@ -538,6 +581,7 @@ def render_summary(summary: dict[str, Any]) -> str:
                 f"first_action={summary['cli_reads']['first_action_type']} "
                 f"first_change={summary['cli_reads']['first_change_type']} "
                 f"reviews={summary['cli_reads']['review_count']} "
+                f"execution_plan={summary['cli_reads']['execution_plan_id']} "
                 f"memories={summary['cli_reads']['memory_count']}"
             ),
         ]

@@ -376,6 +376,7 @@ flowchart TD
 | CampaignFeedbackActionPlanResponse | Feedback Loop Layer | API caller, CLI user | Ranked draft-only next steps with owner role, approval status, matched strategy rules, and guardrails |
 | CampaignFeedbackOptimizationDraftResponse | Feedback Loop Layer | API caller, CLI user | Concrete draft-only budget, creative, audience, or measurement changes derived from feedback |
 | CampaignFeedbackOptimizationReviewRequest/Response | Feedback Loop Layer | API caller, CLI user | Human approval, rejection, or revision request for a reviewed optimization draft, including selected change IDs and reviewer notes |
+| CampaignFeedbackExecutionPlanResponse | Feedback Loop Layer | API caller, CLI user | Dry-run ordered tool intents, preconditions, rollback notes, and guardrails derived from an approved optimization review |
 | AdvertiserMemoryDetailResponse | Memory Store | API caller, CLI user | Public source ID, memory type, content, metadata, importance, usage count, and timestamps |
 
 ### 10.3 Strategy Generation Sequence
@@ -569,14 +570,14 @@ These decisions close a gap in the original RFC: v0.1 had a technical test plan,
 | Observability | LangSmith tracing/evals plus structured JSON logs |
 | Output | Validated JSON strategy plus human-readable summary |
 | Local Packaging | Docker Compose for FastAPI, PostgreSQL with pgvector, and LiteLLM Proxy |
-| Feedback Loop | Campaign performance event ingestion, deterministic feedback analysis, draft-only action plans, draft-only optimization proposals, and persisted human review decisions |
+| Feedback Loop | Campaign performance event ingestion, deterministic feedback analysis, draft-only action plans, draft-only optimization proposals, persisted human review decisions, and dry-run execution plans |
 
 ### 13.1 Current Implementation Status
 
 | Capability | Status | Evidence |
 |---|---|---|
 | FastAPI strategy generation | Implemented | `POST /growth-strategies` returns a validated `GrowthStrategyResponse` |
-| CLI demo and eval | Implemented | `ads-growth-agent demo`, `plan`, `plan-text`, `submit-strategy-job`, `submit-strategy-job-text`, `get-strategy-job`, `process-strategy-jobs`, `list-strategy-jobs`, `get-performance-event`, `list-performance-events`, `get-feedback-action-plan`, `get-feedback-optimization-draft`, `submit-feedback-optimization-review`, `get-feedback-optimization-review`, `list-feedback-optimization-reviews`, `get-advertiser-memory`, `list-advertiser-memories`, `analyze-performance`, `health`, `seed-knowledge`, and `eval` commands |
+| CLI demo and eval | Implemented | `ads-growth-agent demo`, `plan`, `plan-text`, `submit-strategy-job`, `submit-strategy-job-text`, `get-strategy-job`, `process-strategy-jobs`, `list-strategy-jobs`, `get-performance-event`, `list-performance-events`, `get-feedback-action-plan`, `get-feedback-optimization-draft`, `submit-feedback-optimization-review`, `get-feedback-optimization-review`, `list-feedback-optimization-reviews`, `get-feedback-execution-plan`, `get-advertiser-memory`, `list-advertiser-memories`, `analyze-performance`, `health`, `seed-knowledge`, and `eval` commands |
 | Deterministic LangGraph workflow | Implemented | Graph nodes run planner, retriever, tool_executor, critic, and finalizer |
 | Internal typed tool registry | Implemented | Unknown tools, invalid params, permission errors, and failures return structured results |
 | LiteLLM gateway | Implemented behind feature flags | Optional LLM planner/critic and structured output fallback route through LiteLLM |
@@ -588,9 +589,9 @@ These decisions close a gap in the original RFC: v0.1 had a technical test plan,
 | Async strategy job API | Implemented with v0.1 in-process executor | Jobs are queued through `/growth-strategies/jobs` or `/growth-strategies/jobs/from-text`, executed by FastAPI background tasks, and pollable through job detail API |
 | API idempotency | Implemented as opt-in Postgres backend | Same key/body replays response; same key/different body returns conflict |
 | Campaign draft persistence | Implemented as opt-in Postgres backend | Drafts remain `status=draft`, are queryable through API/CLI for review, and no live spend action is executed |
-| Campaign performance feedback loop | Implemented | Performance snapshots produce metrics, health status, matched strategy rules from `feedback_context`, recommendations, guardrails, draft-only action plans, draft-only optimization drafts, human review records, and persisted event discovery by advertiser/run/campaign/draft |
+| Campaign performance feedback loop | Implemented | Performance snapshots produce metrics, health status, matched strategy rules from `feedback_context`, recommendations, guardrails, draft-only action plans, draft-only optimization drafts, human review records, dry-run execution plans, and persisted event discovery by advertiser/run/campaign/draft |
 | Advertiser memory review | Implemented as opt-in Postgres backend | Persisted memories can be listed by advertiser/type and inspected by source ID through API/CLI |
-| Persisted product loop walkthrough | Implemented as live Postgres verifier | `python scripts/verify_persisted_product_loop.py` validates strategy draft -> feedback event -> optimization review -> outbox memory -> API/CLI reads -> later RAG retrieval |
+| Persisted product loop walkthrough | Implemented as live Postgres verifier | `python scripts/verify_persisted_product_loop.py` validates strategy draft -> feedback event -> optimization review -> dry-run execution plan -> outbox memory -> API/CLI reads -> later RAG retrieval |
 | Performance event idempotency | Implemented | Same event payload replays persisted analysis; same event ID with changed payload returns `409` |
 | Dependency readiness checks | Implemented | `/health/live` is shallow; `/health/ready` checks configured Postgres and LiteLLM dependencies |
 | Basic GitHub Actions CI | Implemented; branch protection still external | `.github/workflows/ci.yml` separates lint, unit, deterministic E2E smoke, Postgres integration, and release-readiness checks |
@@ -651,7 +652,7 @@ These decisions close a gap in the original RFC: v0.1 had a technical test plan,
 | Run lifecycle | Verify running/completed/failed transitions, ordered step persistence, run detail reads, retry eligibility, and resume rejection rules |
 | Async strategy jobs | Verify job creation, polling, completed result persistence, failed job recording, and live Postgres job storage |
 | API idempotency | Verify same idempotency key and same body replays the response, while changed bodies return conflict |
-| Campaign feedback | Verify CTR/CVR/CPA/ROAS calculation, health status selection, recommendation generation, action-plan generation, optimization-draft generation, human review recording, and draft-only guardrails |
+| Campaign feedback | Verify CTR/CVR/CPA/ROAS calculation, health status selection, recommendation generation, action-plan generation, optimization-draft generation, human review recording, dry-run execution-plan generation, and draft-only guardrails |
 | Performance event idempotency | Verify same `event_id` and event hash replays stored analysis, while conflicting payloads return `409` |
 | Live Postgres integration | Verify Alembic migrations, Postgres stores, checkpointer setup, tenant scoping, and integration tests against Docker Postgres |
 | End-to-end API or CLI workflow | Run a seeded advertiser brief through real API/CLI boundaries and validate final strategy schema, run metadata, retrieved sources, budget consistency, draft-only action safety, persisted draft/event/memory reads, and later RAG retrieval |
@@ -706,7 +707,7 @@ protection, which must be configured as a repository setting.
 | Eval sign-off | Minimum eval dataset and pass thresholds defined | Local eval suite covers planner orchestration, retrieval grounding, critic quality, revision behavior, budget, tool use, safety, and observability; broader dataset review pending |
 | Observability sign-off | LangSmith traces and error metadata verified | Run metadata and JSON logs implemented; metrics/dashboard pending |
 | Local stack readiness | Docker Compose starts FastAPI, PostgreSQL with pgvector, and LiteLLM Proxy | Implemented; local environment verification required per machine |
-| Demo readiness | End-to-end workflow runs with seeded sample advertiser cases | Ready for deterministic local MVP demo; curated positive/negative verifiers, persisted product-loop verifier, draft-only action-plan, optimization-draft, and review reads, and expected output excerpts are available |
+| Demo readiness | End-to-end workflow runs with seeded sample advertiser cases | Ready for deterministic local MVP demo; curated positive/negative verifiers, persisted product-loop verifier, draft-only action-plan, optimization-draft, review, and execution-plan reads, and expected output excerpts are available |
 | CI/CD readiness | Automated CI runs lint, unit tests, and deterministic end-to-end smoke checks | Implemented in GitHub Actions; branch protection pending |
 | Dependency lock readiness | Reproducible lock file is committed and used by CI/demo install instructions | Implemented |
 | Branch protection readiness | `main` requires PR review and passing checks before merge | Blocked by GitHub private-repository plan limits; documented policy is ready to apply |
@@ -861,6 +862,7 @@ The first version should prioritize a complete, traceable, and recoverable end-t
 | 2026-05-19 | Add feedback action plan read surfaces | Persisted performance feedback now exposes ranked draft-only next steps through API/CLI without requiring users to parse raw analysis JSON | Accepted |
 | 2026-05-19 | Add feedback optimization draft read surfaces | Persisted performance feedback now exposes concrete draft-only budget, creative, audience, or measurement changes through API/CLI | Accepted |
 | 2026-05-19 | Add feedback optimization review persistence | Human reviewers can approve, reject, or request revision for draft-only optimization proposals through API/CLI with PostgreSQL audit state | Accepted |
+| 2026-05-19 | Add feedback execution plan preview | Approved optimization reviews now produce dry-run draft tool intents through API/CLI without mutating live campaigns | Accepted |
 | 2026-05-18 | Expand local agent eval coverage | Eval suite now scores planner orchestration, retrieval grounding, critic quality gate, revision behavior, strategy completeness, safety, and observability | Accepted |
 | 2026-05-18 | Complete Phase 1 MVP readiness pass | README, RFC/HLD, roadmap, eval scope, and changelog now describe the implemented deterministic MVP path; branch protection remains a Phase 1.5 external repository setting | Accepted |
 | 2026-05-18 | Prepare v0.1.0 demo release | `CHANGELOG.md` now has a `v0.1.0` entry, release verification references CI run `26022065806`, and branch protection is recorded as blocked by GitHub private-repository plan limits | Accepted |

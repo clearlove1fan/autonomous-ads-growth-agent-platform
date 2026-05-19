@@ -25,6 +25,7 @@ from ads_growth_agent.contracts import (
     CampaignDraftListResponse,
     CampaignFeedbackActionPlanResponse,
     CampaignFeedbackAnalysis,
+    CampaignFeedbackExecutionPlanResponse,
     CampaignFeedbackOptimizationDraftResponse,
     CampaignFeedbackOptimizationReviewListResponse,
     CampaignFeedbackOptimizationReviewRequest,
@@ -50,6 +51,10 @@ from ads_growth_agent.feedback import (
     analyze_campaign_performance_event,
     build_campaign_feedback_action_plan,
     build_campaign_feedback_optimization_draft,
+)
+from ads_growth_agent.feedback_execution_plan import (
+    FeedbackExecutionPlanNotApprovedError,
+    build_feedback_execution_plan,
 )
 from ads_growth_agent.feedback_review_store_factory import build_configured_feedback_review_store
 from ads_growth_agent.graph import strategy_id_for_brief
@@ -1060,6 +1065,60 @@ def get_feedback_optimization_review(
     response.headers["Optimization-Draft-ID"] = review.optimization_draft_id
     response.headers["Feedback-ID"] = review.feedback_id
     return review
+
+
+@app.get(
+    "/feedback-optimization-reviews/{review_id}/execution-plan",
+    response_model=CampaignFeedbackExecutionPlanResponse,
+    dependencies=[Depends(require_api_auth)],
+)
+def get_feedback_execution_plan(
+    review_id: str,
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    review_store: Annotated[
+        FeedbackOptimizationReviewStore,
+        Depends(get_runtime_feedback_review_store),
+    ],
+) -> CampaignFeedbackExecutionPlanResponse:
+    _require_feedback_review_persistence_enabled(settings)
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    review = review_store.get_review(review_id)
+    if review is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": "Feedback optimization review was not found for the effective tenant.",
+                "error_code": "FEEDBACK_OPTIMIZATION_REVIEW_NOT_FOUND",
+                "review_id": review_id,
+            },
+        )
+    try:
+        execution_plan = build_feedback_execution_plan(review)
+    except FeedbackExecutionPlanNotApprovedError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": str(exc),
+                "error_code": "FEEDBACK_EXECUTION_PLAN_NOT_APPROVED",
+                "review_id": exc.review_id,
+                "decision": exc.decision.value,
+            },
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": str(exc),
+                "error_code": "FEEDBACK_EXECUTION_PLAN_INVALID",
+            },
+        ) from exc
+
+    response.headers["Feedback-Review-ID"] = review.review_id
+    response.headers["Feedback-Execution-Plan-ID"] = execution_plan.execution_plan_id
+    response.headers["Optimization-Draft-ID"] = review.optimization_draft_id
+    response.headers["Feedback-ID"] = review.feedback_id
+    return execution_plan
 
 
 def _raise_performance_event_conflict(event_id: str) -> None:
