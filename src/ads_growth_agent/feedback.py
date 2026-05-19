@@ -6,11 +6,13 @@ from ads_growth_agent.contracts import (
     AgentRole,
     CampaignFeedbackActionPlanResponse,
     CampaignFeedbackAnalysis,
+    CampaignFeedbackOptimizationDraftResponse,
     CampaignPerformanceEventDetailResponse,
     CampaignPerformanceEventRequest,
     FeedbackActionPlanStep,
     FeedbackActionType,
     FeedbackHealthStatus,
+    FeedbackOptimizationDraftChange,
     FeedbackRecommendation,
     RiskLevel,
     StrategyRuleMatch,
@@ -94,6 +96,35 @@ def build_campaign_feedback_action_plan(
     )
 
 
+def build_campaign_feedback_optimization_draft(
+    event: CampaignPerformanceEventDetailResponse,
+) -> CampaignFeedbackOptimizationDraftResponse:
+    """Build a concrete draft-only optimization proposal from feedback."""
+
+    action_plan = build_campaign_feedback_action_plan(event)
+    changes = [_optimization_change(step) for step in action_plan.steps]
+    return CampaignFeedbackOptimizationDraftResponse(
+        optimization_draft_id=_optimization_draft_id(event.event_id),
+        event_id=event.event_id,
+        feedback_id=action_plan.feedback_id,
+        advertiser_id=event.advertiser_id,
+        run_id=event.run_id,
+        campaign_id=event.campaign_id,
+        base_draft_id=action_plan.draft_id,
+        strategy_id=action_plan.strategy_id,
+        status="draft",
+        health_status=action_plan.health_status,
+        summary=_optimization_draft_summary(action_plan, changes),
+        changes=changes,
+        requires_human_approval=any(change.requires_human_approval for change in changes),
+        guardrails=[
+            *action_plan.guardrails,
+            "Optimization draft is review-only and does not mutate live campaign state.",
+        ],
+        created_at=action_plan.created_at,
+    )
+
+
 def _metrics_summary(event: CampaignPerformanceEventRequest) -> dict[str, str | int | None]:
     metrics = event.metrics
     ctr = _ratio(metrics.clicks, metrics.impressions)
@@ -167,6 +198,123 @@ def _action_plan_step(
     )
 
 
+def _optimization_change(step: FeedbackActionPlanStep) -> FeedbackOptimizationDraftChange:
+    change_type = _change_type_for_action(step.action_type)
+    params = {
+        **step.params,
+        "source_action_type": step.action_type.value,
+        "source_step_status": step.status,
+    }
+    params.update(_draft_params_for_action(step))
+    return FeedbackOptimizationDraftChange(
+        change_id=f"{step.step_id}:optimization_draft",
+        source_step_id=step.step_id,
+        change_type=change_type,
+        title=_draft_title_for_change(step, change_type=change_type),
+        description=_draft_description_for_change(step, change_type=change_type),
+        owner_role=step.owner_role,
+        risk_level=step.risk_level,
+        status="draft_change" if step.requires_human_approval else "monitor_only",
+        requires_human_approval=step.requires_human_approval,
+        params=params,
+    )
+
+
+def _change_type_for_action(action_type: FeedbackActionType):
+    match action_type:
+        case FeedbackActionType.ADJUST_BUDGET:
+            return "budget"
+        case FeedbackActionType.REFRESH_CREATIVE:
+            return "creative"
+        case FeedbackActionType.NARROW_AUDIENCE:
+            return "audience"
+        case FeedbackActionType.INSPECT_TRACKING | FeedbackActionType.CONTINUE_MONITORING:
+            return "measurement"
+
+
+def _draft_title_for_change(
+    step: FeedbackActionPlanStep,
+    *,
+    change_type: str,
+) -> str:
+    match change_type:
+        case "budget":
+            return "Draft budget reallocation"
+        case "creative":
+            return "Draft creative refresh"
+        case "audience":
+            return "Draft audience refinement"
+        case "measurement":
+            return "Draft measurement follow-up"
+        case _:
+            return step.title
+
+
+def _draft_description_for_change(
+    step: FeedbackActionPlanStep,
+    *,
+    change_type: str,
+) -> str:
+    base = step.recommended_action
+    match change_type:
+        case "budget":
+            return (
+                f"{base} Keep the change in draft mode until a reviewer approves budget "
+                "movement."
+            )
+        case "creative":
+            return (
+                f"{base} Prepare new creative angles for review before replacing active ads."
+            )
+        case "audience":
+            return (
+                f"{base} Prepare narrowed targeting guidance without changing live audiences."
+            )
+        case "measurement":
+            return f"{base} Treat this as an investigation or monitoring task."
+        case _:
+            return base
+
+
+def _draft_params_for_action(step: FeedbackActionPlanStep) -> dict[str, object]:
+    match step.action_type:
+        case FeedbackActionType.ADJUST_BUDGET:
+            return {
+                "budget_guardrail": "Do not increase total budget without human approval.",
+                "recommended_budget_shift": (
+                    "Reduce broad exploration and protect retargeting or proven segments."
+                ),
+            }
+        case FeedbackActionType.REFRESH_CREATIVE:
+            return {
+                "creative_refresh_focus": [
+                    "conversion proof",
+                    "first useful product moment",
+                    "clearer value proposition",
+                ],
+            }
+        case FeedbackActionType.NARROW_AUDIENCE:
+            return {
+                "audience_refinement": (
+                    "Prioritize high-intent and previously engaged segments before scaling."
+                ),
+            }
+        case FeedbackActionType.INSPECT_TRACKING:
+            return {
+                "measurement_checklist": [
+                    "conversion event fires",
+                    "landing-page handoff works",
+                    "attribution window matches campaign objective",
+                ],
+            }
+        case FeedbackActionType.CONTINUE_MONITORING:
+            return {
+                "monitor_until": (
+                    "Collect enough impressions, clicks, or spend before changing drafts."
+                ),
+            }
+
+
 def _matched_rule_ids(recommendation: FeedbackRecommendation) -> list[str]:
     raw_rule_ids = recommendation.params.get("matched_strategy_rule_ids", [])
     if not isinstance(raw_rule_ids, list):
@@ -223,6 +371,22 @@ def _action_plan_summary(analysis: CampaignFeedbackAnalysis) -> str:
         f"Feedback is {analysis.health_status.value} for event {analysis.event_id}."
         f"{metric_note} Generated {len(analysis.recommendations)} draft-only next step(s)."
     )
+
+
+def _optimization_draft_summary(
+    action_plan: CampaignFeedbackActionPlanResponse,
+    changes: list[FeedbackOptimizationDraftChange],
+) -> str:
+    change_types = ", ".join(sorted({change.change_type for change in changes}))
+    return (
+        f"Draft optimization proposal for {action_plan.health_status.value} feedback on "
+        f"event {action_plan.event_id}. Includes {len(changes)} reviewable change(s)"
+        f" across {change_types}."
+    )
+
+
+def _optimization_draft_id(event_id: str) -> str:
+    return f"optimization_draft_{uuid5(NAMESPACE_URL, event_id).hex[:16]}"
 
 
 def _health_status(

@@ -175,6 +175,25 @@ def run_persisted_product_loop(
                 action_plan["steps"][0]["status"] == "draft_recommendation",
                 "action plan should keep optimization steps draft-only",
             )
+            optimization_draft = _api_json(
+                client.get(
+                    f"/campaign-events/performance/{event_id}/optimization-draft",
+                    headers=_tenant_headers(tenant_id),
+                ),
+                label="get feedback optimization draft",
+            )
+            _expect(
+                optimization_draft["event_id"] == event_id,
+                "optimization draft should link back to performance event",
+            )
+            _expect(
+                optimization_draft["status"] == "draft",
+                "optimization draft should remain draft-only",
+            )
+            _expect(
+                optimization_draft["changes"][0]["change_type"] == "budget",
+                "optimization draft should translate high CPA feedback into a budget change",
+            )
 
             outbox_report = _invoke_cli(
                 settings,
@@ -211,6 +230,10 @@ def run_persisted_product_loop(
                 settings,
                 ["get-feedback-action-plan", event_id],
             )
+            cli_optimization_draft = _invoke_cli(
+                settings,
+                ["get-feedback-optimization-draft", event_id],
+            )
             cli_event_list = _invoke_cli(
                 settings,
                 [
@@ -246,6 +269,11 @@ def run_persisted_product_loop(
                 cli_action_plan["steps"][0]["action_type"]
                 == action_plan["steps"][0]["action_type"],
                 "CLI action plan should match API action plan",
+            )
+            _expect(
+                cli_optimization_draft["changes"][0]["change_type"]
+                == optimization_draft["changes"][0]["change_type"],
+                "CLI optimization draft should match API optimization draft",
             )
             _expect(cli_event_list["count"] == 1, "CLI event list should find feedback event")
             _expect(
@@ -297,6 +325,12 @@ def run_persisted_product_loop(
                 "first_action_type": action_plan["steps"][0]["action_type"],
                 "first_action_status": action_plan["steps"][0]["status"],
             },
+            "optimization_draft": {
+                "optimization_draft_id": optimization_draft["optimization_draft_id"],
+                "change_count": len(optimization_draft["changes"]),
+                "first_change_type": optimization_draft["changes"][0]["change_type"],
+                "status": optimization_draft["status"],
+            },
             "outbox": outbox_report,
             "memory": {
                 "source_id": memory_source_id,
@@ -307,6 +341,7 @@ def run_persisted_product_loop(
                 "draft_id": cli_draft["draft_id"],
                 "event_id": cli_event["event_id"],
                 "first_action_type": cli_action_plan["steps"][0]["action_type"],
+                "first_change_type": cli_optimization_draft["changes"][0]["change_type"],
                 "memory_source_id": cli_memory["source_id"],
                 "event_count": cli_event_list["count"],
                 "memory_count": cli_memory_list["count"],
@@ -361,6 +396,13 @@ def render_summary(summary: dict[str, Any]) -> str:
                 f"status={summary['action_plan']['first_action_status']}"
             ),
             (
+                "Optimization draft: "
+                f"{summary['optimization_draft']['optimization_draft_id']} "
+                f"changes={summary['optimization_draft']['change_count']} "
+                f"first={summary['optimization_draft']['first_change_type']} "
+                f"status={summary['optimization_draft']['status']}"
+            ),
+            (
                 "Outbox: "
                 f"claimed={summary['outbox']['claimed']} "
                 f"completed={summary['outbox']['completed']} "
@@ -381,6 +423,7 @@ def render_summary(summary: dict[str, Any]) -> str:
                 "CLI reads: "
                 f"events={summary['cli_reads']['event_count']} "
                 f"first_action={summary['cli_reads']['first_action_type']} "
+                f"first_change={summary['cli_reads']['first_change_type']} "
                 f"memories={summary['cli_reads']['memory_count']}"
             ),
         ]

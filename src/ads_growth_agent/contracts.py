@@ -732,6 +732,37 @@ class FeedbackActionPlanStep(BaseModel):
         return self
 
 
+FeedbackOptimizationChangeType = Literal[
+    "budget",
+    "creative",
+    "audience",
+    "measurement",
+]
+
+
+class FeedbackOptimizationDraftChange(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    change_id: str = Field(min_length=1, max_length=220)
+    source_step_id: str = Field(min_length=1, max_length=200)
+    change_type: FeedbackOptimizationChangeType
+    title: str = Field(min_length=1, max_length=160)
+    description: str = Field(min_length=1, max_length=1_000)
+    owner_role: AgentRole
+    risk_level: RiskLevel = RiskLevel.LOW
+    status: Literal["draft_change", "monitor_only"]
+    requires_human_approval: bool = True
+    params: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_change_status(self) -> "FeedbackOptimizationDraftChange":
+        if self.status == "monitor_only" and self.requires_human_approval:
+            raise ValueError("monitor-only draft changes should not require human approval")
+        if self.status == "draft_change" and not self.requires_human_approval:
+            raise ValueError("draft changes require human approval")
+        return self
+
+
 class CampaignFeedbackActionPlanResponse(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -745,6 +776,26 @@ class CampaignFeedbackActionPlanResponse(BaseModel):
     health_status: FeedbackHealthStatus
     summary: str = Field(min_length=1, max_length=1_000)
     steps: list[FeedbackActionPlanStep] = Field(min_length=1)
+    guardrails: list[str] = Field(default_factory=list)
+    created_at: datetime
+
+
+class CampaignFeedbackOptimizationDraftResponse(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    optimization_draft_id: str = Field(min_length=1, max_length=160)
+    event_id: str = Field(min_length=1, max_length=128)
+    feedback_id: str = Field(min_length=1, max_length=160)
+    advertiser_id: str = Field(min_length=1, max_length=128)
+    run_id: str | None = Field(default=None, min_length=1, max_length=128)
+    campaign_id: str | None = Field(default=None, min_length=1, max_length=128)
+    base_draft_id: str | None = Field(default=None, min_length=1, max_length=160)
+    strategy_id: str | None = Field(default=None, min_length=1, max_length=128)
+    status: Literal["draft"]
+    health_status: FeedbackHealthStatus
+    summary: str = Field(min_length=1, max_length=1_000)
+    changes: list[FeedbackOptimizationDraftChange] = Field(min_length=1)
+    requires_human_approval: bool
     guardrails: list[str] = Field(default_factory=list)
     created_at: datetime
 

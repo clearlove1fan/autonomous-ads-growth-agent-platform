@@ -24,6 +24,8 @@
   draft, feedback event, outbox memory, API/CLI reads, and later RAG retrieval.
 - Added draft-only feedback action plans through API and CLI for persisted
   campaign performance events.
+- Added draft-only feedback optimization drafts through API and CLI for
+  persisted campaign performance events.
 
 ## v0.1.0 - 2026-05-18
 

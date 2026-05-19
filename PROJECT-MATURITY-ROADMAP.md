@@ -11,7 +11,7 @@ This roadmap defines the order in which the Autonomous Ads Growth Agent Platform
 | Production architecture skeleton | 68-72% | 75-80% | In progress |
 | True production-ready system | 15-20% | 60%+ for this repo | Early |
 
-These numbers are intentionally conservative. The project now has a credible agent-runtime and production-skeleton foundation, including persistence, tenant scoping, retry/resume, checkpointing, async strategy jobs, event feedback, feedback action plans, performance event discovery, advertiser memory write/read surfaces, dependency locking, explicit CI quality gates, a deterministic one-command MVP demo, local agent evals, curated positive/negative demo verifiers, a persisted product loop verifier, and an optional local API key boundary. Phase 1 is complete for the v0.1 MVP, while branch protection remains a GitHub repository setting tracked in Phase 1.5 and is currently blocked for the private repo by GitHub plan limits. The project should still not claim production-grade availability, full security, or distributed-system readiness yet.
+These numbers are intentionally conservative. The project now has a credible agent-runtime and production-skeleton foundation, including persistence, tenant scoping, retry/resume, checkpointing, async strategy jobs, event feedback, feedback action plans, feedback optimization drafts, performance event discovery, advertiser memory write/read surfaces, dependency locking, explicit CI quality gates, a deterministic one-command MVP demo, local agent evals, curated positive/negative demo verifiers, a persisted product loop verifier, and an optional local API key boundary. Phase 1 is complete for the v0.1 MVP, while branch protection remains a GitHub repository setting tracked in Phase 1.5 and is currently blocked for the private repo by GitHub plan limits. The project should still not claim production-grade availability, full security, or distributed-system readiness yet.
 
 ## Phase 1: Interview-Quality Technical Project
 
@@ -54,6 +54,7 @@ Completed:
 - Campaign performance event ingestion and deterministic feedback analysis.
 - Campaign performance event detail/list APIs and CLI for feedback review.
 - Draft-only feedback action plan API and CLI for ranked next-step review.
+- Draft-only feedback optimization draft API and CLI for concrete change review.
 - Performance event idempotency and conflict protection.
 - Strategy-linked feedback context in final strategies.
 - One-command deterministic Phase 1 demo through the CLI.
@@ -160,6 +161,7 @@ Planned work:
 - Campaign performance event discovery APIs/CLI with advertiser, run, campaign,
   draft, and event-type filters.
 - Feedback action plan APIs/CLI for persisted performance events.
+- Feedback optimization draft APIs/CLI for persisted performance events.
 - Async strategy job store and API.
 - Async strategy job submission from natural-language advertiser goals.
 - Async strategy job submission and detail lookup from the CLI.
@@ -176,6 +178,7 @@ Exit criteria:
 - Campaign performance events are persisted, replayable, and conflict-safe.
 - Persisted campaign performance events can be discovered for review and audit.
 - Persisted feedback action plans can be retrieved for ranked draft-only next steps.
+- Persisted feedback optimization drafts can be retrieved for concrete draft-only changes.
 - A live PostgreSQL walkthrough proves strategy draft -> feedback event ->
   outbox memory -> API/CLI reads -> later RAG retrieval.
 - Failed runs can be retried and failed/running runs can be resumed with clear semantics.

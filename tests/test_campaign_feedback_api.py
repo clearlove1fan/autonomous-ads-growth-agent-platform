@@ -430,6 +430,74 @@ def test_get_campaign_feedback_action_plan_api_returns_404_when_missing() -> Non
     assert store.requested_event_ids == ["missing_event"]
 
 
+def test_get_campaign_feedback_optimization_draft_api_returns_tenant_scoped_draft(
+    monkeypatch,
+) -> None:
+    store = CapturingPerformanceEventStore()
+    event = api_module.CampaignPerformanceEventRequest.model_validate(
+        _event_payload_with_strategy_context()
+    )
+    store.detail = _event_detail(event)
+    captured: dict[str, str] = {}
+
+    def fake_build_configured_performance_event_store(
+        settings: Settings,
+    ) -> CapturingPerformanceEventStore:
+        captured["tenant_id"] = settings.tenant_id
+        return store
+
+    monkeypatch.setattr(
+        api_module,
+        "build_configured_performance_event_store",
+        fake_build_configured_performance_event_store,
+    )
+    api_app.dependency_overrides[get_runtime_settings] = lambda: Settings(
+        performance_event_persistence_backend="postgres",
+        tenant_id="process_default",
+    )
+    try:
+        response = TestClient(api_app).get(
+            f"/campaign-events/performance/{event.event_id}/optimization-draft",
+            headers={"X-Tenant-ID": "tenant_api"},
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert response.headers["x-tenant-id"] == "tenant_api"
+    assert response.headers["feedback-id"] == store.detail.analysis.feedback_id
+    assert response.headers["optimization-draft-id"].startswith("optimization_draft_")
+    assert captured == {"tenant_id": "tenant_api"}
+    assert store.requested_event_ids == [event.event_id]
+    assert payload["event_id"] == event.event_id
+    assert payload["base_draft_id"] == "draft_fittrack"
+    assert payload["strategy_id"] == "strategy_001"
+    assert payload["status"] == "draft"
+    assert payload["requires_human_approval"] is True
+    assert payload["changes"][0]["change_type"] == "budget"
+    assert payload["changes"][0]["status"] == "draft_change"
+    assert payload["changes"][0]["params"]["budget_guardrail"].startswith("Do not")
+
+
+def test_get_campaign_feedback_optimization_draft_api_returns_404_when_missing() -> None:
+    store = CapturingPerformanceEventStore()
+    api_app.dependency_overrides[get_runtime_settings] = lambda: Settings(
+        performance_event_persistence_backend="postgres"
+    )
+    api_app.dependency_overrides[get_runtime_performance_event_store] = lambda: store
+    try:
+        response = TestClient(api_app).get(
+            "/campaign-events/performance/missing_event/optimization-draft"
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["error_code"] == "PERFORMANCE_EVENT_NOT_FOUND"
+    assert store.requested_event_ids == ["missing_event"]
+
+
 def test_list_campaign_performance_events_api_filters_recent_events(
     monkeypatch,
 ) -> None:
@@ -569,6 +637,54 @@ def test_get_feedback_action_plan_cli_reports_missing_event(monkeypatch) -> None
     )
 
     result = CliRunner().invoke(cli_app, ["get-feedback-action-plan", "missing_event"])
+
+    assert result.exit_code == 1
+    assert "Performance event not found: missing_event" in result.stderr
+
+
+def test_get_feedback_optimization_draft_cli_returns_draft(monkeypatch) -> None:
+    event = api_module.CampaignPerformanceEventRequest.model_validate(
+        _event_payload_with_strategy_context()
+    )
+    detail = _event_detail(event)
+    store = CapturingPerformanceEventStore(details=[detail])
+
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.get_settings",
+        lambda: Settings(tenant_id="tenant_cli"),
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_performance_event_store",
+        lambda settings: store,
+    )
+
+    result = CliRunner().invoke(
+        cli_app,
+        ["get-feedback-optimization-draft", event.event_id],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["event_id"] == event.event_id
+    assert payload["status"] == "draft"
+    assert payload["changes"][0]["change_type"] == "budget"
+    assert payload["changes"][0]["requires_human_approval"] is True
+
+
+def test_get_feedback_optimization_draft_cli_reports_missing_event(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.get_settings",
+        lambda: Settings(tenant_id="tenant_cli"),
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_performance_event_store",
+        lambda settings: CapturingPerformanceEventStore(),
+    )
+
+    result = CliRunner().invoke(
+        cli_app,
+        ["get-feedback-optimization-draft", "missing_event"],
+    )
 
     assert result.exit_code == 1
     assert "Performance event not found: missing_event" in result.stderr

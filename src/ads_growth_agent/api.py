@@ -25,6 +25,7 @@ from ads_growth_agent.contracts import (
     CampaignDraftListResponse,
     CampaignFeedbackActionPlanResponse,
     CampaignFeedbackAnalysis,
+    CampaignFeedbackOptimizationDraftResponse,
     CampaignPerformanceEventDetailResponse,
     CampaignPerformanceEventListResponse,
     CampaignPerformanceEventRequest,
@@ -44,6 +45,7 @@ from ads_growth_agent.contracts import (
 from ads_growth_agent.feedback import (
     analyze_campaign_performance_event,
     build_campaign_feedback_action_plan,
+    build_campaign_feedback_optimization_draft,
 )
 from ads_growth_agent.graph import strategy_id_for_brief
 from ads_growth_agent.health import ReadinessResponse, check_readiness
@@ -903,6 +905,37 @@ def get_campaign_feedback_action_plan(
         )
     response.headers["Feedback-ID"] = event.analysis.feedback_id
     return build_campaign_feedback_action_plan(event)
+
+
+@app.get(
+    "/campaign-events/performance/{event_id}/optimization-draft",
+    response_model=CampaignFeedbackOptimizationDraftResponse,
+    dependencies=[Depends(require_api_auth)],
+)
+def get_campaign_feedback_optimization_draft(
+    event_id: str,
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    event_store: Annotated[
+        CampaignPerformanceEventStore,
+        Depends(get_runtime_performance_event_store),
+    ],
+) -> CampaignFeedbackOptimizationDraftResponse:
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    event = event_store.get_event(event_id)
+    if event is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": "Campaign performance event was not found for the effective tenant.",
+                "error_code": "PERFORMANCE_EVENT_NOT_FOUND",
+                "event_id": event_id,
+            },
+        )
+    draft = build_campaign_feedback_optimization_draft(event)
+    response.headers["Feedback-ID"] = event.analysis.feedback_id
+    response.headers["Optimization-Draft-ID"] = draft.optimization_draft_id
+    return draft
 
 
 def _raise_performance_event_conflict(event_id: str) -> None:

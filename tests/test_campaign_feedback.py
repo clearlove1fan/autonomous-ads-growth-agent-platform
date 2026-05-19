@@ -12,6 +12,7 @@ from ads_growth_agent.contracts import (
 from ads_growth_agent.feedback import (
     analyze_campaign_performance_event,
     build_campaign_feedback_action_plan,
+    build_campaign_feedback_optimization_draft,
 )
 
 
@@ -225,3 +226,61 @@ def test_feedback_action_plan_ranks_draft_only_next_steps() -> None:
     assert action_plan.steps[1].owner_role == AgentRole.CREATIVE_STRATEGIST
     assert action_plan.steps[1].tool_name == "generate_creative_brief"
     assert action_plan.guardrails[-1].startswith("Action plan steps are recommendations")
+
+
+def test_feedback_optimization_draft_maps_action_steps_to_draft_changes() -> None:
+    event = CampaignPerformanceEventRequest(
+        event_id="evt_optimization_draft",
+        advertiser_id="adv_fitness_001",
+        run_id="run_001",
+        campaign_id="cmp_fittrack",
+        draft_id="draft_fittrack",
+        objective=CampaignObjective.REGISTRATIONS,
+        occurred_at="2026-05-12T12:00:00Z",
+        metrics=PerformanceMetrics(
+            impressions=10_000,
+            clicks=500,
+            spend="1000.00",
+            conversions=20,
+        ),
+        target_cpa="20.00",
+    )
+    analysis = analyze_campaign_performance_event(event)
+    detail = CampaignPerformanceEventDetailResponse(
+        event_id=event.event_id,
+        advertiser_id=event.advertiser_id,
+        run_id=event.run_id,
+        campaign_id=event.campaign_id,
+        draft_id=event.draft_id,
+        objective=event.objective,
+        event_type=event.event_type,
+        occurred_at=event.occurred_at,
+        metrics=event.metrics,
+        status="analyzed",
+        metadata={},
+        analysis=analysis,
+        created_at=analysis.created_at,
+        updated_at=analysis.created_at,
+    )
+
+    optimization_draft = build_campaign_feedback_optimization_draft(detail)
+
+    assert optimization_draft.optimization_draft_id.startswith("optimization_draft_")
+    assert optimization_draft.event_id == "evt_optimization_draft"
+    assert optimization_draft.base_draft_id == "draft_fittrack"
+    assert optimization_draft.status == "draft"
+    assert optimization_draft.requires_human_approval is True
+    assert "2 reviewable change(s)" in optimization_draft.summary
+    assert [change.change_type for change in optimization_draft.changes] == [
+        "budget",
+        "creative",
+    ]
+    assert optimization_draft.changes[0].status == "draft_change"
+    assert optimization_draft.changes[0].requires_human_approval is True
+    assert optimization_draft.changes[0].params["budget_guardrail"].startswith("Do not")
+    assert optimization_draft.changes[1].params["creative_refresh_focus"] == [
+        "conversion proof",
+        "first useful product moment",
+        "clearer value proposition",
+    ]
+    assert optimization_draft.guardrails[-1].startswith("Optimization draft is review-only")

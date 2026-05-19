@@ -32,6 +32,7 @@ from ads_growth_agent.evaluation import load_eval_cases, run_local_eval_suite
 from ads_growth_agent.feedback import (
     analyze_campaign_performance_event,
     build_campaign_feedback_action_plan,
+    build_campaign_feedback_optimization_draft,
 )
 from ads_growth_agent.logging_config import configure_logging
 from ads_growth_agent.outbox import process_configured_outbox
@@ -273,6 +274,19 @@ def get_feedback_action_plan(event_id: str = PERFORMANCE_EVENT_ID_ARGUMENT) -> N
         raise typer.Exit(1)
     action_plan = build_campaign_feedback_action_plan(event)
     typer.echo(action_plan.model_dump_json(indent=2))
+
+
+@app.command("get-feedback-optimization-draft")
+def get_feedback_optimization_draft(event_id: str = PERFORMANCE_EVENT_ID_ARGUMENT) -> None:
+    """Fetch a draft-only optimization proposal for one persisted feedback event."""
+    settings = get_settings()
+    store = build_configured_performance_event_store(settings)
+    event = store.get_event(event_id)
+    if event is None:
+        typer.echo(f"Performance event not found: {event_id}", err=True)
+        raise typer.Exit(1)
+    optimization_draft = build_campaign_feedback_optimization_draft(event)
+    typer.echo(optimization_draft.model_dump_json(indent=2))
 
 
 @app.command("list-performance-events")
