@@ -156,6 +156,54 @@ campaign_performance_events = sa.Table(
     ),
 )
 
+feedback_optimization_reviews = sa.Table(
+    "feedback_optimization_reviews",
+    metadata,
+    tenant_column(),
+    sa.Column("review_id", sa.Text(), nullable=False),
+    sa.Column("optimization_draft_id", sa.Text(), nullable=False),
+    sa.Column("event_id", sa.Text(), nullable=False),
+    sa.Column("feedback_id", sa.Text(), nullable=False),
+    sa.Column("advertiser_id", sa.Text(), nullable=False),
+    sa.Column("run_id", sa.Text(), nullable=True),
+    sa.Column("campaign_id", sa.Text(), nullable=True),
+    sa.Column("base_draft_id", sa.Text(), nullable=True),
+    sa.Column("strategy_id", sa.Text(), nullable=True),
+    sa.Column("decision", sa.Text(), nullable=False),
+    sa.Column("reviewer_id", sa.Text(), nullable=False),
+    sa.Column("notes", sa.Text(), nullable=True),
+    sa.Column(
+        "selected_change_ids",
+        postgresql.JSONB(),
+        nullable=False,
+        server_default=sa.text("'[]'::jsonb"),
+    ),
+    sa.Column("draft_snapshot", postgresql.JSONB(), nullable=False),
+    sa.Column(
+        "metadata", postgresql.JSONB(), nullable=False, server_default=sa.text("'{}'::jsonb")
+    ),
+    *partition_columns(),
+    *timestamp_columns(),
+    sa.PrimaryKeyConstraint("tenant_id", "review_id"),
+    sa.ForeignKeyConstraint(
+        ["tenant_id", "event_id"],
+        ["campaign_performance_events.tenant_id", "campaign_performance_events.event_id"],
+        ondelete="CASCADE",
+    ),
+    sa.ForeignKeyConstraint(
+        ["tenant_id", "advertiser_id"],
+        ["advertisers.tenant_id", "advertisers.advertiser_id"],
+    ),
+    sa.CheckConstraint(
+        "decision in ('approved', 'rejected', 'needs_revision')",
+        name="feedback_optimization_review_decision",
+    ),
+    sa.CheckConstraint(
+        f"partition_bucket >= 0 and partition_bucket < {PARTITION_BUCKETS}",
+        name="feedback_optimization_review_partition_bucket_range",
+    ),
+)
+
 strategy_jobs = sa.Table(
     "strategy_jobs",
     metadata,
@@ -543,6 +591,36 @@ sa.Index(
     campaign_performance_events.c.partition_bucket,
 )
 sa.Index(
+    "ix_feedback_optimization_reviews_event_created",
+    feedback_optimization_reviews.c.tenant_id,
+    feedback_optimization_reviews.c.event_id,
+    feedback_optimization_reviews.c.created_at,
+)
+sa.Index(
+    "ix_feedback_optimization_reviews_draft_created",
+    feedback_optimization_reviews.c.tenant_id,
+    feedback_optimization_reviews.c.optimization_draft_id,
+    feedback_optimization_reviews.c.created_at,
+)
+sa.Index(
+    "ix_feedback_optimization_reviews_advertiser_created",
+    feedback_optimization_reviews.c.tenant_id,
+    feedback_optimization_reviews.c.advertiser_id,
+    feedback_optimization_reviews.c.created_at,
+)
+sa.Index(
+    "ix_feedback_optimization_reviews_decision_created",
+    feedback_optimization_reviews.c.tenant_id,
+    feedback_optimization_reviews.c.decision,
+    feedback_optimization_reviews.c.created_at,
+)
+sa.Index(
+    "ix_feedback_optimization_reviews_partition_date",
+    feedback_optimization_reviews.c.tenant_id,
+    feedback_optimization_reviews.c.partition_date,
+    feedback_optimization_reviews.c.partition_bucket,
+)
+sa.Index(
     "ix_strategy_jobs_status_created",
     strategy_jobs.c.tenant_id,
     strategy_jobs.c.status,
@@ -717,6 +795,7 @@ CORE_TABLES = (
     advertisers,
     campaign_drafts,
     campaign_performance_events,
+    feedback_optimization_reviews,
     strategy_jobs,
     outbox_events,
     knowledge_documents,
@@ -731,6 +810,7 @@ CORE_TABLES = (
 HIGH_VOLUME_TABLES = {
     "campaign_drafts",
     "campaign_performance_events",
+    "feedback_optimization_reviews",
     "strategy_jobs",
     "outbox_events",
     "knowledge_documents",

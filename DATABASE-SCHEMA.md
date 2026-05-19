@@ -38,6 +38,7 @@ The first migration does not create native partitioned tables. Instead it create
 | `advertisers` | business data | tenant + advertiser lookup | hash by `advertiser_id` |
 | `campaign_drafts` | draft output | advertiser history, run-created drafts | advertiser hash + time range |
 | `campaign_performance_events` | feedback loop events | advertiser/run/campaign/draft event analysis | time range + event hash |
+| `feedback_optimization_reviews` | human feedback review | review lookup, event/draft review history | time range + event hash |
 | `strategy_jobs` | async API job state | job polling, advertiser job history | job hash + time range |
 | `knowledge_documents` | RAG metadata | source/category/objective filters | source/type/category + document hash |
 | `knowledge_chunks` | vector RAG chunks | filtered vector search | source/category prefilter + document hash |
@@ -69,6 +70,8 @@ The first migration does not create native partitioned tables. Instead it create
 4. `campaign_performance_events` stores the raw metrics, normalized event hash, and analysis when persistence is enabled.
 5. The event is indexed by advertiser, run, campaign, draft, and occurrence time for replay and later async feedback workflows. `run_id`, `draft_id`, and `campaign_id` are soft links because telemetry can arrive from external campaign systems before this platform has a local run or draft record.
 6. Replaying the same `event_id` with the same event hash returns the stored analysis; reusing the same `event_id` with a different payload is rejected as a conflict.
+7. A reviewer can submit an optimization review that records approval, rejection, or revision request state in `feedback_optimization_reviews`.
+8. The review stores selected change IDs and a snapshot of the optimization draft so the audited decision remains stable even if recommendation logic evolves.
 
 ### Retrieval
 
@@ -99,6 +102,8 @@ limit :top_k
 |---|---|---|
 | campaign draft creation | primary | strong |
 | campaign performance event ingestion | primary or async writer | eventual acceptable |
+| feedback optimization review write | primary | strong |
+| feedback optimization review reads | read replica | eventual acceptable |
 | strategy job create/update | primary | strong |
 | strategy job reads | read replica | eventual acceptable |
 | idempotency key write/check | primary | strong |
@@ -126,6 +131,7 @@ Mitigations:
 - For append-only tables like `retrieval_events` and `campaign_performance_events`, combine `partition_date` with hash bucket.
 - For async workflow jobs, use `job_id` as the partition key so queue polling and completion updates spread across buckets.
 - For high-write campaign performance events, use `event_id` as the partition key to avoid hot advertisers dominating a shard.
+- For feedback optimization reviews, use `event_id` as the partition key because reviews are event-scoped and should remain colocated with feedback analysis.
 - For vector retrieval, filter by source/category/objective before vector ranking.
 - Keep `knowledge_chunks` source/category metadata duplicated on the chunk table to avoid mandatory joins in the hot query path.
 
@@ -141,6 +147,7 @@ Mitigations:
 | vector index availability | eventual |
 | retrieval event logging | eventual |
 | campaign performance event analysis | eventual |
+| feedback optimization review decision | strong |
 | agent trace analytics | eventual |
 
 ## v0.1 Scope
@@ -150,11 +157,12 @@ Implemented now:
 - SQLAlchemy Core metadata in `src/ads_growth_agent/persistence/schema.py`.
 - Alembic scaffold.
 - Initial migration `0001_partition_aware_core_schema`.
-- Follow-up migrations for execution identity, campaign performance events, and draft-linked feedback lookup.
+- Follow-up migrations for execution identity, campaign performance events,
+  draft-linked feedback lookup, and feedback optimization review persistence.
 - Follow-up migration for `strategy_jobs`.
 - pgvector columns for `knowledge_chunks` and `advertiser_memories`.
 - Partition-ready columns and indexes.
-- PostgreSQL-backed knowledge retrieval, run persistence, campaign draft persistence, idempotency, and performance event persistence.
+- PostgreSQL-backed knowledge retrieval, run persistence, campaign draft persistence, idempotency, performance event persistence, and feedback review persistence.
 - PostgreSQL-backed strategy job persistence for async API polling.
 - Schema tests for table coverage and partition fields.
 

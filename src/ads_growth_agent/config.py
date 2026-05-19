@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     run_persistence_backend: Literal["none", "postgres"] = "none"
     campaign_draft_persistence_backend: Literal["none", "postgres"] = "none"
     performance_event_persistence_backend: Literal["none", "postgres"] = "none"
+    feedback_review_persistence_backend: Literal["none", "postgres"] = "none"
     advertiser_memory_persistence_backend: Literal["none", "postgres"] = "none"
     outbox_backend: Literal["none", "postgres"] = "none"
     memory_usage_tracking_backend: Literal["none", "outbox"] = "none"

@@ -8,6 +8,7 @@ from ads_growth_agent.persistence.schema import (
     agent_run_steps,
     agent_runs,
     campaign_performance_events,
+    feedback_optimization_reviews,
     idempotency_keys,
     knowledge_chunks,
     knowledge_documents,
@@ -24,6 +25,7 @@ def test_core_schema_tables_are_defined() -> None:
         "advertisers",
         "campaign_drafts",
         "campaign_performance_events",
+        "feedback_optimization_reviews",
         "strategy_jobs",
         "outbox_events",
         "knowledge_documents",
@@ -107,6 +109,38 @@ def test_campaign_performance_events_support_feedback_loop_access_patterns() -> 
         foreign_key.column.table.name
         for foreign_key in campaign_performance_events.foreign_keys
     } == {"advertisers"}
+
+
+def test_feedback_optimization_reviews_support_human_review_access_patterns() -> None:
+    columns = feedback_optimization_reviews.c
+    index_names = {index.name for index in feedback_optimization_reviews.indexes}
+    check_constraints = {
+        constraint.name.removeprefix("ck_feedback_optimization_reviews_"): str(
+            constraint.sqltext
+        )
+        for constraint in feedback_optimization_reviews.constraints
+        if isinstance(constraint, sa.CheckConstraint) and constraint.name is not None
+    }
+
+    assert "review_id" in columns
+    assert "optimization_draft_id" in columns
+    assert "event_id" in columns
+    assert "feedback_id" in columns
+    assert "decision" in columns
+    assert "reviewer_id" in columns
+    assert "selected_change_ids" in columns
+    assert "draft_snapshot" in columns
+    assert "ix_feedback_optimization_reviews_event_created" in index_names
+    assert "ix_feedback_optimization_reviews_draft_created" in index_names
+    assert "ix_feedback_optimization_reviews_advertiser_created" in index_names
+    assert "ix_feedback_optimization_reviews_decision_created" in index_names
+    assert "ix_feedback_optimization_reviews_partition_date" in index_names
+    assert {
+        foreign_key.column.table.name
+        for foreign_key in feedback_optimization_reviews.foreign_keys
+    } == {"advertisers", "campaign_performance_events"}
+    assert "approved" in check_constraints["feedback_optimization_review_decision"]
+    assert "needs_revision" in check_constraints["feedback_optimization_review_decision"]
 
 
 def test_strategy_jobs_support_async_workflow_access_patterns() -> None:

@@ -26,10 +26,14 @@ from ads_growth_agent.contracts import (
     CampaignFeedbackActionPlanResponse,
     CampaignFeedbackAnalysis,
     CampaignFeedbackOptimizationDraftResponse,
+    CampaignFeedbackOptimizationReviewListResponse,
+    CampaignFeedbackOptimizationReviewRequest,
+    CampaignFeedbackOptimizationReviewResponse,
     CampaignPerformanceEventDetailResponse,
     CampaignPerformanceEventListResponse,
     CampaignPerformanceEventRequest,
     CampaignPerformanceEventResponse,
+    FeedbackOptimizationReviewDecision,
     GrowthStrategyFromTextRequest,
     GrowthStrategyFromTextResponse,
     GrowthStrategyRequest,
@@ -47,6 +51,7 @@ from ads_growth_agent.feedback import (
     build_campaign_feedback_action_plan,
     build_campaign_feedback_optimization_draft,
 )
+from ads_growth_agent.feedback_review_store_factory import build_configured_feedback_review_store
 from ads_growth_agent.graph import strategy_id_for_brief
 from ads_growth_agent.health import ReadinessResponse, check_readiness
 from ads_growth_agent.idempotency_store_factory import build_configured_idempotency_store
@@ -63,6 +68,7 @@ from ads_growth_agent.persistence.advertiser_memory_store import (
     AdvertiserMemoryWriteResult,
 )
 from ads_growth_agent.persistence.campaign_draft_store import CampaignDraftStore
+from ads_growth_agent.persistence.feedback_review_store import FeedbackOptimizationReviewStore
 from ads_growth_agent.persistence.idempotency_store import (
     IdempotencyConflictError,
     IdempotencyStore,
@@ -218,6 +224,12 @@ def get_runtime_performance_event_store(
     settings: Annotated[Settings, Depends(get_request_settings)],
 ) -> CampaignPerformanceEventStore:
     return build_configured_performance_event_store(settings)
+
+
+def get_runtime_feedback_review_store(
+    settings: Annotated[Settings, Depends(get_request_settings)],
+) -> FeedbackOptimizationReviewStore:
+    return build_configured_feedback_review_store(settings)
 
 
 def get_runtime_advertiser_memory_store(
@@ -938,6 +950,118 @@ def get_campaign_feedback_optimization_draft(
     return draft
 
 
+@app.post(
+    "/campaign-events/performance/{event_id}/optimization-draft/reviews",
+    response_model=CampaignFeedbackOptimizationReviewResponse,
+    status_code=201,
+    dependencies=[Depends(require_api_auth)],
+)
+def submit_campaign_feedback_optimization_review(
+    event_id: str,
+    request: CampaignFeedbackOptimizationReviewRequest,
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    event_store: Annotated[
+        CampaignPerformanceEventStore,
+        Depends(get_runtime_performance_event_store),
+    ],
+    review_store: Annotated[
+        FeedbackOptimizationReviewStore,
+        Depends(get_runtime_feedback_review_store),
+    ],
+) -> CampaignFeedbackOptimizationReviewResponse:
+    _require_feedback_review_persistence_enabled(settings)
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    event = event_store.get_event(event_id)
+    if event is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": "Campaign performance event was not found for the effective tenant.",
+                "error_code": "PERFORMANCE_EVENT_NOT_FOUND",
+                "event_id": event_id,
+            },
+        )
+
+    optimization_draft = build_campaign_feedback_optimization_draft(event)
+    try:
+        review = review_store.record_review(optimization_draft, request)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": str(exc),
+                "error_code": "FEEDBACK_OPTIMIZATION_REVIEW_INVALID",
+            },
+        ) from exc
+
+    response.headers["Feedback-Review-ID"] = review.review_id
+    response.headers["Optimization-Draft-ID"] = review.optimization_draft_id
+    response.headers["Feedback-ID"] = review.feedback_id
+    return review
+
+
+@app.get(
+    "/feedback-optimization-reviews",
+    response_model=CampaignFeedbackOptimizationReviewListResponse,
+    dependencies=[Depends(require_api_auth)],
+)
+def list_feedback_optimization_reviews(
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    review_store: Annotated[
+        FeedbackOptimizationReviewStore,
+        Depends(get_runtime_feedback_review_store),
+    ],
+    event_id: Annotated[str | None, Query(min_length=1, max_length=128)] = None,
+    advertiser_id: Annotated[str | None, Query(min_length=1, max_length=128)] = None,
+    optimization_draft_id: Annotated[str | None, Query(min_length=1, max_length=160)] = None,
+    decision: Annotated[FeedbackOptimizationReviewDecision | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> CampaignFeedbackOptimizationReviewListResponse:
+    _require_feedback_review_persistence_enabled(settings)
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    return review_store.list_reviews(
+        event_id=event_id,
+        advertiser_id=advertiser_id,
+        optimization_draft_id=optimization_draft_id,
+        decision=decision,
+        limit=limit,
+    )
+
+
+@app.get(
+    "/feedback-optimization-reviews/{review_id}",
+    response_model=CampaignFeedbackOptimizationReviewResponse,
+    dependencies=[Depends(require_api_auth)],
+)
+def get_feedback_optimization_review(
+    review_id: str,
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    review_store: Annotated[
+        FeedbackOptimizationReviewStore,
+        Depends(get_runtime_feedback_review_store),
+    ],
+) -> CampaignFeedbackOptimizationReviewResponse:
+    _require_feedback_review_persistence_enabled(settings)
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    review = review_store.get_review(review_id)
+    if review is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": "Feedback optimization review was not found for the effective tenant.",
+                "error_code": "FEEDBACK_OPTIMIZATION_REVIEW_NOT_FOUND",
+                "review_id": review_id,
+            },
+        )
+    response.headers["Feedback-Review-ID"] = review.review_id
+    response.headers["Optimization-Draft-ID"] = review.optimization_draft_id
+    response.headers["Feedback-ID"] = review.feedback_id
+    return review
+
+
 def _raise_performance_event_conflict(event_id: str) -> None:
     raise HTTPException(
         status_code=409,
@@ -945,6 +1069,18 @@ def _raise_performance_event_conflict(event_id: str) -> None:
             "message": "Performance event ID was already used with a different payload.",
             "error_code": "PERFORMANCE_EVENT_ID_CONFLICT",
             "event_id": event_id,
+        },
+    )
+
+
+def _require_feedback_review_persistence_enabled(settings: Settings) -> None:
+    if settings.feedback_review_persistence_backend != "none":
+        return
+    raise HTTPException(
+        status_code=503,
+        detail={
+            "message": "Feedback optimization review persistence is disabled.",
+            "error_code": "FEEDBACK_REVIEW_PERSISTENCE_DISABLED",
         },
     )
 

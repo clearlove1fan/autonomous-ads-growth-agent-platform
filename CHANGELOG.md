@@ -26,6 +26,8 @@
   campaign performance events.
 - Added draft-only feedback optimization drafts through API and CLI for
   persisted campaign performance events.
+- Added feedback optimization review persistence, API, and CLI commands so a
+  reviewer can approve, reject, or request revision for draft-only changes.
 
 ## v0.1.0 - 2026-05-18
 

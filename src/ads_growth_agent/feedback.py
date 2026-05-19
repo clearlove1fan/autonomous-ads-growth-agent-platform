@@ -1,12 +1,14 @@
 from datetime import UTC, datetime
 from decimal import Decimal
-from uuid import NAMESPACE_URL, uuid5
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from ads_growth_agent.contracts import (
     AgentRole,
     CampaignFeedbackActionPlanResponse,
     CampaignFeedbackAnalysis,
     CampaignFeedbackOptimizationDraftResponse,
+    CampaignFeedbackOptimizationReviewRequest,
+    CampaignFeedbackOptimizationReviewResponse,
     CampaignPerformanceEventDetailResponse,
     CampaignPerformanceEventRequest,
     FeedbackActionPlanStep,
@@ -125,6 +127,38 @@ def build_campaign_feedback_optimization_draft(
     )
 
 
+def build_campaign_feedback_optimization_review(
+    optimization_draft: CampaignFeedbackOptimizationDraftResponse,
+    request: CampaignFeedbackOptimizationReviewRequest,
+    *,
+    review_id: str | None = None,
+    created_at: datetime | None = None,
+) -> CampaignFeedbackOptimizationReviewResponse:
+    """Build an auditable human review decision for an optimization draft."""
+
+    selected_change_ids = _selected_optimization_change_ids(
+        optimization_draft,
+        requested_change_ids=request.selected_change_ids,
+    )
+    return CampaignFeedbackOptimizationReviewResponse(
+        review_id=review_id or f"feedback_review_{uuid4().hex[:16]}",
+        optimization_draft_id=optimization_draft.optimization_draft_id,
+        event_id=optimization_draft.event_id,
+        feedback_id=optimization_draft.feedback_id,
+        advertiser_id=optimization_draft.advertiser_id,
+        run_id=optimization_draft.run_id,
+        campaign_id=optimization_draft.campaign_id,
+        base_draft_id=optimization_draft.base_draft_id,
+        strategy_id=optimization_draft.strategy_id,
+        decision=request.decision,
+        reviewer_id=request.reviewer_id,
+        notes=request.notes,
+        selected_change_ids=selected_change_ids,
+        optimization_draft=optimization_draft,
+        created_at=created_at or datetime.now(UTC),
+    )
+
+
 def _metrics_summary(event: CampaignPerformanceEventRequest) -> dict[str, str | int | None]:
     metrics = event.metrics
     ctr = _ratio(metrics.clicks, metrics.impressions)
@@ -218,6 +252,23 @@ def _optimization_change(step: FeedbackActionPlanStep) -> FeedbackOptimizationDr
         requires_human_approval=step.requires_human_approval,
         params=params,
     )
+
+
+def _selected_optimization_change_ids(
+    optimization_draft: CampaignFeedbackOptimizationDraftResponse,
+    *,
+    requested_change_ids: list[str],
+) -> list[str]:
+    available_change_ids = {change.change_id for change in optimization_draft.changes}
+    if not requested_change_ids:
+        return [change.change_id for change in optimization_draft.changes]
+
+    unknown_change_ids = sorted(set(requested_change_ids) - available_change_ids)
+    if unknown_change_ids:
+        unknown = ", ".join(unknown_change_ids)
+        raise ValueError(f"selected_change_ids include unknown change IDs: {unknown}")
+
+    return requested_change_ids
 
 
 def _change_type_for_action(action_type: FeedbackActionType):

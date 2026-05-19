@@ -20,8 +20,11 @@ from ads_growth_agent.contracts import (
     AdvertiserMemoryListResponse,
     AdvertiserMemoryType,
     CampaignDraftListResponse,
+    CampaignFeedbackOptimizationReviewListResponse,
+    CampaignFeedbackOptimizationReviewRequest,
     CampaignPerformanceEventListResponse,
     CampaignPerformanceEventRequest,
+    FeedbackOptimizationReviewDecision,
     GrowthStrategyRequest,
     PerformanceEventType,
     StrategyJobFromTextResponse,
@@ -34,6 +37,7 @@ from ads_growth_agent.feedback import (
     build_campaign_feedback_action_plan,
     build_campaign_feedback_optimization_draft,
 )
+from ads_growth_agent.feedback_review_store_factory import build_configured_feedback_review_store
 from ads_growth_agent.logging_config import configure_logging
 from ads_growth_agent.outbox import process_configured_outbox
 from ads_growth_agent.performance_event_store_factory import (
@@ -122,11 +126,25 @@ PERFORMANCE_EVENT_CAMPAIGN_ID_OPTION = typer.Option(None, "--campaign-id")
 PERFORMANCE_EVENT_DRAFT_ID_OPTION = typer.Option(None, "--draft-id")
 PERFORMANCE_EVENT_TYPE_OPTION = typer.Option(None, "--event-type")
 PERFORMANCE_EVENT_LIST_LIMIT_OPTION = typer.Option(50, "--limit", min=1, max=100)
+FEEDBACK_REVIEW_ID_ARGUMENT = typer.Argument(..., help="Feedback optimization review ID.")
+FEEDBACK_REVIEW_DECISION_OPTION = typer.Option(..., "--decision")
+FEEDBACK_REVIEW_DECISION_FILTER_OPTION = typer.Option(None, "--decision")
+FEEDBACK_REVIEW_REVIEWER_ID_OPTION = typer.Option(..., "--reviewer-id")
+FEEDBACK_REVIEW_NOTES_OPTION = typer.Option(None, "--notes")
+FEEDBACK_REVIEW_SELECTED_CHANGE_ID_OPTION = typer.Option(None, "--selected-change-id")
+FEEDBACK_REVIEW_EVENT_ID_OPTION = typer.Option(None, "--event-id")
+FEEDBACK_REVIEW_OPTIMIZATION_DRAFT_ID_OPTION = typer.Option(None, "--optimization-draft-id")
+FEEDBACK_REVIEW_LIST_LIMIT_OPTION = typer.Option(50, "--limit", min=1, max=100)
 ALLOWED_PERFORMANCE_EVENT_TYPES = {
     "performance_snapshot",
     "budget_pacing",
     "creative_fatigue",
     "conversion_drop",
+}
+ALLOWED_FEEDBACK_REVIEW_DECISIONS = {
+    "approved",
+    "rejected",
+    "needs_revision",
 }
 
 
@@ -287,6 +305,90 @@ def get_feedback_optimization_draft(event_id: str = PERFORMANCE_EVENT_ID_ARGUMEN
         raise typer.Exit(1)
     optimization_draft = build_campaign_feedback_optimization_draft(event)
     typer.echo(optimization_draft.model_dump_json(indent=2))
+
+
+@app.command("submit-feedback-optimization-review")
+def submit_feedback_optimization_review(
+    event_id: str = PERFORMANCE_EVENT_ID_ARGUMENT,
+    decision: str = FEEDBACK_REVIEW_DECISION_OPTION,
+    reviewer_id: str = FEEDBACK_REVIEW_REVIEWER_ID_OPTION,
+    notes: str | None = FEEDBACK_REVIEW_NOTES_OPTION,
+    selected_change_id: list[str] | None = FEEDBACK_REVIEW_SELECTED_CHANGE_ID_OPTION,
+) -> None:
+    """Record a human review decision for one feedback optimization draft."""
+    try:
+        settings = get_settings()
+        _ensure_feedback_review_persistence_enabled(settings)
+        event_store = build_configured_performance_event_store(settings)
+        event = event_store.get_event(event_id)
+        if event is None:
+            typer.echo(f"Performance event not found: {event_id}", err=True)
+            raise typer.Exit(1)
+        request = CampaignFeedbackOptimizationReviewRequest(
+            decision=_feedback_review_decision_or_exit(decision),
+            reviewer_id=reviewer_id,
+            notes=notes,
+            selected_change_ids=selected_change_id or [],
+        )
+        review_store = build_configured_feedback_review_store(settings)
+        optimization_draft = build_campaign_feedback_optimization_draft(event)
+        review = review_store.record_review(optimization_draft, request)
+    except ValidationError as exc:
+        typer.echo(_validation_errors_json(exc), err=True)
+        raise typer.Exit(2) from exc
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from exc
+    except RuntimeError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from exc
+
+    typer.echo(review.model_dump_json(indent=2))
+
+
+@app.command("get-feedback-optimization-review")
+def get_feedback_optimization_review(review_id: str = FEEDBACK_REVIEW_ID_ARGUMENT) -> None:
+    """Fetch one persisted feedback optimization review by ID."""
+    settings = get_settings()
+    _ensure_feedback_review_persistence_enabled(settings)
+    store = build_configured_feedback_review_store(settings)
+    review = store.get_review(review_id)
+    if review is None:
+        typer.echo(f"Feedback optimization review not found: {review_id}", err=True)
+        raise typer.Exit(1)
+    typer.echo(review.model_dump_json(indent=2))
+
+
+@app.command("list-feedback-optimization-reviews")
+def list_feedback_optimization_reviews(
+    event_id: str | None = FEEDBACK_REVIEW_EVENT_ID_OPTION,
+    advertiser_id: str | None = PERFORMANCE_EVENT_ADVERTISER_ID_OPTION,
+    optimization_draft_id: str | None = FEEDBACK_REVIEW_OPTIMIZATION_DRAFT_ID_OPTION,
+    decision: str | None = FEEDBACK_REVIEW_DECISION_FILTER_OPTION,
+    limit: int = FEEDBACK_REVIEW_LIST_LIMIT_OPTION,
+) -> None:
+    """List recent persisted feedback optimization reviews."""
+    settings = get_settings()
+    _ensure_feedback_review_persistence_enabled(settings)
+    validated_decision = _feedback_review_decision_or_exit(decision)
+    store = build_configured_feedback_review_store(settings)
+    reviews = store.list_reviews(
+        event_id=event_id,
+        advertiser_id=advertiser_id,
+        optimization_draft_id=optimization_draft_id,
+        decision=validated_decision,
+        limit=limit,
+    )
+    response = CampaignFeedbackOptimizationReviewListResponse(
+        items=reviews.items,
+        count=reviews.count,
+        limit=limit,
+        event_id=event_id,
+        advertiser_id=advertiser_id,
+        optimization_draft_id=optimization_draft_id,
+        decision=validated_decision,
+    )
+    typer.echo(response.model_dump_json(indent=2))
 
 
 @app.command("list-performance-events")
@@ -704,6 +806,27 @@ def _performance_event_type_or_exit(value: str | None) -> PerformanceEventType |
 
     allowed = ", ".join(sorted(ALLOWED_PERFORMANCE_EVENT_TYPES))
     typer.echo(f"Invalid performance event type: {value}. Expected one of: {allowed}", err=True)
+    raise typer.Exit(2)
+
+
+def _feedback_review_decision_or_exit(
+    value: str | None,
+) -> FeedbackOptimizationReviewDecision | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if normalized in ALLOWED_FEEDBACK_REVIEW_DECISIONS:
+        return FeedbackOptimizationReviewDecision(normalized)
+
+    allowed = ", ".join(sorted(ALLOWED_FEEDBACK_REVIEW_DECISIONS))
+    typer.echo(f"Invalid feedback review decision: {value}. Expected one of: {allowed}", err=True)
+    raise typer.Exit(2)
+
+
+def _ensure_feedback_review_persistence_enabled(settings) -> None:
+    if settings.feedback_review_persistence_backend != "none":
+        return
+    typer.echo("Feedback optimization review persistence is disabled.", err=True)
     raise typer.Exit(2)
 
 

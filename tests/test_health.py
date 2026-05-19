@@ -28,6 +28,7 @@ def test_readiness_skips_unconfigured_dependencies() -> None:
         run_persistence_backend="none",
         campaign_draft_persistence_backend="none",
         performance_event_persistence_backend="none",
+        feedback_review_persistence_backend="none",
         advertiser_memory_persistence_backend="none",
         outbox_backend="none",
         memory_usage_tracking_backend="none",
@@ -125,6 +126,32 @@ def test_readiness_requires_postgres_for_advertiser_memory_backend(monkeypatch) 
         "latency_ms": 2,
         "detail": None,
     }
+
+
+def test_readiness_requires_postgres_for_feedback_review_backend(monkeypatch) -> None:
+    def fake_check_postgres(settings: Settings) -> health_module.DependencyCheck:
+        return health_module.DependencyCheck(
+            name="postgres",
+            status="ok",
+            required=True,
+            latency_ms=7,
+        )
+
+    monkeypatch.setattr(health_module, "_check_postgres", fake_check_postgres)
+    app.dependency_overrides[get_runtime_settings] = lambda: Settings(
+        feedback_review_persistence_backend="postgres",
+        use_llm_planner=False,
+        use_llm_critic=False,
+    )
+    try:
+        response = TestClient(app).get("/health/ready")
+    finally:
+        app.dependency_overrides.clear()
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["dependencies"][0]["status"] == "ok"
+    assert payload["dependencies"][0]["required"] is True
 
 
 def test_readiness_requires_postgres_for_outbox_backend(monkeypatch) -> None:

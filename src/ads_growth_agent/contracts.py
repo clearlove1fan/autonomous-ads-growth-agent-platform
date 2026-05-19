@@ -68,6 +68,12 @@ class FeedbackActionType(StrEnum):
     INSPECT_TRACKING = "inspect_tracking"
 
 
+class FeedbackOptimizationReviewDecision(StrEnum):
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    NEEDS_REVISION = "needs_revision"
+
+
 AdvertiserMemoryType = Literal[
     "profile",
     "constraint",
@@ -798,6 +804,64 @@ class CampaignFeedbackOptimizationDraftResponse(BaseModel):
     requires_human_approval: bool
     guardrails: list[str] = Field(default_factory=list)
     created_at: datetime
+
+
+class CampaignFeedbackOptimizationReviewRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    decision: FeedbackOptimizationReviewDecision
+    reviewer_id: str = Field(min_length=1, max_length=128)
+    notes: str | None = Field(default=None, max_length=1_000)
+    selected_change_ids: list[str] = Field(default_factory=list)
+
+    @field_validator("selected_change_ids")
+    @classmethod
+    def validate_selected_change_ids(cls, value: list[str]) -> list[str]:
+        normalized_ids: list[str] = []
+        seen: set[str] = set()
+        for change_id in value:
+            normalized = change_id.strip()
+            if not normalized:
+                raise ValueError("selected_change_ids cannot contain blank values")
+            if len(normalized) > 220:
+                raise ValueError("selected_change_ids values must be 220 characters or fewer")
+            if normalized in seen:
+                raise ValueError("selected_change_ids cannot contain duplicate values")
+            seen.add(normalized)
+            normalized_ids.append(normalized)
+        return normalized_ids
+
+
+class CampaignFeedbackOptimizationReviewResponse(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    review_id: str = Field(min_length=1, max_length=160)
+    optimization_draft_id: str = Field(min_length=1, max_length=160)
+    event_id: str = Field(min_length=1, max_length=128)
+    feedback_id: str = Field(min_length=1, max_length=160)
+    advertiser_id: str = Field(min_length=1, max_length=128)
+    run_id: str | None = Field(default=None, min_length=1, max_length=128)
+    campaign_id: str | None = Field(default=None, min_length=1, max_length=128)
+    base_draft_id: str | None = Field(default=None, min_length=1, max_length=160)
+    strategy_id: str | None = Field(default=None, min_length=1, max_length=128)
+    decision: FeedbackOptimizationReviewDecision
+    reviewer_id: str = Field(min_length=1, max_length=128)
+    notes: str | None = Field(default=None, max_length=1_000)
+    selected_change_ids: list[str] = Field(default_factory=list)
+    optimization_draft: CampaignFeedbackOptimizationDraftResponse
+    created_at: datetime
+
+
+class CampaignFeedbackOptimizationReviewListResponse(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    items: list[CampaignFeedbackOptimizationReviewResponse] = Field(default_factory=list)
+    count: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    event_id: str | None = Field(default=None, min_length=1, max_length=128)
+    advertiser_id: str | None = Field(default=None, min_length=1, max_length=128)
+    optimization_draft_id: str | None = Field(default=None, min_length=1, max_length=160)
+    decision: FeedbackOptimizationReviewDecision | None = None
 
 
 class CampaignPerformanceEventResponse(BaseModel):

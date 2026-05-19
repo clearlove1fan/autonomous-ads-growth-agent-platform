@@ -1,10 +1,14 @@
+import pytest
+
 from ads_growth_agent.contracts import (
     AgentRole,
+    CampaignFeedbackOptimizationReviewRequest,
     CampaignObjective,
     CampaignPerformanceEventDetailResponse,
     CampaignPerformanceEventRequest,
     FeedbackActionType,
     FeedbackHealthStatus,
+    FeedbackOptimizationReviewDecision,
     FeedbackStrategyContext,
     OptimizationRule,
     PerformanceMetrics,
@@ -13,6 +17,7 @@ from ads_growth_agent.feedback import (
     analyze_campaign_performance_event,
     build_campaign_feedback_action_plan,
     build_campaign_feedback_optimization_draft,
+    build_campaign_feedback_optimization_review,
 )
 
 
@@ -284,3 +289,105 @@ def test_feedback_optimization_draft_maps_action_steps_to_draft_changes() -> Non
         "clearer value proposition",
     ]
     assert optimization_draft.guardrails[-1].startswith("Optimization draft is review-only")
+
+
+def test_feedback_optimization_review_defaults_to_all_draft_changes() -> None:
+    event = CampaignPerformanceEventRequest(
+        event_id="evt_optimization_review",
+        advertiser_id="adv_fitness_001",
+        run_id="run_001",
+        campaign_id="cmp_fittrack",
+        draft_id="draft_fittrack",
+        objective=CampaignObjective.REGISTRATIONS,
+        occurred_at="2026-05-12T12:00:00Z",
+        metrics=PerformanceMetrics(
+            impressions=10_000,
+            clicks=500,
+            spend="1000.00",
+            conversions=20,
+        ),
+        target_cpa="20.00",
+    )
+    analysis = analyze_campaign_performance_event(event)
+    detail = CampaignPerformanceEventDetailResponse(
+        event_id=event.event_id,
+        advertiser_id=event.advertiser_id,
+        run_id=event.run_id,
+        campaign_id=event.campaign_id,
+        draft_id=event.draft_id,
+        objective=event.objective,
+        event_type=event.event_type,
+        occurred_at=event.occurred_at,
+        metrics=event.metrics,
+        status="analyzed",
+        metadata={},
+        analysis=analysis,
+        created_at=analysis.created_at,
+        updated_at=analysis.created_at,
+    )
+    optimization_draft = build_campaign_feedback_optimization_draft(detail)
+
+    review = build_campaign_feedback_optimization_review(
+        optimization_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.APPROVED,
+            reviewer_id="operator_001",
+            notes="Approve the safe draft changes.",
+        ),
+    )
+
+    assert review.review_id.startswith("feedback_review_")
+    assert review.optimization_draft_id == optimization_draft.optimization_draft_id
+    assert review.event_id == event.event_id
+    assert review.decision == FeedbackOptimizationReviewDecision.APPROVED
+    assert review.reviewer_id == "operator_001"
+    assert review.selected_change_ids == [
+        change.change_id for change in optimization_draft.changes
+    ]
+    assert review.optimization_draft == optimization_draft
+
+
+def test_feedback_optimization_review_rejects_unknown_selected_change_id() -> None:
+    event = CampaignPerformanceEventRequest(
+        event_id="evt_unknown_change_review",
+        advertiser_id="adv_fitness_001",
+        run_id="run_001",
+        draft_id="draft_fittrack",
+        objective=CampaignObjective.REGISTRATIONS,
+        occurred_at="2026-05-12T12:00:00Z",
+        metrics=PerformanceMetrics(
+            impressions=10_000,
+            clicks=500,
+            spend="1000.00",
+            conversions=20,
+        ),
+        target_cpa="20.00",
+    )
+    analysis = analyze_campaign_performance_event(event)
+    detail = CampaignPerformanceEventDetailResponse(
+        event_id=event.event_id,
+        advertiser_id=event.advertiser_id,
+        run_id=event.run_id,
+        campaign_id=event.campaign_id,
+        draft_id=event.draft_id,
+        objective=event.objective,
+        event_type=event.event_type,
+        occurred_at=event.occurred_at,
+        metrics=event.metrics,
+        status="analyzed",
+        metadata={},
+        analysis=analysis,
+        created_at=analysis.created_at,
+        updated_at=analysis.created_at,
+    )
+    optimization_draft = build_campaign_feedback_optimization_draft(detail)
+
+    with pytest.raises(ValueError, match="unknown change IDs"):
+        build_campaign_feedback_optimization_review(
+            optimization_draft,
+            CampaignFeedbackOptimizationReviewRequest(
+                decision=FeedbackOptimizationReviewDecision.NEEDS_REVISION,
+                reviewer_id="operator_001",
+                selected_change_ids=["missing_change"],
+            ),
+        )

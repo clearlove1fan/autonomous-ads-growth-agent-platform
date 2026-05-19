@@ -35,6 +35,9 @@ from ads_growth_agent.campaign_draft_store_factory import (  # noqa: E402
     dispose_cached_campaign_draft_store_engines,
 )
 from ads_growth_agent.config import Settings  # noqa: E402
+from ads_growth_agent.feedback_review_store_factory import (  # noqa: E402
+    dispose_cached_feedback_review_store_engines,
+)
 from ads_growth_agent.knowledge_store_factory import (  # noqa: E402
     dispose_cached_knowledge_store_engines,
 )
@@ -194,6 +197,59 @@ def run_persisted_product_loop(
                 optimization_draft["changes"][0]["change_type"] == "budget",
                 "optimization draft should translate high CPA feedback into a budget change",
             )
+            review = _api_json(
+                client.post(
+                    f"/campaign-events/performance/{event_id}/optimization-draft/reviews",
+                    json={
+                        "decision": "approved",
+                        "reviewer_id": "operator_product_loop",
+                        "notes": "Approve the first draft change for the persisted loop demo.",
+                        "selected_change_ids": [
+                            optimization_draft["changes"][0]["change_id"]
+                        ],
+                    },
+                    headers=_tenant_headers(tenant_id),
+                ),
+                label="submit feedback optimization review",
+                expected_status=201,
+            )
+            review_id = review["review_id"]
+            _expect(
+                review["optimization_draft_id"]
+                == optimization_draft["optimization_draft_id"],
+                "review should link to the reviewed optimization draft",
+            )
+            _expect(
+                review["selected_change_ids"] == [optimization_draft["changes"][0]["change_id"]],
+                "review should persist the selected draft change IDs",
+            )
+            review_detail = _api_json(
+                client.get(
+                    f"/feedback-optimization-reviews/{review_id}",
+                    headers=_tenant_headers(tenant_id),
+                ),
+                label="get feedback optimization review",
+            )
+            review_list = _api_json(
+                client.get(
+                    "/feedback-optimization-reviews",
+                    params={
+                        "event_id": event_id,
+                        "decision": "approved",
+                        "limit": "10",
+                    },
+                    headers=_tenant_headers(tenant_id),
+                ),
+                label="list feedback optimization reviews",
+            )
+            _expect(
+                review_detail["review_id"] == review_id,
+                "review detail should match submitted review",
+            )
+            _expect(
+                review_list["count"] == 1,
+                "approved review list should contain one submitted review",
+            )
 
             outbox_report = _invoke_cli(
                 settings,
@@ -233,6 +289,35 @@ def run_persisted_product_loop(
             cli_optimization_draft = _invoke_cli(
                 settings,
                 ["get-feedback-optimization-draft", event_id],
+            )
+            cli_review = _invoke_cli(
+                settings,
+                ["get-feedback-optimization-review", review_id],
+            )
+            cli_review_list = _invoke_cli(
+                settings,
+                [
+                    "list-feedback-optimization-reviews",
+                    "--event-id",
+                    event_id,
+                    "--decision",
+                    "approved",
+                    "--limit",
+                    "10",
+                ],
+            )
+            cli_submitted_review = _invoke_cli(
+                settings,
+                [
+                    "submit-feedback-optimization-review",
+                    event_id,
+                    "--decision",
+                    "needs_revision",
+                    "--reviewer-id",
+                    "operator_product_loop_cli",
+                    "--notes",
+                    "Request a revision before approving every draft change.",
+                ],
             )
             cli_event_list = _invoke_cli(
                 settings,
@@ -274,6 +359,18 @@ def run_persisted_product_loop(
                 cli_optimization_draft["changes"][0]["change_type"]
                 == optimization_draft["changes"][0]["change_type"],
                 "CLI optimization draft should match API optimization draft",
+            )
+            _expect(
+                cli_review["review_id"] == review_id,
+                "CLI review read should match API submitted review",
+            )
+            _expect(
+                cli_review_list["count"] == 1,
+                "CLI approved review list should find submitted review",
+            )
+            _expect(
+                cli_submitted_review["decision"] == "needs_revision",
+                "CLI review submit should persist a revision request",
             )
             _expect(cli_event_list["count"] == 1, "CLI event list should find feedback event")
             _expect(
@@ -331,6 +428,12 @@ def run_persisted_product_loop(
                 "first_change_type": optimization_draft["changes"][0]["change_type"],
                 "status": optimization_draft["status"],
             },
+            "review": {
+                "review_id": review_id,
+                "decision": review["decision"],
+                "selected_change_count": len(review["selected_change_ids"]),
+                "cli_submitted_decision": cli_submitted_review["decision"],
+            },
             "outbox": outbox_report,
             "memory": {
                 "source_id": memory_source_id,
@@ -342,6 +445,8 @@ def run_persisted_product_loop(
                 "event_id": cli_event["event_id"],
                 "first_action_type": cli_action_plan["steps"][0]["action_type"],
                 "first_change_type": cli_optimization_draft["changes"][0]["change_type"],
+                "review_id": cli_review["review_id"],
+                "review_count": cli_review_list["count"],
                 "memory_source_id": cli_memory["source_id"],
                 "event_count": cli_event_list["count"],
                 "memory_count": cli_memory_list["count"],
@@ -361,6 +466,7 @@ def run_persisted_product_loop(
         api_app.dependency_overrides.clear()
         dispose_cached_advertiser_memory_store_engines()
         dispose_cached_campaign_draft_store_engines()
+        dispose_cached_feedback_review_store_engines()
         dispose_cached_knowledge_store_engines()
         dispose_cached_outbox_store_engines()
         dispose_cached_performance_event_store_engines()
@@ -403,6 +509,13 @@ def render_summary(summary: dict[str, Any]) -> str:
                 f"status={summary['optimization_draft']['status']}"
             ),
             (
+                "Review: "
+                f"{summary['review']['review_id']} "
+                f"decision={summary['review']['decision']} "
+                f"selected_changes={summary['review']['selected_change_count']} "
+                f"cli_submit={summary['review']['cli_submitted_decision']}"
+            ),
+            (
                 "Outbox: "
                 f"claimed={summary['outbox']['claimed']} "
                 f"completed={summary['outbox']['completed']} "
@@ -424,6 +537,7 @@ def render_summary(summary: dict[str, Any]) -> str:
                 f"events={summary['cli_reads']['event_count']} "
                 f"first_action={summary['cli_reads']['first_action_type']} "
                 f"first_change={summary['cli_reads']['first_change_type']} "
+                f"reviews={summary['cli_reads']['review_count']} "
                 f"memories={summary['cli_reads']['memory_count']}"
             ),
         ]
@@ -490,6 +604,7 @@ def _walkthrough_settings(database_url: str, *, tenant_id: str) -> Settings:
         knowledge_store_backend="postgres",
         campaign_draft_persistence_backend="postgres",
         performance_event_persistence_backend="postgres",
+        feedback_review_persistence_backend="postgres",
         advertiser_memory_persistence_backend="postgres",
         outbox_backend="postgres",
         idempotency_backend="none",
@@ -528,8 +643,8 @@ def _invoke_cli(settings: Settings, args: list[str]) -> dict[str, Any]:
         ) from exc
 
 
-def _api_json(response, *, label: str) -> dict[str, Any]:
-    if response.status_code != 200:
+def _api_json(response, *, label: str, expected_status: int = 200) -> dict[str, Any]:
+    if response.status_code != expected_status:
         raise ProductLoopVerificationError(
             [
                 f"API call failed: {label}",

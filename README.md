@@ -19,7 +19,8 @@ v0.1 Phase 1 MVP is complete as of 2026-05-18. The current milestone is a determ
 9. Persist and inspect advertiser memory when PostgreSQL memory persistence is enabled.
 10. Fetch a draft-only feedback action plan for the next optimization steps.
 11. Generate a draft-only optimization proposal from persisted feedback.
-12. Retrieve learned advertiser memory in a later PostgreSQL-backed strategy run.
+12. Record and inspect human review decisions for optimization drafts.
+13. Retrieve learned advertiser memory in a later PostgreSQL-backed strategy run.
 
 Phase 1 is intentionally a functional MVP, not a production launch claim. A single advertiser can run the core product loop locally through CLI or FastAPI without external model keys. The system still does not execute live ad spend, enforce real authentication, provide production SLO dashboards, or require GitHub branch protection in repository settings.
 
@@ -122,8 +123,8 @@ RUN_POSTGRES_INTEGRATION=1 \
 ```
 
 This creates a temporary database, applies migrations, seeds knowledge, then
-validates strategy draft -> performance feedback event -> outbox memory ->
-API/CLI reads -> later RAG retrieval of the learned memory.
+validates strategy draft -> performance feedback event -> optimization review ->
+outbox memory -> API/CLI reads -> later RAG retrieval of the learned memory.
 
 The demo executes the complete deterministic product loop:
 
@@ -158,7 +159,7 @@ This project is designed around the same engineering themes as an AI Agent-power
 | RAG | Strategy playbooks, historical cases, and advertiser memory are retrieved and cited in final outputs |
 | Multi-agent orchestration | Planner, retriever, tool executor, critic, revision, and finalizer nodes model role-based agent responsibilities |
 | Structured output | Pydantic contracts validate briefs, tool intents/results, critique reports, final strategies, feedback analyses, and eval reports |
-| Event-driven feedback | Campaign performance events produce health status, matched optimization rules, draft-only recommendations, action plans, and optimization drafts |
+| Event-driven feedback | Campaign performance events produce health status, matched optimization rules, draft-only recommendations, action plans, optimization drafts, and human review records |
 | Self-reflection / critique loop | Critic report gates finalization; optional LLM critic can route through a bounded revision loop |
 | LLMOps / observability | LangSmith-compatible run metadata, structured JSON logs, local eval suite, and CI smoke coverage |
 | Ads growth domain | Output covers audience, creative, budget, bidding, measurement, campaign drafts, performance forecasts, and optimization rules |
@@ -513,6 +514,34 @@ PERFORMANCE_EVENT_PERSISTENCE_BACKEND=postgres ads-growth-agent get-feedback-opt
 The optimization draft maps action-plan steps into reviewable budget, creative,
 audience, or measurement changes. It is derived from the persisted event and
 does not create or mutate a live campaign.
+
+Human reviewers can persist an approval, rejection, or revision request for the
+optimization draft. Enable `FEEDBACK_REVIEW_PERSISTENCE_BACKEND=postgres` with
+`PERFORMANCE_EVENT_PERSISTENCE_BACKEND=postgres`:
+
+```bash
+curl -X POST http://localhost:8000/campaign-events/performance/evt_perf_001/optimization-draft/reviews \
+  -H "Content-Type: application/json" \
+  -H "X-Tenant-ID: tenant_demo" \
+  -d '{"decision":"approved","reviewer_id":"operator_001","notes":"Approve first safe change."}'
+
+curl http://localhost:8000/feedback-optimization-reviews/feedback_review_example \
+  -H "X-Tenant-ID: tenant_demo"
+
+curl "http://localhost:8000/feedback-optimization-reviews?event_id=evt_perf_001&decision=approved&limit=20" \
+  -H "X-Tenant-ID: tenant_demo"
+
+FEEDBACK_REVIEW_PERSISTENCE_BACKEND=postgres PERFORMANCE_EVENT_PERSISTENCE_BACKEND=postgres \
+  ads-growth-agent submit-feedback-optimization-review evt_perf_001 --decision approved --reviewer-id operator_001
+
+FEEDBACK_REVIEW_PERSISTENCE_BACKEND=postgres ads-growth-agent get-feedback-optimization-review feedback_review_example
+
+FEEDBACK_REVIEW_PERSISTENCE_BACKEND=postgres ads-growth-agent list-feedback-optimization-reviews --event-id evt_perf_001 --decision approved --limit 20
+```
+
+Reviews persist reviewer identity, notes, selected change IDs, and a snapshot of
+the reviewed optimization draft. Approval is still not execution; v0.1 remains
+draft-only until an explicit execution workflow is added.
 
 Campaign draft persistence is separately opt-in. Set `CAMPAIGN_DRAFT_PERSISTENCE_BACKEND=postgres` to store the `create_campaign_draft` tool output in `campaign_drafts`:
 
