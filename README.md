@@ -17,7 +17,8 @@ v0.1 Phase 1 MVP is complete as of 2026-05-18. The current milestone is a determ
 7. Return a validated campaign growth strategy with a reusable feedback context.
 8. Analyze, persist, and inspect campaign performance events.
 9. Persist and inspect advertiser memory when PostgreSQL memory persistence is enabled.
-10. Retrieve learned advertiser memory in a later PostgreSQL-backed strategy run.
+10. Fetch a draft-only feedback action plan for the next optimization steps.
+11. Retrieve learned advertiser memory in a later PostgreSQL-backed strategy run.
 
 Phase 1 is intentionally a functional MVP, not a production launch claim. A single advertiser can run the core product loop locally through CLI or FastAPI without external model keys. The system still does not execute live ad spend, enforce real authentication, provide production SLO dashboards, or require GitHub branch protection in repository settings.
 
@@ -156,7 +157,7 @@ This project is designed around the same engineering themes as an AI Agent-power
 | RAG | Strategy playbooks, historical cases, and advertiser memory are retrieved and cited in final outputs |
 | Multi-agent orchestration | Planner, retriever, tool executor, critic, revision, and finalizer nodes model role-based agent responsibilities |
 | Structured output | Pydantic contracts validate briefs, tool intents/results, critique reports, final strategies, feedback analyses, and eval reports |
-| Event-driven feedback | Campaign performance events produce health status, matched optimization rules, and draft-only recommendations |
+| Event-driven feedback | Campaign performance events produce health status, matched optimization rules, draft-only recommendations, and action plans |
 | Self-reflection / critique loop | Critic report gates finalization; optional LLM critic can route through a bounded revision loop |
 | LLMOps / observability | LangSmith-compatible run metadata, structured JSON logs, local eval suite, and CI smoke coverage |
 | Ads growth domain | Output covers audience, creative, budget, bidding, measurement, campaign drafts, performance forecasts, and optimization rules |
@@ -483,6 +484,20 @@ PERFORMANCE_EVENT_PERSISTENCE_BACKEND=postgres ads-growth-agent get-performance-
 
 PERFORMANCE_EVENT_PERSISTENCE_BACKEND=postgres ads-growth-agent list-performance-events --advertiser-id adv_fitness_001 --campaign-id cmp_fitness_001 --limit 20
 ```
+
+Persisted feedback action plans can be queried when a reviewer wants the ranked
+next steps without reading the full raw event payload:
+
+```bash
+curl http://localhost:8000/campaign-events/performance/evt_perf_001/action-plan \
+  -H "X-Tenant-ID: tenant_demo"
+
+PERFORMANCE_EVENT_PERSISTENCE_BACKEND=postgres ads-growth-agent get-feedback-action-plan evt_perf_001
+```
+
+The action plan keeps each step in `draft_recommendation` or `monitor_only`
+status, includes the owning agent role, links matched strategy rule IDs when
+available, and repeats the guardrail that no live campaign change is executed.
 
 Campaign draft persistence is separately opt-in. Set `CAMPAIGN_DRAFT_PERSISTENCE_BACKEND=postgres` to store the `create_campaign_draft` tool output in `campaign_drafts`:
 

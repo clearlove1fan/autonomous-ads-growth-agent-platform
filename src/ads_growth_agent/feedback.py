@@ -3,8 +3,12 @@ from decimal import Decimal
 from uuid import NAMESPACE_URL, uuid5
 
 from ads_growth_agent.contracts import (
+    AgentRole,
+    CampaignFeedbackActionPlanResponse,
     CampaignFeedbackAnalysis,
+    CampaignPerformanceEventDetailResponse,
     CampaignPerformanceEventRequest,
+    FeedbackActionPlanStep,
     FeedbackActionType,
     FeedbackHealthStatus,
     FeedbackRecommendation,
@@ -58,6 +62,38 @@ def analyze_campaign_performance_event(
     )
 
 
+def build_campaign_feedback_action_plan(
+    event: CampaignPerformanceEventDetailResponse,
+) -> CampaignFeedbackActionPlanResponse:
+    """Build a ranked, draft-only action plan from persisted feedback analysis."""
+
+    analysis = event.analysis
+    steps = [
+        _action_plan_step(event, analysis, recommendation)
+        for recommendation in sorted(
+            analysis.recommendations,
+            key=lambda item: (item.priority, item.action_type.value, item.recommendation_id),
+        )
+    ]
+    return CampaignFeedbackActionPlanResponse(
+        event_id=event.event_id,
+        feedback_id=analysis.feedback_id,
+        advertiser_id=event.advertiser_id,
+        run_id=event.run_id,
+        campaign_id=event.campaign_id,
+        draft_id=analysis.draft_id or event.draft_id,
+        strategy_id=analysis.strategy_id,
+        health_status=analysis.health_status,
+        summary=_action_plan_summary(analysis),
+        steps=steps,
+        guardrails=[
+            *analysis.guardrails,
+            "Action plan steps are recommendations only and do not execute live changes.",
+        ],
+        created_at=analysis.created_at,
+    )
+
+
 def _metrics_summary(event: CampaignPerformanceEventRequest) -> dict[str, str | int | None]:
     metrics = event.metrics
     ctr = _ratio(metrics.clicks, metrics.impressions)
@@ -88,6 +124,105 @@ def _metrics_summary(event: CampaignPerformanceEventRequest) -> dict[str, str | 
         "roas": str(roas) if roas is not None else None,
         "attribution_window_days": event.attribution_window_days,
     }
+
+
+def _action_plan_step(
+    event: CampaignPerformanceEventDetailResponse,
+    analysis: CampaignFeedbackAnalysis,
+    recommendation: FeedbackRecommendation,
+) -> FeedbackActionPlanStep:
+    owner_role = _owner_role_for_action(recommendation.action_type)
+    matched_rule_ids = _matched_rule_ids(recommendation)
+    matched_action = _matched_rule_action(
+        analysis,
+        matched_rule_ids=matched_rule_ids,
+        owner_role=owner_role,
+    )
+    params = {
+        **recommendation.params,
+        "event_id": event.event_id,
+        "feedback_id": analysis.feedback_id,
+        "health_status": analysis.health_status.value,
+    }
+    if event.campaign_id is not None:
+        params["campaign_id"] = event.campaign_id
+    if analysis.draft_id or event.draft_id:
+        params["draft_id"] = analysis.draft_id or event.draft_id
+
+    requires_approval = recommendation.requires_human_approval
+    return FeedbackActionPlanStep(
+        step_id=recommendation.recommendation_id,
+        action_type=recommendation.action_type,
+        title=recommendation.title,
+        rationale=recommendation.rationale,
+        recommended_action=matched_action or recommendation.title,
+        priority=recommendation.priority,
+        owner_role=owner_role,
+        risk_level=recommendation.risk_level,
+        requires_human_approval=requires_approval,
+        status="draft_recommendation" if requires_approval else "monitor_only",
+        tool_name=_tool_name_for_action(recommendation.action_type),
+        params=params,
+        matched_strategy_rule_ids=matched_rule_ids,
+    )
+
+
+def _matched_rule_ids(recommendation: FeedbackRecommendation) -> list[str]:
+    raw_rule_ids = recommendation.params.get("matched_strategy_rule_ids", [])
+    if not isinstance(raw_rule_ids, list):
+        return []
+    return [rule_id for rule_id in raw_rule_ids if isinstance(rule_id, str)]
+
+
+def _matched_rule_action(
+    analysis: CampaignFeedbackAnalysis,
+    *,
+    matched_rule_ids: list[str],
+    owner_role: AgentRole,
+) -> str | None:
+    for match in analysis.matched_strategy_rules:
+        if match.rule_id in matched_rule_ids and match.owner_role == owner_role:
+            return match.recommended_action
+    return None
+
+
+def _owner_role_for_action(action_type: FeedbackActionType) -> AgentRole:
+    match action_type:
+        case FeedbackActionType.ADJUST_BUDGET:
+            return AgentRole.BUDGET_OPTIMIZER
+        case FeedbackActionType.REFRESH_CREATIVE:
+            return AgentRole.CREATIVE_STRATEGIST
+        case FeedbackActionType.NARROW_AUDIENCE:
+            return AgentRole.AUDIENCE_STRATEGIST
+        case FeedbackActionType.INSPECT_TRACKING | FeedbackActionType.CONTINUE_MONITORING:
+            return AgentRole.PERFORMANCE_ANALYST
+
+
+def _tool_name_for_action(action_type: FeedbackActionType) -> str | None:
+    match action_type:
+        case FeedbackActionType.ADJUST_BUDGET:
+            return "optimize_budget"
+        case FeedbackActionType.REFRESH_CREATIVE:
+            return "generate_creative_brief"
+        case FeedbackActionType.NARROW_AUDIENCE:
+            return "recommend_audience"
+        case FeedbackActionType.INSPECT_TRACKING | FeedbackActionType.CONTINUE_MONITORING:
+            return None
+
+
+def _action_plan_summary(analysis: CampaignFeedbackAnalysis) -> str:
+    summary = analysis.metrics_summary
+    cpa = summary.get("cpa")
+    target_cpa = summary.get("target_cpa")
+    metric_note = ""
+    if cpa is not None and target_cpa is not None:
+        metric_note = f" Observed CPA is {cpa} against target CPA {target_cpa}."
+    elif cpa is not None:
+        metric_note = f" Observed CPA is {cpa}."
+    return (
+        f"Feedback is {analysis.health_status.value} for event {analysis.event_id}."
+        f"{metric_note} Generated {len(analysis.recommendations)} draft-only next step(s)."
+    )
 
 
 def _health_status(

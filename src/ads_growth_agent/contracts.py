@@ -706,6 +706,49 @@ class CampaignFeedbackAnalysis(BaseModel):
     created_at: datetime
 
 
+class FeedbackActionPlanStep(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    step_id: str = Field(min_length=1, max_length=200)
+    action_type: FeedbackActionType
+    title: str = Field(min_length=1, max_length=160)
+    rationale: str = Field(min_length=1, max_length=800)
+    recommended_action: str = Field(min_length=1, max_length=800)
+    priority: int = Field(ge=1, le=5)
+    owner_role: AgentRole
+    risk_level: RiskLevel = RiskLevel.LOW
+    requires_human_approval: bool = True
+    status: Literal["draft_recommendation", "monitor_only"]
+    tool_name: str | None = Field(default=None, max_length=120)
+    params: dict[str, Any] = Field(default_factory=dict)
+    matched_strategy_rule_ids: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_action_status(self) -> "FeedbackActionPlanStep":
+        if self.status == "monitor_only" and self.requires_human_approval:
+            raise ValueError("monitor-only action steps should not require human approval")
+        if self.status == "draft_recommendation" and not self.requires_human_approval:
+            raise ValueError("draft recommendation action steps require human approval")
+        return self
+
+
+class CampaignFeedbackActionPlanResponse(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    event_id: str = Field(min_length=1, max_length=128)
+    feedback_id: str = Field(min_length=1, max_length=160)
+    advertiser_id: str = Field(min_length=1, max_length=128)
+    run_id: str | None = Field(default=None, min_length=1, max_length=128)
+    campaign_id: str | None = Field(default=None, min_length=1, max_length=128)
+    draft_id: str | None = Field(default=None, min_length=1, max_length=160)
+    strategy_id: str | None = Field(default=None, min_length=1, max_length=128)
+    health_status: FeedbackHealthStatus
+    summary: str = Field(min_length=1, max_length=1_000)
+    steps: list[FeedbackActionPlanStep] = Field(min_length=1)
+    guardrails: list[str] = Field(default_factory=list)
+    created_at: datetime
+
+
 class CampaignPerformanceEventResponse(BaseModel):
     event_id: str = Field(min_length=1, max_length=128)
     advertiser_id: str = Field(min_length=1, max_length=128)

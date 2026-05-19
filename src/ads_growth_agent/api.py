@@ -23,6 +23,7 @@ from ads_growth_agent.contracts import (
     AgentRunDetailResponse,
     CampaignDraftDetailResponse,
     CampaignDraftListResponse,
+    CampaignFeedbackActionPlanResponse,
     CampaignFeedbackAnalysis,
     CampaignPerformanceEventDetailResponse,
     CampaignPerformanceEventListResponse,
@@ -40,7 +41,10 @@ from ads_growth_agent.contracts import (
     StrategyJobListResponse,
     StrategyJobStatus,
 )
-from ads_growth_agent.feedback import analyze_campaign_performance_event
+from ads_growth_agent.feedback import (
+    analyze_campaign_performance_event,
+    build_campaign_feedback_action_plan,
+)
 from ads_growth_agent.graph import strategy_id_for_brief
 from ads_growth_agent.health import ReadinessResponse, check_readiness
 from ads_growth_agent.idempotency_store_factory import build_configured_idempotency_store
@@ -870,6 +874,35 @@ def get_campaign_performance_event(
             },
         )
     return event
+
+
+@app.get(
+    "/campaign-events/performance/{event_id}/action-plan",
+    response_model=CampaignFeedbackActionPlanResponse,
+    dependencies=[Depends(require_api_auth)],
+)
+def get_campaign_feedback_action_plan(
+    event_id: str,
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    event_store: Annotated[
+        CampaignPerformanceEventStore,
+        Depends(get_runtime_performance_event_store),
+    ],
+) -> CampaignFeedbackActionPlanResponse:
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    event = event_store.get_event(event_id)
+    if event is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": "Campaign performance event was not found for the effective tenant.",
+                "error_code": "PERFORMANCE_EVENT_NOT_FOUND",
+                "event_id": event_id,
+            },
+        )
+    response.headers["Feedback-ID"] = event.analysis.feedback_id
+    return build_campaign_feedback_action_plan(event)
 
 
 def _raise_performance_event_conflict(event_id: str) -> None:

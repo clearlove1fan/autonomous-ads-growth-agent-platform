@@ -1,6 +1,7 @@
 from ads_growth_agent.contracts import (
     AgentRole,
     CampaignObjective,
+    CampaignPerformanceEventDetailResponse,
     CampaignPerformanceEventRequest,
     FeedbackActionType,
     FeedbackHealthStatus,
@@ -8,7 +9,10 @@ from ads_growth_agent.contracts import (
     OptimizationRule,
     PerformanceMetrics,
 )
-from ads_growth_agent.feedback import analyze_campaign_performance_event
+from ads_growth_agent.feedback import (
+    analyze_campaign_performance_event,
+    build_campaign_feedback_action_plan,
+)
 
 
 def test_feedback_analysis_flags_underperforming_cpa() -> None:
@@ -143,3 +147,81 @@ def test_feedback_analysis_flags_zero_conversion_attention() -> None:
         FeedbackActionType.INSPECT_TRACKING,
         FeedbackActionType.NARROW_AUDIENCE,
     ]
+
+
+def test_feedback_action_plan_ranks_draft_only_next_steps() -> None:
+    event = CampaignPerformanceEventRequest(
+        event_id="evt_action_plan",
+        advertiser_id="adv_fitness_001",
+        run_id="run_001",
+        campaign_id="cmp_fittrack",
+        draft_id="draft_fittrack",
+        objective=CampaignObjective.REGISTRATIONS,
+        occurred_at="2026-05-12T12:00:00Z",
+        metrics=PerformanceMetrics(
+            impressions=10_000,
+            clicks=500,
+            spend="1000.00",
+            conversions=20,
+        ),
+        strategy_context=FeedbackStrategyContext(
+            strategy_id="strategy_001",
+            draft_id="draft_fittrack",
+            target_cpa="20.00",
+            optimization_rules=[
+                OptimizationRule(
+                    rule_id="strategy_001:rule:cpa_guardrail",
+                    trigger_metric="cost_per_result",
+                    condition="Observed CPA exceeds target by more than 20%.",
+                    recommended_action="Shift budget toward the best converting lane.",
+                    owner_role=AgentRole.BUDGET_OPTIMIZER,
+                    priority=1,
+                    rationale="CPA is the primary efficiency guardrail.",
+                ),
+            ],
+        ),
+    )
+    analysis = analyze_campaign_performance_event(event)
+    detail = CampaignPerformanceEventDetailResponse(
+        event_id=event.event_id,
+        advertiser_id=event.advertiser_id,
+        run_id=event.run_id,
+        campaign_id=event.campaign_id,
+        draft_id=event.draft_id,
+        objective=event.objective,
+        event_type=event.event_type,
+        occurred_at=event.occurred_at,
+        metrics=event.metrics,
+        status="analyzed",
+        metadata={},
+        analysis=analysis,
+        created_at=analysis.created_at,
+        updated_at=analysis.created_at,
+    )
+
+    action_plan = build_campaign_feedback_action_plan(detail)
+
+    assert action_plan.event_id == "evt_action_plan"
+    assert action_plan.feedback_id == analysis.feedback_id
+    assert action_plan.strategy_id == "strategy_001"
+    assert action_plan.draft_id == "draft_fittrack"
+    assert action_plan.health_status == FeedbackHealthStatus.UNDERPERFORMING
+    assert "Observed CPA is 50.00 against target CPA 20.00" in action_plan.summary
+    assert [step.action_type for step in action_plan.steps] == [
+        FeedbackActionType.ADJUST_BUDGET,
+        FeedbackActionType.REFRESH_CREATIVE,
+    ]
+    assert action_plan.steps[0].owner_role == AgentRole.BUDGET_OPTIMIZER
+    assert action_plan.steps[0].tool_name == "optimize_budget"
+    assert action_plan.steps[0].recommended_action == (
+        "Shift budget toward the best converting lane."
+    )
+    assert action_plan.steps[0].matched_strategy_rule_ids == [
+        "strategy_001:rule:cpa_guardrail"
+    ]
+    assert action_plan.steps[0].requires_human_approval is True
+    assert action_plan.steps[0].status == "draft_recommendation"
+    assert action_plan.steps[0].params["event_id"] == "evt_action_plan"
+    assert action_plan.steps[1].owner_role == AgentRole.CREATIVE_STRATEGIST
+    assert action_plan.steps[1].tool_name == "generate_creative_brief"
+    assert action_plan.guardrails[-1].startswith("Action plan steps are recommendations")

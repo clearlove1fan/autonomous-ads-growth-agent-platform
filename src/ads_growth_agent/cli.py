@@ -29,7 +29,10 @@ from ads_growth_agent.contracts import (
     StrategyJobStatus,
 )
 from ads_growth_agent.evaluation import load_eval_cases, run_local_eval_suite
-from ads_growth_agent.feedback import analyze_campaign_performance_event
+from ads_growth_agent.feedback import (
+    analyze_campaign_performance_event,
+    build_campaign_feedback_action_plan,
+)
 from ads_growth_agent.logging_config import configure_logging
 from ads_growth_agent.outbox import process_configured_outbox
 from ads_growth_agent.performance_event_store_factory import (
@@ -257,6 +260,19 @@ def get_performance_event(event_id: str = PERFORMANCE_EVENT_ID_ARGUMENT) -> None
         typer.echo(f"Performance event not found: {event_id}", err=True)
         raise typer.Exit(1)
     typer.echo(event.model_dump_json(indent=2))
+
+
+@app.command("get-feedback-action-plan")
+def get_feedback_action_plan(event_id: str = PERFORMANCE_EVENT_ID_ARGUMENT) -> None:
+    """Fetch draft-only next steps for one persisted campaign performance event."""
+    settings = get_settings()
+    store = build_configured_performance_event_store(settings)
+    event = store.get_event(event_id)
+    if event is None:
+        typer.echo(f"Performance event not found: {event_id}", err=True)
+        raise typer.Exit(1)
+    action_plan = build_campaign_feedback_action_plan(event)
+    typer.echo(action_plan.model_dump_json(indent=2))
 
 
 @app.command("list-performance-events")

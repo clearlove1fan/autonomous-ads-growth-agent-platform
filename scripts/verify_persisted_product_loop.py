@@ -156,6 +156,25 @@ def run_persisted_product_loop(
                 label="list performance events",
             )
             _expect(event_list["count"] == 1, "event list should contain one feedback event")
+            action_plan = _api_json(
+                client.get(
+                    f"/campaign-events/performance/{event_id}/action-plan",
+                    headers=_tenant_headers(tenant_id),
+                ),
+                label="get feedback action plan",
+            )
+            _expect(
+                action_plan["event_id"] == event_id,
+                "action plan should link back to performance event",
+            )
+            _expect(
+                action_plan["steps"][0]["action_type"] == "adjust_budget",
+                "action plan should rank budget adjustment first for high CPA feedback",
+            )
+            _expect(
+                action_plan["steps"][0]["status"] == "draft_recommendation",
+                "action plan should keep optimization steps draft-only",
+            )
 
             outbox_report = _invoke_cli(
                 settings,
@@ -188,6 +207,10 @@ def run_persisted_product_loop(
 
             cli_draft = _invoke_cli(settings, ["get-campaign-draft", draft_id])
             cli_event = _invoke_cli(settings, ["get-performance-event", event_id])
+            cli_action_plan = _invoke_cli(
+                settings,
+                ["get-feedback-action-plan", event_id],
+            )
             cli_event_list = _invoke_cli(
                 settings,
                 [
@@ -219,6 +242,11 @@ def run_persisted_product_loop(
             )
             _expect(cli_draft["draft_id"] == draft_id, "CLI draft read did not match draft_id")
             _expect(cli_event["event_id"] == event_id, "CLI event read did not match event_id")
+            _expect(
+                cli_action_plan["steps"][0]["action_type"]
+                == action_plan["steps"][0]["action_type"],
+                "CLI action plan should match API action plan",
+            )
             _expect(cli_event_list["count"] == 1, "CLI event list should find feedback event")
             _expect(
                 cli_memory["source_id"] == memory_source_id,
@@ -264,6 +292,11 @@ def run_persisted_product_loop(
                 "health_status": event_response["analysis"]["health_status"],
                 "advertiser_memory_status": event_response["advertiser_memory_status"],
             },
+            "action_plan": {
+                "step_count": len(action_plan["steps"]),
+                "first_action_type": action_plan["steps"][0]["action_type"],
+                "first_action_status": action_plan["steps"][0]["status"],
+            },
             "outbox": outbox_report,
             "memory": {
                 "source_id": memory_source_id,
@@ -273,6 +306,7 @@ def run_persisted_product_loop(
             "cli_reads": {
                 "draft_id": cli_draft["draft_id"],
                 "event_id": cli_event["event_id"],
+                "first_action_type": cli_action_plan["steps"][0]["action_type"],
                 "memory_source_id": cli_memory["source_id"],
                 "event_count": cli_event_list["count"],
                 "memory_count": cli_memory_list["count"],
@@ -321,6 +355,12 @@ def render_summary(summary: dict[str, Any]) -> str:
                 f"memory={summary['feedback_event']['advertiser_memory_status']}"
             ),
             (
+                "Action plan: "
+                f"steps={summary['action_plan']['step_count']} "
+                f"first={summary['action_plan']['first_action_type']} "
+                f"status={summary['action_plan']['first_action_status']}"
+            ),
+            (
                 "Outbox: "
                 f"claimed={summary['outbox']['claimed']} "
                 f"completed={summary['outbox']['completed']} "
@@ -340,6 +380,7 @@ def render_summary(summary: dict[str, Any]) -> str:
             (
                 "CLI reads: "
                 f"events={summary['cli_reads']['event_count']} "
+                f"first_action={summary['cli_reads']['first_action_type']} "
                 f"memories={summary['cli_reads']['memory_count']}"
             ),
         ]

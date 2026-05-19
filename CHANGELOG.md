@@ -22,6 +22,8 @@
   API support for persisted feedback review.
 - Added a live PostgreSQL persisted product loop verifier covering strategy
   draft, feedback event, outbox memory, API/CLI reads, and later RAG retrieval.
+- Added draft-only feedback action plans through API and CLI for persisted
+  campaign performance events.
 
 ## v0.1.0 - 2026-05-18
 
