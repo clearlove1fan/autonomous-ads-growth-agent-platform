@@ -20,6 +20,8 @@
   long-term memory review.
 - Added campaign performance event list/detail CLI commands and filtered list
   API support for persisted feedback review.
+- Added a live PostgreSQL persisted product loop verifier covering strategy
+  draft, feedback event, outbox memory, API/CLI reads, and later RAG retrieval.
 
 ## v0.1.0 - 2026-05-18
 

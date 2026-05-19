@@ -1,0 +1,561 @@
+#!/usr/bin/env python3
+"""Run and validate the persisted v0.1 product loop."""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any
+from unittest.mock import patch
+from uuid import uuid4
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC_ROOT = REPO_ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
+import sqlalchemy as sa  # noqa: E402
+from alembic import command  # noqa: E402
+from alembic.config import Config  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+from sqlalchemy.engine import URL, make_url  # noqa: E402
+from typer.testing import CliRunner  # noqa: E402
+
+import ads_growth_agent.cli as cli_module  # noqa: E402
+from ads_growth_agent.advertiser_memory_store_factory import (  # noqa: E402
+    dispose_cached_advertiser_memory_store_engines,
+)
+from ads_growth_agent.api import app as api_app  # noqa: E402
+from ads_growth_agent.api import get_runtime_settings  # noqa: E402
+from ads_growth_agent.campaign_draft_store_factory import (  # noqa: E402
+    dispose_cached_campaign_draft_store_engines,
+)
+from ads_growth_agent.config import Settings  # noqa: E402
+from ads_growth_agent.knowledge_store_factory import (  # noqa: E402
+    dispose_cached_knowledge_store_engines,
+)
+from ads_growth_agent.outbox_store_factory import (  # noqa: E402
+    dispose_cached_outbox_store_engines,
+)
+from ads_growth_agent.performance_event_store_factory import (  # noqa: E402
+    dispose_cached_performance_event_store_engines,
+)
+from ads_growth_agent.persistence.knowledge_seed import seed_default_knowledge  # noqa: E402
+from ads_growth_agent.run_store_factory import dispose_cached_run_store_engines  # noqa: E402
+
+DEFAULT_TEST_DATABASE_URL = (
+    "postgresql+psycopg://ads_growth:ads_growth@localhost:5432/ads_growth"
+)
+DEFAULT_TENANT_ID = "tenant_product_loop"
+DEFAULT_ADVERTISER_ID = "adv_fitness_001"
+DEFAULT_BRIEF_TEXT = (
+    "I want to use a $2000 budget to promote a fitness app in the United States "
+    "and increase trial registrations over 14 days."
+)
+
+
+class ProductLoopVerificationError(Exception):
+    """Raised when the persisted product loop violates the expected contract."""
+
+    def __init__(self, issues: list[str]) -> None:
+        super().__init__("\n".join(issues))
+        self.issues = issues
+
+
+def run_persisted_product_loop(
+    base_database_url: URL | str | None = None,
+    *,
+    tenant_id: str = DEFAULT_TENANT_ID,
+    advertiser_id: str = DEFAULT_ADVERTISER_ID,
+) -> dict[str, Any]:
+    """Create a temporary PostgreSQL DB and validate the persisted product loop."""
+
+    base_url = _database_url(base_database_url)
+    test_url = _create_temporary_database(base_url)
+    database_url = test_url.render_as_string(hide_password=False)
+    engine = sa.create_engine(test_url, pool_pre_ping=True)
+    settings = _walkthrough_settings(database_url, tenant_id=tenant_id)
+
+    try:
+        with _temporary_env({"DATABASE_URL": database_url}):
+            _upgrade_database()
+        seed_default_knowledge(engine, tenant_id=tenant_id)
+
+        api_app.dependency_overrides[get_runtime_settings] = lambda: settings
+        with TestClient(api_app) as client:
+            first_strategy = _create_strategy(
+                client,
+                tenant_id=tenant_id,
+                advertiser_id=advertiser_id,
+            )
+            strategy = first_strategy["growth_strategy"]["strategy"]
+            run_metadata = first_strategy["growth_strategy"]["run_metadata"]
+            run_id = run_metadata["run_id"]
+            strategy_id = strategy["strategy_id"]
+            draft_id = strategy["campaign_draft"]["draft_id"]
+
+            draft_detail = _api_json(
+                client.get(
+                    f"/campaign-drafts/{draft_id}",
+                    headers=_tenant_headers(tenant_id),
+                ),
+                label="get campaign draft",
+            )
+            draft_list = _api_json(
+                client.get(
+                    "/campaign-drafts",
+                    params={"advertiser_id": advertiser_id, "limit": "10"},
+                    headers=_tenant_headers(tenant_id),
+                ),
+                label="list campaign drafts",
+            )
+            _expect(draft_detail["draft_id"] == draft_id, "draft detail did not match draft_id")
+            _expect(draft_list["count"] == 1, "draft list should contain one persisted draft")
+
+            event_payload = _performance_event_payload(
+                advertiser_id=advertiser_id,
+                run_id=run_id,
+                draft_id=draft_id,
+                objective=strategy["objective"],
+                strategy_context=strategy["feedback_context"],
+            )
+            event_response = _api_json(
+                client.post(
+                    "/campaign-events/performance",
+                    json=event_payload,
+                    headers=_tenant_headers(tenant_id),
+                ),
+                label="ingest performance event",
+            )
+            event_id = event_response["event_id"]
+            memory_source_id = event_response["advertiser_memory_source_id"]
+            _expect(
+                event_response["advertiser_memory_status"] == "queued",
+                "performance feedback should queue advertiser memory through outbox",
+            )
+            _expect(
+                isinstance(memory_source_id, str) and memory_source_id,
+                "performance feedback should expose advertiser_memory_source_id",
+            )
+
+            event_list = _api_json(
+                client.get(
+                    "/campaign-events/performance",
+                    params={
+                        "advertiser_id": advertiser_id,
+                        "run_id": run_id,
+                        "draft_id": draft_id,
+                        "limit": "10",
+                    },
+                    headers=_tenant_headers(tenant_id),
+                ),
+                label="list performance events",
+            )
+            _expect(event_list["count"] == 1, "event list should contain one feedback event")
+
+            outbox_report = _invoke_cli(
+                settings,
+                ["process-outbox", "--limit", "10", "--worker-id", "worker_product_loop"],
+            )
+            _expect(outbox_report["claimed"] == 1, "outbox should claim one memory event")
+            _expect(outbox_report["completed"] == 1, "outbox should complete memory event")
+            _expect(outbox_report["failed"] == 0, "outbox should not fail memory event")
+
+            memory_list = _api_json(
+                client.get(
+                    f"/advertisers/{advertiser_id}/memories",
+                    params={"memory_type": "historical_performance", "limit": "10"},
+                    headers=_tenant_headers(tenant_id),
+                ),
+                label="list advertiser memories",
+            )
+            memory_detail = _api_json(
+                client.get(
+                    f"/advertisers/{advertiser_id}/memories/{memory_source_id}",
+                    headers=_tenant_headers(tenant_id),
+                ),
+                label="get advertiser memory",
+            )
+            _expect(memory_list["count"] == 1, "memory list should contain one learned memory")
+            _expect(
+                memory_detail["metadata"]["event_id"] == event_id,
+                "memory detail should link back to performance event",
+            )
+
+            cli_draft = _invoke_cli(settings, ["get-campaign-draft", draft_id])
+            cli_event = _invoke_cli(settings, ["get-performance-event", event_id])
+            cli_event_list = _invoke_cli(
+                settings,
+                [
+                    "list-performance-events",
+                    "--advertiser-id",
+                    advertiser_id,
+                    "--run-id",
+                    run_id,
+                    "--draft-id",
+                    draft_id,
+                    "--limit",
+                    "10",
+                ],
+            )
+            cli_memory = _invoke_cli(
+                settings,
+                ["get-advertiser-memory", advertiser_id, memory_source_id],
+            )
+            cli_memory_list = _invoke_cli(
+                settings,
+                [
+                    "list-advertiser-memories",
+                    advertiser_id,
+                    "--memory-type",
+                    "historical_performance",
+                    "--limit",
+                    "10",
+                ],
+            )
+            _expect(cli_draft["draft_id"] == draft_id, "CLI draft read did not match draft_id")
+            _expect(cli_event["event_id"] == event_id, "CLI event read did not match event_id")
+            _expect(cli_event_list["count"] == 1, "CLI event list should find feedback event")
+            _expect(
+                cli_memory["source_id"] == memory_source_id,
+                "CLI memory read did not match memory source",
+            )
+            _expect(
+                cli_memory_list["count"] == 1,
+                "CLI memory list should find learned memory",
+            )
+
+            later_strategy = _create_strategy(
+                client,
+                tenant_id=tenant_id,
+                advertiser_id=advertiser_id,
+                text=(
+                    "Use another $2000 for the same fitness app registration campaign. "
+                    "Consider previous performance before recommending the next plan."
+                ),
+            )
+            later_strategy_payload = later_strategy["growth_strategy"]["strategy"]
+            later_sources = later_strategy_payload["sources"]
+            later_source_ids = {source["source_id"] for source in later_sources}
+            _expect(
+                memory_source_id in later_source_ids,
+                "later strategy should retrieve the learned advertiser memory via RAG",
+            )
+
+        return {
+            "status": "passed",
+            "tenant_id": tenant_id,
+            "database_url": _safe_database_url(database_url),
+            "first_strategy": {
+                "run_id": run_id,
+                "strategy_id": strategy_id,
+                "draft_id": draft_id,
+                "source_types": sorted(
+                    {source["source_type"] for source in strategy["sources"]}
+                ),
+            },
+            "feedback_event": {
+                "event_id": event_id,
+                "feedback_id": event_response["analysis"]["feedback_id"],
+                "health_status": event_response["analysis"]["health_status"],
+                "advertiser_memory_status": event_response["advertiser_memory_status"],
+            },
+            "outbox": outbox_report,
+            "memory": {
+                "source_id": memory_source_id,
+                "memory_type": memory_detail["memory_type"],
+                "metadata_event_id": memory_detail["metadata"]["event_id"],
+            },
+            "cli_reads": {
+                "draft_id": cli_draft["draft_id"],
+                "event_id": cli_event["event_id"],
+                "memory_source_id": cli_memory["source_id"],
+                "event_count": cli_event_list["count"],
+                "memory_count": cli_memory_list["count"],
+            },
+            "later_strategy": {
+                "run_id": later_strategy["growth_strategy"]["run_metadata"]["run_id"],
+                "strategy_id": later_strategy_payload["strategy_id"],
+                "retrieved_memory_source_ids": sorted(
+                    source["source_id"]
+                    for source in later_sources
+                    if source["source_type"] == "advertiser_memory"
+                ),
+                "source_types": sorted({source["source_type"] for source in later_sources}),
+            },
+        }
+    finally:
+        api_app.dependency_overrides.clear()
+        dispose_cached_advertiser_memory_store_engines()
+        dispose_cached_campaign_draft_store_engines()
+        dispose_cached_knowledge_store_engines()
+        dispose_cached_outbox_store_engines()
+        dispose_cached_performance_event_store_engines()
+        dispose_cached_run_store_engines()
+        engine.dispose()
+        _drop_temporary_database(test_url)
+
+
+def render_summary(summary: dict[str, Any]) -> str:
+    """Render a compact operator-facing summary for the walkthrough script."""
+
+    return "\n".join(
+        [
+            "Persisted product loop verification passed",
+            f"Tenant: {summary['tenant_id']}",
+            f"Database: {summary['database_url']}",
+            (
+                "Strategy draft: "
+                f"run={summary['first_strategy']['run_id']} "
+                f"strategy={summary['first_strategy']['strategy_id']} "
+                f"draft={summary['first_strategy']['draft_id']}"
+            ),
+            (
+                "Feedback event: "
+                f"{summary['feedback_event']['event_id']} "
+                f"status={summary['feedback_event']['health_status']} "
+                f"memory={summary['feedback_event']['advertiser_memory_status']}"
+            ),
+            (
+                "Outbox: "
+                f"claimed={summary['outbox']['claimed']} "
+                f"completed={summary['outbox']['completed']} "
+                f"failed={summary['outbox']['failed']}"
+            ),
+            (
+                "Memory: "
+                f"{summary['memory']['source_id']} "
+                f"type={summary['memory']['memory_type']}"
+            ),
+            (
+                "Later RAG: "
+                f"strategy={summary['later_strategy']['strategy_id']} "
+                "retrieved_memories="
+                f"{', '.join(summary['later_strategy']['retrieved_memory_source_ids'])}"
+            ),
+            (
+                "CLI reads: "
+                f"events={summary['cli_reads']['event_count']} "
+                f"memories={summary['cli_reads']['memory_count']}"
+            ),
+        ]
+    )
+
+
+def _create_strategy(
+    client: TestClient,
+    *,
+    tenant_id: str,
+    advertiser_id: str,
+    text: str = DEFAULT_BRIEF_TEXT,
+) -> dict[str, Any]:
+    return _api_json(
+        client.post(
+            "/growth-strategies/from-text",
+            json={
+                "text": text,
+                "advertiser_id": advertiser_id,
+                "default_target_market": "United States",
+                "default_currency": "USD",
+                "default_duration_days": 14,
+            },
+            headers=_tenant_headers(tenant_id),
+        ),
+        label="create growth strategy from text",
+    )
+
+
+def _performance_event_payload(
+    *,
+    advertiser_id: str,
+    run_id: str,
+    draft_id: str,
+    objective: str,
+    strategy_context: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "event_id": "evt_product_loop_underperforming",
+        "advertiser_id": advertiser_id,
+        "run_id": run_id,
+        "campaign_id": "cmp_product_loop_001",
+        "draft_id": draft_id,
+        "objective": objective,
+        "event_type": "performance_snapshot",
+        "occurred_at": "2026-05-12T12:00:00Z",
+        "metrics": {
+            "impressions": 10000,
+            "clicks": 500,
+            "spend": "1000.00",
+            "conversions": 20,
+        },
+        "target_cpa": "20.00",
+        "attribution_window_days": 7,
+        "strategy_context": strategy_context,
+        "notes": "Persisted product loop walkthrough feedback event.",
+    }
+
+
+def _walkthrough_settings(database_url: str, *, tenant_id: str) -> Settings:
+    return Settings(
+        database_url=database_url,
+        tenant_id=tenant_id,
+        knowledge_store_backend="postgres",
+        campaign_draft_persistence_backend="postgres",
+        performance_event_persistence_backend="postgres",
+        advertiser_memory_persistence_backend="postgres",
+        outbox_backend="postgres",
+        idempotency_backend="none",
+        run_persistence_backend="none",
+        strategy_job_backend="memory",
+        graph_checkpointer_backend="none",
+        knowledge_top_k=5,
+        use_llm_brief_intake=False,
+        use_llm_planner=False,
+        use_llm_critic=False,
+        langsmith_tracing=False,
+    )
+
+
+def _invoke_cli(settings: Settings, args: list[str]) -> dict[str, Any]:
+    with patch("ads_growth_agent.cli.get_settings", return_value=settings):
+        result = CliRunner().invoke(cli_module.app, args)
+    if result.exit_code != 0:
+        stderr = getattr(result, "stderr", "")
+        raise ProductLoopVerificationError(
+            [
+                f"CLI command failed: ads-growth-agent {' '.join(args)}",
+                f"exit_code={result.exit_code}",
+                f"stdout={result.stdout.strip()}",
+                f"stderr={stderr.strip()}",
+            ]
+        )
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise ProductLoopVerificationError(
+            [
+                f"CLI command returned non-JSON stdout: ads-growth-agent {' '.join(args)}",
+                f"stdout={result.stdout.strip()}",
+            ]
+        ) from exc
+
+
+def _api_json(response, *, label: str) -> dict[str, Any]:
+    if response.status_code != 200:
+        raise ProductLoopVerificationError(
+            [
+                f"API call failed: {label}",
+                f"status_code={response.status_code}",
+                f"body={response.text}",
+            ]
+        )
+    try:
+        payload = response.json()
+    except json.JSONDecodeError as exc:
+        raise ProductLoopVerificationError(
+            [f"API call returned non-JSON response: {label}", f"body={response.text}"]
+        ) from exc
+    if not isinstance(payload, dict):
+        raise ProductLoopVerificationError([f"API call returned non-object JSON: {label}"])
+    return payload
+
+
+def _expect(condition: bool, message: str) -> None:
+    if not condition:
+        raise ProductLoopVerificationError([message])
+
+
+def _tenant_headers(tenant_id: str) -> dict[str, str]:
+    return {"X-Tenant-ID": tenant_id}
+
+
+def _database_url(database_url: URL | str | None) -> URL:
+    if database_url is None:
+        if os.getenv("RUN_POSTGRES_INTEGRATION") != "1":
+            raise ProductLoopVerificationError(
+                ["Set RUN_POSTGRES_INTEGRATION=1 to run live PostgreSQL walkthrough."]
+            )
+        database_url = os.getenv("TEST_DATABASE_URL", DEFAULT_TEST_DATABASE_URL)
+    if isinstance(database_url, URL):
+        return database_url
+    return make_url(database_url)
+
+
+def _upgrade_database() -> None:
+    config = Config(str(REPO_ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(REPO_ROOT / "migrations"))
+    command.upgrade(config, "head")
+
+
+def _create_temporary_database(base_url: URL) -> URL:
+    database_name = f"ads_growth_test_{uuid4().hex[:12]}"
+    admin_url = base_url.set(database="postgres")
+    test_url = base_url.set(database=database_name)
+
+    engine = sa.create_engine(admin_url, isolation_level="AUTOCOMMIT")
+    try:
+        with engine.connect() as connection:
+            connection.execute(sa.text(f'CREATE DATABASE "{database_name}"'))
+    finally:
+        engine.dispose()
+
+    return test_url
+
+
+def _drop_temporary_database(test_url: URL) -> None:
+    database_name = test_url.database
+    admin_url = test_url.set(database="postgres")
+    engine = sa.create_engine(admin_url, isolation_level="AUTOCOMMIT")
+    try:
+        with engine.connect() as connection:
+            connection.execute(
+                sa.text(
+                    "SELECT pg_terminate_backend(pid) "
+                    "FROM pg_stat_activity "
+                    "WHERE datname = :database_name AND pid <> pg_backend_pid()"
+                ),
+                {"database_name": database_name},
+            )
+            connection.execute(sa.text(f'DROP DATABASE IF EXISTS "{database_name}"'))
+    finally:
+        engine.dispose()
+
+
+@contextmanager
+def _temporary_env(values: dict[str, str]) -> Iterator[None]:
+    old_values = {key: os.environ.get(key) for key in values}
+    os.environ.update(values)
+    try:
+        yield
+    finally:
+        for key, old_value in old_values.items():
+            if old_value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old_value
+
+
+def _safe_database_url(database_url: str) -> str:
+    url = make_url(database_url)
+    return url.render_as_string(hide_password=True)
+
+
+def main() -> int:
+    try:
+        summary = run_persisted_product_loop()
+    except ProductLoopVerificationError as exc:
+        print("Persisted product loop verification failed", file=sys.stderr)
+        for issue in exc.issues:
+            print(f"- {issue}", file=sys.stderr)
+        return 1
+
+    print(render_summary(summary))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

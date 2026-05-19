@@ -17,6 +17,7 @@ v0.1 Phase 1 MVP is complete as of 2026-05-18. The current milestone is a determ
 7. Return a validated campaign growth strategy with a reusable feedback context.
 8. Analyze, persist, and inspect campaign performance events.
 9. Persist and inspect advertiser memory when PostgreSQL memory persistence is enabled.
+10. Retrieve learned advertiser memory in a later PostgreSQL-backed strategy run.
 
 Phase 1 is intentionally a functional MVP, not a production launch claim. A single advertiser can run the core product loop locally through CLI or FastAPI without external model keys. The system still does not execute live ad spend, enforce real authentication, provide production SLO dashboards, or require GitHub branch protection in repository settings.
 
@@ -108,6 +109,19 @@ python scripts/verify_negative_demos.py
 
 Expected output is documented in
 [examples/negative_demo_expected_output.md](./examples/negative_demo_expected_output.md).
+
+Run the persisted product loop verifier when Docker Postgres is available:
+
+```bash
+docker compose up -d postgres
+RUN_POSTGRES_INTEGRATION=1 \
+  TEST_DATABASE_URL=postgresql+psycopg://ads_growth:ads_growth@localhost:5432/ads_growth \
+  python scripts/verify_persisted_product_loop.py
+```
+
+This creates a temporary database, applies migrations, seeds knowledge, then
+validates strategy draft -> performance feedback event -> outbox memory ->
+API/CLI reads -> later RAG retrieval of the learned memory.
 
 The demo executes the complete deterministic product loop:
 

@@ -141,7 +141,7 @@ The product aims to create an autonomous agent workflow that can reason over adv
 | FR-4 | Generate a task plan using Plan-and-Execute workflow | P0 | Produces ordered tasks with owners, inputs, expected outputs, and dependencies |
 | FR-5 | Route tasks to role-specific agents | P0 | Supervisor can route audience, creative, budget, and performance tasks to the correct agent |
 | FR-6 | Maintain shared workflow state | P0 | State includes brief, retrieved context, intermediate outputs, tool results, critique report, and final strategy |
-| FR-7 | Support event-driven re-analysis | P1 | A campaign performance event can trigger analysis and revised recommendations, and persisted feedback events can be listed for audit by advertiser, run, campaign, or draft |
+| FR-7 | Support event-driven re-analysis | P1 | A campaign performance event can trigger analysis and revised recommendations, persisted feedback events can be listed for audit by advertiser, run, campaign, or draft, and learned memory can be retrieved in a later strategy run |
 
 ### 8.3 Specialist Agents
 
@@ -265,7 +265,7 @@ The product aims to create an autonomous agent workflow that can reason over adv
 | NFR-24 | CI/CD quality gates should exist before launch readiness is claimed | P0 | GitHub Actions or equivalent runs lint, unit tests, and deterministic end-to-end smoke tests on every PR and push to `main` |
 | NFR-25 | Dependency installs should be reproducible | P0 | A committed lock file pins direct and transitive dependencies for CI and demo installs |
 | NFR-26 | The stable branch should be protected | P1 | `main` requires PR review and passing required checks before merge once the repository is shared |
-| NFR-27 | End-to-end behavior should be tested through real application boundaries | P0 | At least one seeded workflow runs through the CLI or FastAPI path and validates final strategy, run metadata, and draft-only safety |
+| NFR-27 | End-to-end behavior should be tested through real application boundaries | P0 | At least one seeded workflow runs through CLI/FastAPI paths and validates final strategy, run metadata, draft-only safety, persistence, and later memory retrieval |
 | NFR-28 | Release changes should be traceable | P1 | Version tags and release notes identify what changed, what was tested, and known limitations |
 | NFR-29 | Dependency updates should be reviewed deliberately | P2 | Manual monthly dependency review for v0.1; Dependabot or Renovate can be introduced in v0.2+ |
 
@@ -587,6 +587,7 @@ These decisions close a gap in the original RFC: v0.1 had a technical test plan,
 | Campaign draft persistence | Implemented as opt-in Postgres backend | Drafts remain `status=draft`, are queryable through API/CLI for review, and no live spend action is executed |
 | Campaign performance feedback loop | Implemented | Performance snapshots produce metrics, health status, matched strategy rules from `feedback_context`, recommendations, guardrails, and persisted event discovery by advertiser/run/campaign/draft |
 | Advertiser memory review | Implemented as opt-in Postgres backend | Persisted memories can be listed by advertiser/type and inspected by source ID through API/CLI |
+| Persisted product loop walkthrough | Implemented as live Postgres verifier | `python scripts/verify_persisted_product_loop.py` validates strategy draft -> feedback event -> outbox memory -> API/CLI reads -> later RAG retrieval |
 | Performance event idempotency | Implemented | Same event payload replays persisted analysis; same event ID with changed payload returns `409` |
 | Dependency readiness checks | Implemented | `/health/live` is shallow; `/health/ready` checks configured Postgres and LiteLLM dependencies |
 | Basic GitHub Actions CI | Implemented; branch protection still external | `.github/workflows/ci.yml` separates lint, unit, deterministic E2E smoke, Postgres integration, and release-readiness checks |
@@ -650,7 +651,7 @@ These decisions close a gap in the original RFC: v0.1 had a technical test plan,
 | Campaign feedback | Verify CTR/CVR/CPA/ROAS calculation, health status selection, recommendation generation, and draft-only guardrails |
 | Performance event idempotency | Verify same `event_id` and event hash replays stored analysis, while conflicting payloads return `409` |
 | Live Postgres integration | Verify Alembic migrations, Postgres stores, checkpointer setup, tenant scoping, and integration tests against Docker Postgres |
-| End-to-end API or CLI workflow | Run a seeded advertiser brief through a real application boundary and validate final strategy schema, run metadata, retrieved sources, budget consistency, and draft-only action safety |
+| End-to-end API or CLI workflow | Run a seeded advertiser brief through real API/CLI boundaries and validate final strategy schema, run metadata, retrieved sources, budget consistency, draft-only action safety, persisted draft/event/memory reads, and later RAG retrieval |
 | CI automation | Verify the same quality gates run outside a developer laptop through GitHub Actions or equivalent CI |
 
 ### 14.3 Automated Test Execution Plan
@@ -688,7 +689,7 @@ protection, which must be configured as a repository setting.
 | CI exists but is too generic | Regressions can merge even when the local test plan is broader than the automated gate | Mitigated with explicit lint, unit, E2E smoke, integration, and release-readiness jobs |
 | Unlocked dependencies introduce non-reproducible installs | New dependency releases can break demos or CI unexpectedly | Mitigated with `requirements-lock.txt`; refresh deliberately with test verification |
 | Unprotected branch workflow allows unreviewed changes | Stable demo branch can drift or break without visibility | Protect `main`, require PR review, and document branch strategy |
-| Lack of true end-to-end tests hides integration failures | Mock-heavy tests can pass while the product workflow is broken | Mitigated with deterministic API, async job, and CLI smoke tests |
+| Lack of true end-to-end tests hides integration failures | Mock-heavy tests can pass while the product workflow is broken | Mitigated with deterministic API, async job, CLI smoke tests, and a live Postgres persisted product-loop verifier |
 
 ## 16. Launch Readiness Checklist
 
@@ -702,7 +703,7 @@ protection, which must be configured as a repository setting.
 | Eval sign-off | Minimum eval dataset and pass thresholds defined | Local eval suite covers planner orchestration, retrieval grounding, critic quality, revision behavior, budget, tool use, safety, and observability; broader dataset review pending |
 | Observability sign-off | LangSmith traces and error metadata verified | Run metadata and JSON logs implemented; metrics/dashboard pending |
 | Local stack readiness | Docker Compose starts FastAPI, PostgreSQL with pgvector, and LiteLLM Proxy | Implemented; local environment verification required per machine |
-| Demo readiness | End-to-end workflow runs with seeded sample advertiser cases | Ready for deterministic local MVP demo; curated positive and negative verifiers plus expected output excerpts are available |
+| Demo readiness | End-to-end workflow runs with seeded sample advertiser cases | Ready for deterministic local MVP demo; curated positive/negative verifiers, persisted product-loop verifier, and expected output excerpts are available |
 | CI/CD readiness | Automated CI runs lint, unit tests, and deterministic end-to-end smoke checks | Implemented in GitHub Actions; branch protection pending |
 | Dependency lock readiness | Reproducible lock file is committed and used by CI/demo install instructions | Implemented |
 | Branch protection readiness | `main` requires PR review and passing checks before merge | Blocked by GitHub private-repository plan limits; documented policy is ready to apply |
@@ -853,6 +854,7 @@ The first version should prioritize a complete, traceable, and recoverable end-t
 | 2026-05-18 | Add strategy-linked feedback context | Final strategies expose `feedback_context` so campaign events can match optimization rules back to the original plan | Accepted |
 | 2026-05-19 | Add advertiser memory read surfaces | Persisted long-term memory is reviewable through advertiser-scoped API/CLI endpoints while retaining tenant isolation | Accepted |
 | 2026-05-19 | Add performance event discovery surfaces | Persisted feedback events are reviewable through filtered API/CLI list surfaces and draft-linked indexing | Accepted |
+| 2026-05-19 | Add persisted product-loop verifier | A live Postgres walkthrough now proves strategy draft, feedback event ingestion, outbox memory materialization, API/CLI reads, and later RAG retrieval together | Accepted |
 | 2026-05-18 | Expand local agent eval coverage | Eval suite now scores planner orchestration, retrieval grounding, critic quality gate, revision behavior, strategy completeness, safety, and observability | Accepted |
 | 2026-05-18 | Complete Phase 1 MVP readiness pass | README, RFC/HLD, roadmap, eval scope, and changelog now describe the implemented deterministic MVP path; branch protection remains a Phase 1.5 external repository setting | Accepted |
 | 2026-05-18 | Prepare v0.1.0 demo release | `CHANGELOG.md` now has a `v0.1.0` entry, release verification references CI run `26022065806`, and branch protection is recorded as blocked by GitHub private-repository plan limits | Accepted |
