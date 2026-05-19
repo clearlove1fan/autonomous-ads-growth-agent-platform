@@ -52,7 +52,15 @@ draft so the feedback loop can be reviewed without knowing every event ID.
 - [x] `git diff --check`.
   Result: Passed.
 
+## Discoveries
+
+- Discovery: Alembic revision IDs must fit the default 32-character
+  `alembic_version.version_num` column.
+  Evidence: CI Postgres integration failed when the revision ID was
+  `0009_performance_event_draft_index`; the migration file now uses
+  `0009_perf_event_draft_idx`.
+
 ## Final Status
 
-Implemented and locally verified. Live Postgres verification is expected to run
-through the repository CI Postgres integration job.
+Implemented and locally verified. CI Postgres integration initially caught the
+overlong migration revision ID; the fix is in place and ready for re-run.
