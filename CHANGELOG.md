@@ -16,6 +16,8 @@
   fetch a single job by ID.
 - Added campaign draft detail/list read APIs and CLI commands for persisted
   draft review.
+- Added advertiser memory detail/list read APIs and CLI commands for persisted
+  long-term memory review.
 
 ## v0.1.0 - 2026-05-18
 

@@ -17,6 +17,9 @@ from ads_growth_agent.contracts import (
     AdvertiserBrief,
     AdvertiserBriefIntakeRequest,
     AdvertiserBriefIntakeResponse,
+    AdvertiserMemoryDetailResponse,
+    AdvertiserMemoryListResponse,
+    AdvertiserMemoryType,
     AgentRunDetailResponse,
     CampaignDraftDetailResponse,
     CampaignDraftListResponse,
@@ -534,6 +537,70 @@ def get_campaign_draft(
             },
         )
     return draft
+
+
+@app.get(
+    "/advertisers/{advertiser_id}/memories",
+    response_model=AdvertiserMemoryListResponse,
+    dependencies=[Depends(require_api_auth)],
+)
+def list_advertiser_memories(
+    advertiser_id: str,
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    memory_store: Annotated[
+        AdvertiserMemoryStore,
+        Depends(get_runtime_advertiser_memory_store),
+    ],
+    memory_type: Annotated[AdvertiserMemoryType | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> AdvertiserMemoryListResponse:
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    memories = memory_store.list_memories(
+        advertiser_id=advertiser_id,
+        memory_type=memory_type,
+        limit=limit,
+    )
+    return AdvertiserMemoryListResponse(
+        items=memories,
+        count=len(memories),
+        limit=limit,
+        advertiser_id=advertiser_id,
+        memory_type=memory_type,
+    )
+
+
+@app.get(
+    "/advertisers/{advertiser_id}/memories/{source_id}",
+    response_model=AdvertiserMemoryDetailResponse,
+    dependencies=[Depends(require_api_auth)],
+)
+def get_advertiser_memory(
+    advertiser_id: str,
+    source_id: str,
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    memory_store: Annotated[
+        AdvertiserMemoryStore,
+        Depends(get_runtime_advertiser_memory_store),
+    ],
+) -> AdvertiserMemoryDetailResponse:
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    memory = memory_store.get_memory(
+        advertiser_id=advertiser_id,
+        source_id=source_id,
+    )
+    if memory is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": "Advertiser memory was not found for the effective tenant.",
+                "error_code": "ADVERTISER_MEMORY_NOT_FOUND",
+                "advertiser_id": advertiser_id,
+                "source_id": source_id,
+            },
+        )
+    return memory
 
 
 @app.post(

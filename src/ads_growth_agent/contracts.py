@@ -68,6 +68,14 @@ class FeedbackActionType(StrEnum):
     INSPECT_TRACKING = "inspect_tracking"
 
 
+AdvertiserMemoryType = Literal[
+    "profile",
+    "constraint",
+    "preference",
+    "historical_performance",
+]
+
+
 class StrategyJobStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
@@ -445,6 +453,34 @@ class CampaignDraftListResponse(BaseModel):
     count: int = Field(ge=0)
     limit: int = Field(ge=1, le=100)
     advertiser_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class AdvertiserMemoryDetailResponse(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    memory_id: str = Field(min_length=1, max_length=80)
+    source_id: str = Field(min_length=1, max_length=160)
+    advertiser_id: str = Field(min_length=1, max_length=128)
+    memory_type: AdvertiserMemoryType
+    title: str | None = Field(default=None, min_length=1, max_length=240)
+    content: str = Field(min_length=1, max_length=5_000)
+    summary: str | None = Field(default=None, min_length=1, max_length=1_000)
+    importance_score: Decimal = Field(ge=0, le=1, decimal_places=3)
+    usage_count: int = Field(ge=0)
+    last_used_at: datetime | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdvertiserMemoryListResponse(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    items: list[AdvertiserMemoryDetailResponse] = Field(default_factory=list)
+    count: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    advertiser_id: str = Field(min_length=1, max_length=128)
+    memory_type: AdvertiserMemoryType | None = None
 
 
 class AgentRunStepRecord(BaseModel):

@@ -72,6 +72,19 @@ def test_performance_event_api_persists_analysis_to_postgres(monkeypatch) -> Non
             limit=10,
             worker_id="worker_perf_integration",
         )
+        memory_list = client.get(
+            "/advertisers/adv_fitness_001/memories",
+            params={"memory_type": "historical_performance", "limit": "10"},
+            headers={"X-Tenant-ID": "tenant_perf"},
+        )
+        memory_detail = client.get(
+            f"/advertisers/adv_fitness_001/memories/{payload['advertiser_memory_source_id']}",
+            headers={"X-Tenant-ID": "tenant_perf"},
+        )
+        memory_missing_from_other_tenant = client.get(
+            f"/advertisers/adv_fitness_001/memories/{payload['advertiser_memory_source_id']}",
+            headers={"X-Tenant-ID": "tenant_other"},
+        )
 
         conflict_payload = _event_payload()
         conflict_payload["metrics"] = {
@@ -104,6 +117,19 @@ def test_performance_event_api_persists_analysis_to_postgres(monkeypatch) -> Non
         assert replay.headers["performance-event-status"] == "replayed"
         assert replay.headers["advertiser-memory-status"] == "recorded"
         assert replay.json()["analysis"]["feedback_id"] == payload["analysis"]["feedback_id"]
+        assert memory_list.status_code == 200
+        assert memory_list.json()["count"] == 1
+        assert memory_list.json()["items"][0]["source_id"] == payload[
+            "advertiser_memory_source_id"
+        ]
+        assert memory_detail.status_code == 200
+        assert memory_detail.json()["source_id"] == payload["advertiser_memory_source_id"]
+        assert memory_detail.json()["metadata"]["event_id"] == "evt_perf_integration"
+        assert memory_missing_from_other_tenant.status_code == 404
+        assert (
+            memory_missing_from_other_tenant.json()["detail"]["error_code"]
+            == "ADVERTISER_MEMORY_NOT_FOUND"
+        )
         assert conflict.status_code == 409
         assert conflict.json()["detail"]["error_code"] == "PERFORMANCE_EVENT_ID_CONFLICT"
         assert detail.status_code == 200

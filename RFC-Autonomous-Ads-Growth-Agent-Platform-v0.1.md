@@ -12,7 +12,7 @@
 | DRI | TBD |
 | Reviewers | Product, Ads Engineering, ML Platform, Data Engineering, Privacy/Safety, LLMOps |
 | Audience | Product, Engineering, ML/LLMOps, Data, Ads Platform, Leadership |
-| Last Updated | 2026-05-18 |
+| Last Updated | 2026-05-19 |
 
 ### 1.1 Review Protocol
 
@@ -178,7 +178,7 @@ The product aims to create an autonomous agent workflow that can reason over adv
 | ID | Requirement | Priority | Acceptance Criteria |
 |---|---|---|---|
 | FR-23 | Maintain short-term workflow memory | P0 | Current run state is available across agents |
-| FR-24 | Maintain advertiser profile memory | P1 | Repeated advertiser sessions can reuse product, audience, and brand context |
+| FR-24 | Maintain advertiser profile memory | P1 | Repeated advertiser sessions can reuse product, audience, and brand context; persisted memories can be listed and inspected through advertiser-scoped API/CLI surfaces |
 | FR-25 | Summarize campaign history | P1 | Prior campaign results are compressed into reusable summaries |
 
 ### 8.7 Structured Output
@@ -236,7 +236,7 @@ The product aims to create an autonomous agent workflow that can reason over adv
 
 | ID | Requirement | Priority | Target |
 |---|---|---|---|
-| NFR-14 | Advertiser data should be separated by advertiser ID | P0 | Memory and traces include advertiser/session boundaries |
+| NFR-14 | Advertiser data should be separated by advertiser ID | P0 | Memory and traces include advertiser/session boundaries; memory read APIs require tenant and advertiser scoping |
 | NFR-15 | Sensitive input should not be exposed unnecessarily | P1 | Logs avoid raw secrets or credentials |
 | NFR-16 | Creative recommendations should include policy risk checks | P0 | Policy-sensitive claims are flagged |
 | NFR-17 | Autonomous actions should require confirmation in v0.1 | P0 | System creates drafts and recommendations, not live campaigns |
@@ -343,7 +343,7 @@ flowchart TD
 
 | Component | Responsibility | Current v0.1 Implementation |
 |---|---|---|
-| Experience/API Layer | Accept advertiser requests, return strategy output, expose run and event APIs | FastAPI endpoints for strategy generation, run detail, retry, resume, and campaign performance events; CLI for demo, eval, and debugging |
+| Experience/API Layer | Accept advertiser requests, return strategy output, expose run, event, draft, and memory APIs | FastAPI endpoints for strategy generation, run detail, retry, resume, campaign performance events, campaign drafts, and advertiser memories; CLI for demo, eval, and debugging |
 | Request Context Layer | Resolve tenant scope and duplicate request behavior | `X-Tenant-ID` request override plus optional PostgreSQL idempotency key store |
 | Orchestration Layer | Manage graph state, routing, checkpointing, and revision loop | LangGraph StateGraph with deterministic default nodes and optional Postgres checkpointer |
 | Agent Layer | Perform role-specific planning, retrieval, tool execution, critique, and finalization | Implemented as explicit graph nodes: planner, retriever, tool_executor, critic, finalizer |
@@ -372,6 +372,7 @@ flowchart TD
 | StrategyJobDetailResponse | Strategy Job Store | API caller | Job status, request, run ID, trace ID, completed strategy result, or structured failure |
 | CampaignPerformanceEventRequest | API caller | Feedback Analyzer | Campaign metrics, objective, target CPA, attribution window, and event references |
 | CampaignFeedbackAnalysis | Feedback Analyzer | API caller, Event Store | Derived metrics, health status, recommendations, guardrails, and source event ID |
+| AdvertiserMemoryDetailResponse | Memory Store | API caller, CLI user | Public source ID, memory type, content, metadata, importance, usage count, and timestamps |
 
 ### 10.3 Strategy Generation Sequence
 
@@ -571,7 +572,7 @@ These decisions close a gap in the original RFC: v0.1 had a technical test plan,
 | Capability | Status | Evidence |
 |---|---|---|
 | FastAPI strategy generation | Implemented | `POST /growth-strategies` returns a validated `GrowthStrategyResponse` |
-| CLI demo and eval | Implemented | `ads-growth-agent demo`, `plan`, `plan-text`, `submit-strategy-job`, `submit-strategy-job-text`, `get-strategy-job`, `process-strategy-jobs`, `list-strategy-jobs`, `analyze-performance`, `health`, `seed-knowledge`, and `eval` commands |
+| CLI demo and eval | Implemented | `ads-growth-agent demo`, `plan`, `plan-text`, `submit-strategy-job`, `submit-strategy-job-text`, `get-strategy-job`, `process-strategy-jobs`, `list-strategy-jobs`, `get-advertiser-memory`, `list-advertiser-memories`, `analyze-performance`, `health`, `seed-knowledge`, and `eval` commands |
 | Deterministic LangGraph workflow | Implemented | Graph nodes run planner, retriever, tool_executor, critic, and finalizer |
 | Internal typed tool registry | Implemented | Unknown tools, invalid params, permission errors, and failures return structured results |
 | LiteLLM gateway | Implemented behind feature flags | Optional LLM planner/critic and structured output fallback route through LiteLLM |
@@ -584,6 +585,7 @@ These decisions close a gap in the original RFC: v0.1 had a technical test plan,
 | API idempotency | Implemented as opt-in Postgres backend | Same key/body replays response; same key/different body returns conflict |
 | Campaign draft persistence | Implemented as opt-in Postgres backend | Drafts remain `status=draft`, are queryable through API/CLI for review, and no live spend action is executed |
 | Campaign performance feedback loop | Implemented | Performance snapshots produce metrics, health status, matched strategy rules from `feedback_context`, recommendations, and guardrails |
+| Advertiser memory review | Implemented as opt-in Postgres backend | Persisted memories can be listed by advertiser/type and inspected by source ID through API/CLI |
 | Performance event idempotency | Implemented | Same event payload replays persisted analysis; same event ID with changed payload returns `409` |
 | Dependency readiness checks | Implemented | `/health/live` is shallow; `/health/ready` checks configured Postgres and LiteLLM dependencies |
 | Basic GitHub Actions CI | Implemented; branch protection still external | `.github/workflows/ci.yml` separates lint, unit, deterministic E2E smoke, Postgres integration, and release-readiness checks |
@@ -848,6 +850,7 @@ The first version should prioritize a complete, traceable, and recoverable end-t
 | 2026-05-12 | Select committed dependency lock for v0.1 reproducibility | Lower-bound dependency ranges alone do not protect local demos or CI from upstream breakage | Accepted |
 | 2026-05-18 | Add one-command deterministic Phase 1 demo | `ads-growth-agent demo` runs natural-language intake, strategy generation, feedback context reuse, and performance feedback analysis without external model keys | Accepted |
 | 2026-05-18 | Add strategy-linked feedback context | Final strategies expose `feedback_context` so campaign events can match optimization rules back to the original plan | Accepted |
+| 2026-05-19 | Add advertiser memory read surfaces | Persisted long-term memory is reviewable through advertiser-scoped API/CLI endpoints while retaining tenant isolation | Accepted |
 | 2026-05-18 | Expand local agent eval coverage | Eval suite now scores planner orchestration, retrieval grounding, critic quality gate, revision behavior, strategy completeness, safety, and observability | Accepted |
 | 2026-05-18 | Complete Phase 1 MVP readiness pass | README, RFC/HLD, roadmap, eval scope, and changelog now describe the implemented deterministic MVP path; branch protection remains a Phase 1.5 external repository setting | Accepted |
 | 2026-05-18 | Prepare v0.1.0 demo release | `CHANGELOG.md` now has a `v0.1.0` entry, release verification references CI run `26022065806`, and branch protection is recorded as blocked by GitHub private-repository plan limits | Accepted |

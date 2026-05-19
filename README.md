@@ -16,6 +16,7 @@ v0.1 Phase 1 MVP is complete as of 2026-05-18. The current milestone is a determ
 6. Run a critic pass.
 7. Return a validated campaign growth strategy with a reusable feedback context.
 8. Analyze a campaign performance event and return draft-only optimization recommendations.
+9. Persist and inspect advertiser memory when PostgreSQL memory persistence is enabled.
 
 Phase 1 is intentionally a functional MVP, not a production launch claim. A single advertiser can run the core product loop locally through CLI or FastAPI without external model keys. The system still does not execute live ad spend, enforce real authentication, provide production SLO dashboards, or require GitHub branch protection in repository settings.
 
@@ -137,7 +138,7 @@ This project is designed around the same engineering themes as an AI Agent-power
 | ReAct / Plan-and-Execute | Explicit LangGraph workflow from planner to retriever, tool executor, critic, and finalizer |
 | Tool use / function calling | Internal typed tool registry validates and executes audience, creative, budget, performance, and campaign draft tools |
 | Short-term workflow memory | `GrowthStrategyState` carries brief, retrieved context, tool results, critique, revision notes, and final strategy through the graph |
-| Advertiser memory | In-memory default corpus plus optional PostgreSQL-backed advertiser memory and usage tracking |
+| Advertiser memory | In-memory default corpus plus optional PostgreSQL-backed advertiser memory, read APIs/CLI, and usage tracking |
 | RAG | Strategy playbooks, historical cases, and advertiser memory are retrieved and cited in final outputs |
 | Multi-agent orchestration | Planner, retriever, tool executor, critic, revision, and finalizer nodes model role-based agent responsibilities |
 | Structured output | Pydantic contracts validate briefs, tool intents/results, critique reports, final strategies, feedback analyses, and eval reports |
@@ -436,6 +437,22 @@ OUTBOX_BACKEND=postgres ADVERTISER_MEMORY_PERSISTENCE_BACKEND=postgres ads-growt
 After the worker completes, replaying the same event returns `Advertiser-Memory-Status: recorded`, and later strategy-generation runs with `KNOWLEDGE_STORE_BACKEND=postgres` can retrieve that memory as an `advertiser_memory` citation. If `OUTBOX_BACKEND=none`, the service keeps the simpler synchronous memory-write fallback for local demos.
 
 Memory retrieval usage tracking is also asynchronous. Set `MEMORY_USAGE_TRACKING_BACKEND=outbox` together with `KNOWLEDGE_STORE_BACKEND=postgres` and `OUTBOX_BACKEND=postgres` to enqueue `advertiser_memory_retrieved` events whenever Postgres RAG cites advertiser memory. `ads-growth-agent process-outbox` updates `advertiser_memories.last_used_at` and `usage_count` outside the retrieval path.
+
+Persisted advertiser memories can be queried for review and audit. Use the
+`advertiser_memory_source_id` returned by the performance event response, or a
+source cited in `FinalGrowthStrategy.sources`:
+
+```bash
+curl "http://localhost:8000/advertisers/adv_fitness_001/memories?memory_type=historical_performance&limit=20" \
+  -H "X-Tenant-ID: tenant_demo"
+
+curl http://localhost:8000/advertisers/adv_fitness_001/memories/memory:performance:test:v1 \
+  -H "X-Tenant-ID: tenant_demo"
+
+ADVERTISER_MEMORY_PERSISTENCE_BACKEND=postgres ads-growth-agent list-advertiser-memories adv_fitness_001 --memory-type historical_performance --limit 20
+
+ADVERTISER_MEMORY_PERSISTENCE_BACKEND=postgres ads-growth-agent get-advertiser-memory adv_fitness_001 memory:performance:test:v1
+```
 
 When persistence is enabled, event ingestion is idempotent by `event_id`: replaying the same normalized payload returns the already persisted analysis with `Performance-Event-Status: replayed`; reusing the same `event_id` with different metrics or metadata returns HTTP `409` with `PERFORMANCE_EVENT_ID_CONFLICT`.
 

@@ -11,6 +11,8 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Connection, Engine
 
 from ads_growth_agent.contracts import (
+    AdvertiserMemoryDetailResponse,
+    AdvertiserMemoryType,
     CampaignFeedbackAnalysis,
     CampaignPerformanceEventRequest,
     FeedbackHealthStatus,
@@ -23,12 +25,6 @@ from ads_growth_agent.persistence.run_store import DEFAULT_TENANT_ID
 from ads_growth_agent.persistence.schema import advertiser_memories, advertisers, tenants
 
 AdvertiserMemoryWriteStatus = Literal["disabled", "queued", "recorded", "failed"]
-AdvertiserMemoryType = Literal[
-    "profile",
-    "constraint",
-    "preference",
-    "historical_performance",
-]
 
 
 class AdvertiserMemoryConflictError(Exception):
@@ -71,6 +67,23 @@ class AdvertiserMemoryStore(Protocol):
     ) -> AdvertiserMemoryUsageResult:
         """Record that a memory source was retrieved."""
 
+    def get_memory(
+        self,
+        *,
+        advertiser_id: str,
+        source_id: str,
+    ) -> AdvertiserMemoryDetailResponse | None:
+        """Return one advertiser memory by public source ID."""
+
+    def list_memories(
+        self,
+        *,
+        advertiser_id: str,
+        memory_type: AdvertiserMemoryType | None = None,
+        limit: int = 50,
+    ) -> list[AdvertiserMemoryDetailResponse]:
+        """Return recent advertiser memories for the configured tenant."""
+
 
 class NoopAdvertiserMemoryStore:
     def record_feedback_memory(
@@ -87,6 +100,23 @@ class NoopAdvertiserMemoryStore:
         retrieved_at: datetime | None = None,
     ) -> AdvertiserMemoryUsageResult:
         return AdvertiserMemoryUsageResult(recorded=False, source_id=source_id)
+
+    def get_memory(
+        self,
+        *,
+        advertiser_id: str,
+        source_id: str,
+    ) -> AdvertiserMemoryDetailResponse | None:
+        return None
+
+    def list_memories(
+        self,
+        *,
+        advertiser_id: str,
+        memory_type: AdvertiserMemoryType | None = None,
+        limit: int = 50,
+    ) -> list[AdvertiserMemoryDetailResponse]:
+        return []
 
 
 class PostgresAdvertiserMemoryStore:
@@ -184,6 +214,51 @@ class PostgresAdvertiserMemoryStore:
             last_used_at=row["last_used_at"],
         )
 
+    def get_memory(
+        self,
+        *,
+        advertiser_id: str,
+        source_id: str,
+    ) -> AdvertiserMemoryDetailResponse | None:
+        with _connection(self._bind) as connection:
+            row = connection.execute(
+                sa.select(advertiser_memories)
+                .where(advertiser_memories.c.tenant_id == self._tenant_id)
+                .where(advertiser_memories.c.advertiser_id == advertiser_id)
+                .where(advertiser_memories.c.metadata["source_id"].astext == source_id)
+            ).mappings().one_or_none()
+        if row is None:
+            return None
+        return _row_to_advertiser_memory(row)
+
+    def list_memories(
+        self,
+        *,
+        advertiser_id: str,
+        memory_type: AdvertiserMemoryType | None = None,
+        limit: int = 50,
+    ) -> list[AdvertiserMemoryDetailResponse]:
+        with _connection(self._bind) as connection:
+            stmt = (
+                sa.select(advertiser_memories)
+                .where(advertiser_memories.c.tenant_id == self._tenant_id)
+                .where(advertiser_memories.c.advertiser_id == advertiser_id)
+            )
+            if memory_type is not None:
+                stmt = stmt.where(advertiser_memories.c.memory_type == memory_type)
+            rows = (
+                connection.execute(
+                    stmt.order_by(
+                        advertiser_memories.c.updated_at.desc(),
+                        advertiser_memories.c.importance_score.desc(),
+                        advertiser_memories.c.memory_id.desc(),
+                    ).limit(limit)
+                )
+                .mappings()
+                .all()
+            )
+        return [_row_to_advertiser_memory(row) for row in rows]
+
 
 def feedback_memory_source_id(event: CampaignPerformanceEventRequest) -> str:
     fingerprint = uuid5(NAMESPACE_URL, f"{event.advertiser_id}:{event.event_id}").hex[:16]
@@ -197,6 +272,36 @@ def _transaction(bind: Engine | Connection) -> Iterator[Connection]:
             yield connection
     else:
         yield bind
+
+
+@contextmanager
+def _connection(bind: Engine | Connection) -> Iterator[Connection]:
+    if isinstance(bind, Engine):
+        with bind.connect() as connection:
+            yield connection
+    else:
+        yield bind
+
+
+def _row_to_advertiser_memory(row) -> AdvertiserMemoryDetailResponse:
+    metadata = dict(row["metadata"] or {})
+    source_id = str(metadata.get("source_id") or f"memory:{row['memory_id']}")
+    title = metadata.get("title")
+    return AdvertiserMemoryDetailResponse(
+        memory_id=str(row["memory_id"]),
+        source_id=source_id,
+        advertiser_id=row["advertiser_id"],
+        memory_type=row["memory_type"],
+        title=str(title) if title else None,
+        content=row["content"],
+        summary=row["summary"],
+        importance_score=row["importance_score"],
+        usage_count=row["usage_count"],
+        last_used_at=row["last_used_at"],
+        metadata=metadata,
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
 
 
 def _find_memory_id_for_update(

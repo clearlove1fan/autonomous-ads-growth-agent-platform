@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from typing import cast
 
 import sqlalchemy as sa
 import typer
@@ -7,12 +8,17 @@ from pydantic import ValidationError
 from sqlalchemy.engine import make_url
 
 from ads_growth_agent import __version__
+from ads_growth_agent.advertiser_memory_store_factory import (
+    build_configured_advertiser_memory_store,
+)
 from ads_growth_agent.brief_intake import parse_advertiser_brief
 from ads_growth_agent.campaign_draft_store_factory import build_configured_campaign_draft_store
 from ads_growth_agent.config import get_settings
 from ads_growth_agent.contracts import (
     AdvertiserBrief,
     AdvertiserBriefIntakeRequest,
+    AdvertiserMemoryListResponse,
+    AdvertiserMemoryType,
     CampaignDraftListResponse,
     CampaignPerformanceEventRequest,
     GrowthStrategyRequest,
@@ -66,6 +72,16 @@ STRATEGY_JOB_CANCEL_REASON_OPTION = typer.Option(
 CAMPAIGN_DRAFT_ID_ARGUMENT = typer.Argument(..., help="Campaign draft ID.")
 CAMPAIGN_DRAFT_ADVERTISER_ID_OPTION = typer.Option(None, "--advertiser-id")
 CAMPAIGN_DRAFT_LIST_LIMIT_OPTION = typer.Option(50, "--limit", min=1, max=100)
+ADVERTISER_MEMORY_ADVERTISER_ID_ARGUMENT = typer.Argument(..., help="Advertiser ID.")
+ADVERTISER_MEMORY_SOURCE_ID_ARGUMENT = typer.Argument(..., help="Advertiser memory source ID.")
+ADVERTISER_MEMORY_TYPE_OPTION = typer.Option(None, "--memory-type")
+ADVERTISER_MEMORY_LIST_LIMIT_OPTION = typer.Option(50, "--limit", min=1, max=100)
+ALLOWED_ADVERTISER_MEMORY_TYPES = {
+    "profile",
+    "constraint",
+    "preference",
+    "historical_performance",
+}
 BRIEF_TEXT_ARGUMENT = typer.Argument(
     ...,
     help="Plain-language advertiser goal or campaign brief.",
@@ -329,6 +345,49 @@ def list_campaign_drafts(
     typer.echo(response.model_dump_json(indent=2))
 
 
+@app.command("get-advertiser-memory")
+def get_advertiser_memory(
+    advertiser_id: str = ADVERTISER_MEMORY_ADVERTISER_ID_ARGUMENT,
+    source_id: str = ADVERTISER_MEMORY_SOURCE_ID_ARGUMENT,
+) -> None:
+    """Fetch one persisted advertiser memory by source ID."""
+    settings = get_settings()
+    store = build_configured_advertiser_memory_store(settings)
+    memory = store.get_memory(advertiser_id=advertiser_id, source_id=source_id)
+    if memory is None:
+        typer.echo(
+            f"Advertiser memory not found: advertiser_id={advertiser_id} source_id={source_id}",
+            err=True,
+        )
+        raise typer.Exit(1)
+    typer.echo(memory.model_dump_json(indent=2))
+
+
+@app.command("list-advertiser-memories")
+def list_advertiser_memories(
+    advertiser_id: str = ADVERTISER_MEMORY_ADVERTISER_ID_ARGUMENT,
+    memory_type: str | None = ADVERTISER_MEMORY_TYPE_OPTION,
+    limit: int = ADVERTISER_MEMORY_LIST_LIMIT_OPTION,
+) -> None:
+    """List recent persisted advertiser memories."""
+    settings = get_settings()
+    store = build_configured_advertiser_memory_store(settings)
+    validated_memory_type = _advertiser_memory_type_or_exit(memory_type)
+    memories = store.list_memories(
+        advertiser_id=advertiser_id,
+        memory_type=validated_memory_type,
+        limit=limit,
+    )
+    response = AdvertiserMemoryListResponse(
+        items=memories,
+        count=len(memories),
+        limit=limit,
+        advertiser_id=advertiser_id,
+        memory_type=validated_memory_type,
+    )
+    typer.echo(response.model_dump_json(indent=2))
+
+
 @app.command("process-strategy-jobs")
 def process_strategy_jobs(
     limit: int = typer.Option(10, "--limit", min=1, max=100),
@@ -528,6 +587,18 @@ def _validation_errors_json(exc: ValidationError) -> str:
         exc.errors(include_url=False, include_context=False),
         indent=2,
     )
+
+
+def _advertiser_memory_type_or_exit(value: str | None) -> AdvertiserMemoryType | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if normalized in ALLOWED_ADVERTISER_MEMORY_TYPES:
+        return cast(AdvertiserMemoryType, normalized)
+
+    allowed = ", ".join(sorted(ALLOWED_ADVERTISER_MEMORY_TYPES))
+    typer.echo(f"Invalid advertiser memory type: {value}. Expected one of: {allowed}", err=True)
+    raise typer.Exit(2)
 
 
 def _demo_performance_event(

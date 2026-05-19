@@ -16,6 +16,14 @@ def test_advertiser_memory_store_factory_defaults_to_noop_store() -> None:
     )
 
     assert isinstance(store, NoopAdvertiserMemoryStore)
+    assert (
+        store.get_memory(
+            advertiser_id="adv_fitness_001",
+            source_id="memory:performance:test:v1",
+        )
+        is None
+    )
+    assert store.list_memories(advertiser_id="adv_fitness_001", limit=10) == []
 
 
 def test_advertiser_memory_store_factory_builds_cached_postgres_store(monkeypatch) -> None:
