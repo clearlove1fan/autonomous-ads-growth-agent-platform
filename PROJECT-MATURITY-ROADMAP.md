@@ -11,7 +11,7 @@ This roadmap defines the order in which the Autonomous Ads Growth Agent Platform
 | Production architecture skeleton | 68-72% | 75-80% | In progress |
 | True production-ready system | 15-20% | 60%+ for this repo | Early |
 
-These numbers are intentionally conservative. The project now has a credible agent-runtime and production-skeleton foundation, including persistence, tenant scoping, retry/resume, checkpointing, async strategy jobs, event feedback, feedback action plans, feedback optimization drafts, persisted feedback review decisions, performance event discovery, advertiser memory write/read surfaces, dependency locking, explicit CI quality gates, a deterministic one-command MVP demo, local agent evals, curated positive/negative demo verifiers, a persisted product loop verifier, and an optional local API key boundary. Phase 1 is complete for the v0.1 MVP, while branch protection remains a GitHub repository setting tracked in Phase 1.5 and is currently blocked for the private repo by GitHub plan limits. The project should still not claim production-grade availability, full security, or distributed-system readiness yet.
+These numbers are intentionally conservative. The project now has a credible agent-runtime and production-skeleton foundation, including persistence, tenant scoping, retry/resume, checkpointing, async strategy jobs, event feedback, feedback action plans, feedback optimization drafts, persisted feedback review decisions, dry-run execution validation, performance event discovery, advertiser memory write/read surfaces, dependency locking, explicit CI quality gates, a deterministic one-command MVP demo, local agent evals, curated positive/negative demo verifiers, a persisted product loop verifier, and an optional local API key boundary. Phase 1 is complete for the v0.1 MVP, while branch protection remains a GitHub repository setting tracked in Phase 1.5 and is currently blocked for the private repo by GitHub plan limits. The project should still not claim production-grade availability, full security, or distributed-system readiness yet.
 
 ## Phase 1: Interview-Quality Technical Project
 
@@ -57,7 +57,8 @@ Completed:
 - Draft-only feedback optimization draft API and CLI for concrete change review.
 - Feedback optimization review API and CLI for approval, rejection, or revision
   decisions on draft-only changes.
-- Dry-run feedback execution plan API and CLI for approved review decisions.
+- Dry-run feedback execution plan API and CLI for approved review decisions,
+  plus typed registry validation of approved dry-run steps.
 - Performance event idempotency and conflict protection.
 - Strategy-linked feedback context in final strategies.
 - One-command deterministic Phase 1 demo through the CLI.
@@ -167,7 +168,8 @@ Planned work:
 - Feedback optimization draft APIs/CLI for persisted performance events.
 - Feedback optimization review APIs/CLI and PostgreSQL audit state for persisted
   performance events.
-- Feedback execution plan APIs/CLI for approved feedback optimization reviews.
+- Feedback execution plan APIs/CLI for approved feedback optimization reviews,
+  including draft-only typed registry validation.
 - Async strategy job store and API.
 - Async strategy job submission from natural-language advertiser goals.
 - Async strategy job submission and detail lookup from the CLI.
@@ -188,10 +190,11 @@ Exit criteria:
 - Persisted feedback optimization reviews can be recorded and retrieved for
   approval, rejection, or revision audit.
 - Approved feedback optimization reviews can produce dry-run tool intent plans
-  without live campaign mutation.
+  and validate those plans through draft-only tools without live campaign
+  mutation.
 - A live PostgreSQL walkthrough proves strategy draft -> feedback event ->
-  optimization review -> dry-run execution plan -> outbox memory -> API/CLI
-  reads -> later RAG retrieval.
+  optimization review -> dry-run execution plan -> execution dry-run validation
+  -> outbox memory -> API/CLI reads -> later RAG retrieval.
 - Failed runs can be retried and failed/running runs can be resumed with clear semantics.
 - Strategy generation can be submitted as a pollable job with persisted status.
 - Alembic migrations create the local database from scratch.

@@ -116,6 +116,38 @@ class CampaignDraftOutput(BaseModel):
     source_id: str = Field(min_length=1)
 
 
+class DraftFeedbackActionInput(BaseModel):
+    dry_run: Literal[True]
+    approval_reference_id: str = Field(min_length=1)
+    optimization_draft_id: str = Field(min_length=1)
+    event_id: str = Field(min_length=1)
+    feedback_id: str = Field(min_length=1)
+    advertiser_id: str = Field(min_length=1)
+    run_id: str | None = None
+    campaign_id: str | None = None
+    base_draft_id: str | None = None
+    strategy_id: str | None = None
+    change_id: str = Field(min_length=1)
+    change_type: Literal["budget", "creative", "audience", "measurement"]
+    source_step_id: str = Field(min_length=1)
+    change_title: str = Field(min_length=1)
+    change_description: str = Field(min_length=1)
+    change_params: dict[str, Any] = Field(default_factory=dict)
+    requested_by_role: str = Field(min_length=1)
+    risk_level: str = Field(min_length=1)
+
+
+class DraftFeedbackActionOutput(BaseModel):
+    status: Literal["validated"]
+    dry_run: Literal[True]
+    action_preview: str = Field(min_length=1)
+    approval_reference_id: str = Field(min_length=1)
+    change_id: str = Field(min_length=1)
+    mutation_performed: Literal[False] = False
+    guardrails: list[str] = Field(min_length=1)
+    source_id: str = Field(min_length=1)
+
+
 ToolHandler = Callable[[BaseModel], BaseModel | dict[str, Any]]
 
 
@@ -273,6 +305,42 @@ def build_default_tool_registry() -> ToolRegistry:
             owner_role=AgentRole.PLANNER,
         )
     )
+    registry.register(
+        ToolDefinition(
+            name="draft_budget_reallocation",
+            input_model=DraftFeedbackActionInput,
+            output_model=DraftFeedbackActionOutput,
+            handler=validate_draft_feedback_action,
+            owner_role=AgentRole.BUDGET_OPTIMIZER,
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="draft_creative_refresh",
+            input_model=DraftFeedbackActionInput,
+            output_model=DraftFeedbackActionOutput,
+            handler=validate_draft_feedback_action,
+            owner_role=AgentRole.CREATIVE_STRATEGIST,
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="draft_audience_refinement",
+            input_model=DraftFeedbackActionInput,
+            output_model=DraftFeedbackActionOutput,
+            handler=validate_draft_feedback_action,
+            owner_role=AgentRole.AUDIENCE_STRATEGIST,
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="draft_measurement_followup",
+            input_model=DraftFeedbackActionInput,
+            output_model=DraftFeedbackActionOutput,
+            handler=validate_draft_feedback_action,
+            owner_role=AgentRole.PERFORMANCE_ANALYST,
+        )
+    )
     return registry
 
 
@@ -381,6 +449,27 @@ def create_campaign_draft(input_model: BaseModel) -> CampaignDraftOutput:
         creative_angles=params.creative_angles,
         safety_note="Draft only. No live campaign launch or spend mutation is performed.",
         source_id="mock_tool:create_campaign_draft:v1",
+    )
+
+
+def validate_draft_feedback_action(input_model: BaseModel) -> DraftFeedbackActionOutput:
+    params = DraftFeedbackActionInput.model_validate(input_model)
+    return DraftFeedbackActionOutput(
+        status="validated",
+        dry_run=True,
+        action_preview=(
+            f"Validated dry-run {params.change_type} action for change "
+            f"{params.change_id}: {params.change_title}"
+        ),
+        approval_reference_id=params.approval_reference_id,
+        change_id=params.change_id,
+        mutation_performed=False,
+        guardrails=[
+            "Dry-run validation only; no live ads platform mutation was performed.",
+            "A live execution service must re-check approval, permissions, and policy.",
+            "Discarding this result leaves campaign state unchanged.",
+        ],
+        source_id=f"mock_tool:draft_{params.change_type}_feedback_action:v1",
     )
 
 

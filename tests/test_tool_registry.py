@@ -159,6 +159,42 @@ def test_optimize_budget_does_not_exceed_advertiser_budget() -> None:
     ]
 
 
+def test_tool_registry_validates_draft_feedback_action_without_mutation() -> None:
+    registry = build_default_tool_registry()
+    result = registry.execute(
+        ToolIntent(
+            intent_id="intent_draft_budget",
+            tool_name="draft_budget_reallocation",
+            requested_by=AgentRole.BUDGET_OPTIMIZER,
+            requires_human_approval=True,
+            risk_level="medium",
+            params={
+                "dry_run": True,
+                "approval_reference_id": "feedback_review_001",
+                "optimization_draft_id": "optimization_draft_001",
+                "event_id": "evt_001",
+                "feedback_id": "feedback_001",
+                "advertiser_id": "adv_001",
+                "change_id": "change_budget",
+                "change_type": "budget",
+                "source_step_id": "step_budget",
+                "change_title": "Draft budget reallocation",
+                "change_description": "Shift budget toward proven lanes.",
+                "change_params": {"recommended_budget_shift": "protect retargeting"},
+                "requested_by_role": "budget_optimizer",
+                "risk_level": "medium",
+            },
+        ),
+        _context(allowed_tools={"draft_budget_reallocation"}),
+    )
+
+    assert result.success is True
+    assert result.payload["status"] == "validated"
+    assert result.payload["dry_run"] is True
+    assert result.payload["mutation_performed"] is False
+    assert result.payload["source_id"] == "mock_tool:draft_budget_feedback_action:v1"
+
+
 def _context(allowed_tools: set[str] | None = None) -> ToolExecutionContext:
     return ToolExecutionContext(
         advertiser_id="adv_001",

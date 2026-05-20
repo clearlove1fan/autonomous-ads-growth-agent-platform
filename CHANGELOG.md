@@ -30,6 +30,8 @@
   reviewer can approve, reject, or request revision for draft-only changes.
 - Added dry-run feedback execution plans through API and CLI for approved
   optimization reviews.
+- Added dry-run feedback execution validation through draft-only typed tool
+  registry APIs and CLI commands, preserving no live campaign mutation.
 
 ## v0.1.0 - 2026-05-18
 

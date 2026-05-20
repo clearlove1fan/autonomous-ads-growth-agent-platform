@@ -41,6 +41,9 @@ def test_persisted_product_loop_walkthrough() -> None:
     assert summary["review"]["cli_submitted_decision"] == "needs_revision"
     assert summary["execution_plan"]["execution_mode"] == "dry_run"
     assert summary["execution_plan"]["first_tool_name"] == "draft_budget_reallocation"
+    assert summary["execution_dry_run"]["status"] == "passed"
+    assert summary["execution_dry_run"]["validated_step_count"] == 1
+    assert summary["execution_dry_run"]["blocked_step_count"] == 0
     assert summary["outbox"]["completed"] == 1
     assert summary["cli_reads"]["event_count"] == 1
     assert summary["cli_reads"]["first_action_type"] == "adjust_budget"
@@ -48,6 +51,9 @@ def test_persisted_product_loop_walkthrough() -> None:
     assert summary["cli_reads"]["review_count"] == 1
     assert summary["cli_reads"]["execution_plan_id"] == summary["execution_plan"][
         "execution_plan_id"
+    ]
+    assert summary["cli_reads"]["execution_dry_run_id"] == summary["execution_dry_run"][
+        "dry_run_id"
     ]
     assert summary["cli_reads"]["memory_count"] == 1
     assert summary["memory"]["source_id"] in summary["later_strategy"][

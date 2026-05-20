@@ -37,6 +37,7 @@ from ads_growth_agent.feedback import (
     build_campaign_feedback_action_plan,
     build_campaign_feedback_optimization_draft,
 )
+from ads_growth_agent.feedback_execution_dry_run import dry_run_feedback_execution_plan
 from ads_growth_agent.feedback_execution_plan import (
     FeedbackExecutionPlanNotApprovedError,
     build_feedback_execution_plan,
@@ -383,6 +384,31 @@ def get_feedback_execution_plan(review_id: str = FEEDBACK_REVIEW_ID_ARGUMENT) ->
         raise typer.Exit(2) from exc
 
     typer.echo(execution_plan.model_dump_json(indent=2))
+
+
+@app.command("dry-run-feedback-execution-plan")
+def dry_run_feedback_execution_plan_command(
+    review_id: str = FEEDBACK_REVIEW_ID_ARGUMENT,
+) -> None:
+    """Validate an approved feedback execution plan through draft-only tools."""
+    try:
+        settings = get_settings()
+        _ensure_feedback_review_persistence_enabled(settings)
+        store = build_configured_feedback_review_store(settings)
+        review = store.get_review(review_id)
+        if review is None:
+            typer.echo(f"Feedback optimization review not found: {review_id}", err=True)
+            raise typer.Exit(1)
+        execution_plan = build_feedback_execution_plan(review)
+        dry_run = dry_run_feedback_execution_plan(execution_plan)
+    except FeedbackExecutionPlanNotApprovedError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from exc
+
+    typer.echo(dry_run.model_dump_json(indent=2))
 
 
 @app.command("list-feedback-optimization-reviews")

@@ -904,6 +904,35 @@ class CampaignFeedbackExecutionPlanResponse(BaseModel):
     created_at: datetime
 
 
+class FeedbackExecutionDryRunStepResult(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    step_id: str = Field(min_length=1, max_length=220)
+    change_id: str = Field(min_length=1, max_length=220)
+    sequence: int = Field(ge=1)
+    tool_name: str = Field(min_length=1, max_length=120)
+    status: Literal["validated", "blocked"]
+    safety_checks: list[str] = Field(min_length=1)
+    tool_result: ToolResult
+
+
+class CampaignFeedbackExecutionDryRunResponse(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    dry_run_id: str = Field(min_length=1, max_length=160)
+    execution_plan_id: str = Field(min_length=1, max_length=160)
+    review_id: str = Field(min_length=1, max_length=160)
+    advertiser_id: str = Field(min_length=1, max_length=128)
+    event_id: str = Field(min_length=1, max_length=128)
+    status: Literal["passed", "failed"]
+    execution_mode: Literal["dry_run"] = "dry_run"
+    step_results: list[FeedbackExecutionDryRunStepResult] = Field(min_length=1)
+    validated_step_count: int = Field(ge=0)
+    blocked_step_count: int = Field(ge=0)
+    guardrails: list[str] = Field(default_factory=list)
+    created_at: datetime
+
+
 class CampaignPerformanceEventResponse(BaseModel):
     event_id: str = Field(min_length=1, max_length=128)
     advertiser_id: str = Field(min_length=1, max_length=128)

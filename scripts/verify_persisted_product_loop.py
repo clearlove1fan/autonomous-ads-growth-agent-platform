@@ -270,6 +270,24 @@ def run_persisted_product_loop(
                 == "draft_budget_reallocation",
                 "execution plan should map approved budget change to a draft tool intent",
             )
+            execution_dry_run = _api_json(
+                client.post(
+                    f"/feedback-optimization-reviews/{review_id}/execution-plan/dry-run",
+                    headers=_tenant_headers(tenant_id),
+                ),
+                label="dry-run feedback execution plan",
+            )
+            _expect(
+                execution_dry_run["status"] == "passed",
+                "execution dry run should pass for approved draft tool intents",
+            )
+            _expect(
+                execution_dry_run["step_results"][0]["tool_result"]["payload"][
+                    "mutation_performed"
+                ]
+                is False,
+                "execution dry run should not mutate live campaign state",
+            )
 
             outbox_report = _invoke_cli(
                 settings,
@@ -317,6 +335,10 @@ def run_persisted_product_loop(
             cli_execution_plan = _invoke_cli(
                 settings,
                 ["get-feedback-execution-plan", review_id],
+            )
+            cli_execution_dry_run = _invoke_cli(
+                settings,
+                ["dry-run-feedback-execution-plan", review_id],
             )
             cli_review_list = _invoke_cli(
                 settings,
@@ -394,6 +416,10 @@ def run_persisted_product_loop(
                 "CLI execution plan should match API execution plan",
             )
             _expect(
+                cli_execution_dry_run["dry_run_id"] == execution_dry_run["dry_run_id"],
+                "CLI dry run should match API dry run",
+            )
+            _expect(
                 cli_review_list["count"] == 1,
                 "CLI approved review list should find submitted review",
             )
@@ -469,6 +495,12 @@ def run_persisted_product_loop(
                 "first_tool_name": execution_plan["steps"][0]["tool_intent"]["tool_name"],
                 "step_count": len(execution_plan["steps"]),
             },
+            "execution_dry_run": {
+                "dry_run_id": execution_dry_run["dry_run_id"],
+                "status": execution_dry_run["status"],
+                "validated_step_count": execution_dry_run["validated_step_count"],
+                "blocked_step_count": execution_dry_run["blocked_step_count"],
+            },
             "outbox": outbox_report,
             "memory": {
                 "source_id": memory_source_id,
@@ -483,6 +515,7 @@ def run_persisted_product_loop(
                 "review_id": cli_review["review_id"],
                 "review_count": cli_review_list["count"],
                 "execution_plan_id": cli_execution_plan["execution_plan_id"],
+                "execution_dry_run_id": cli_execution_dry_run["dry_run_id"],
                 "memory_source_id": cli_memory["source_id"],
                 "event_count": cli_event_list["count"],
                 "memory_count": cli_memory_list["count"],
@@ -559,6 +592,13 @@ def render_summary(summary: dict[str, Any]) -> str:
                 f"first_tool={summary['execution_plan']['first_tool_name']}"
             ),
             (
+                "Execution dry run: "
+                f"{summary['execution_dry_run']['dry_run_id']} "
+                f"status={summary['execution_dry_run']['status']} "
+                f"validated={summary['execution_dry_run']['validated_step_count']} "
+                f"blocked={summary['execution_dry_run']['blocked_step_count']}"
+            ),
+            (
                 "Outbox: "
                 f"claimed={summary['outbox']['claimed']} "
                 f"completed={summary['outbox']['completed']} "
@@ -582,6 +622,7 @@ def render_summary(summary: dict[str, Any]) -> str:
                 f"first_change={summary['cli_reads']['first_change_type']} "
                 f"reviews={summary['cli_reads']['review_count']} "
                 f"execution_plan={summary['cli_reads']['execution_plan_id']} "
+                f"dry_run={summary['cli_reads']['execution_dry_run_id']} "
                 f"memories={summary['cli_reads']['memory_count']}"
             ),
         ]

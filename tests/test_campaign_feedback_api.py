@@ -725,6 +725,44 @@ def test_get_feedback_execution_plan_api_returns_dry_run_plan() -> None:
     assert payload["steps"][0]["tool_intent"]["params"]["dry_run"] is True
 
 
+def test_dry_run_feedback_execution_plan_api_validates_draft_tools() -> None:
+    event = api_module.CampaignPerformanceEventRequest.model_validate(
+        _event_payload_with_strategy_context()
+    )
+    detail = _event_detail(event)
+    optimization_draft = build_campaign_feedback_optimization_draft(detail)
+    review = build_campaign_feedback_optimization_review(
+        optimization_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.APPROVED,
+            reviewer_id="operator_001",
+            selected_change_ids=[optimization_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_dry_run_api_001",
+    )
+    review_store = CapturingFeedbackOptimizationReviewStore(reviews=[review])
+    api_app.dependency_overrides[get_runtime_settings] = lambda: Settings(
+        feedback_review_persistence_backend="postgres"
+    )
+    api_app.dependency_overrides[get_runtime_feedback_review_store] = lambda: review_store
+    try:
+        response = TestClient(api_app).post(
+            f"/feedback-optimization-reviews/{review.review_id}/execution-plan/dry-run",
+            headers={"X-Tenant-ID": "tenant_api"},
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert response.headers["feedback-dry-run-id"].startswith("feedback_dry_run_")
+    assert payload["status"] == "passed"
+    assert payload["validated_step_count"] == 1
+    assert payload["blocked_step_count"] == 0
+    assert payload["step_results"][0]["tool_result"]["success"] is True
+    assert payload["step_results"][0]["tool_result"]["payload"]["mutation_performed"] is False
+
+
 def test_get_feedback_execution_plan_api_rejects_non_approved_review() -> None:
     event = api_module.CampaignPerformanceEventRequest.model_validate(
         _event_payload_with_strategy_context()
@@ -1115,6 +1153,44 @@ def test_get_feedback_execution_plan_cli_returns_dry_run_plan(monkeypatch) -> No
     assert payload["review_id"] == review.review_id
     assert payload["execution_mode"] == "dry_run"
     assert payload["steps"][0]["tool_intent"]["tool_name"] == "draft_budget_reallocation"
+
+
+def test_dry_run_feedback_execution_plan_cli_validates_draft_tools(monkeypatch) -> None:
+    event = api_module.CampaignPerformanceEventRequest.model_validate(
+        _event_payload_with_strategy_context()
+    )
+    detail = _event_detail(event)
+    optimization_draft = build_campaign_feedback_optimization_draft(detail)
+    review = build_campaign_feedback_optimization_review(
+        optimization_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.APPROVED,
+            reviewer_id="operator_001",
+            selected_change_ids=[optimization_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_dry_run_cli_001",
+    )
+    review_store = CapturingFeedbackOptimizationReviewStore(reviews=[review])
+
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.get_settings",
+        lambda: Settings(feedback_review_persistence_backend="postgres"),
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_feedback_review_store",
+        lambda settings: review_store,
+    )
+
+    result = CliRunner().invoke(
+        cli_app,
+        ["dry-run-feedback-execution-plan", review.review_id],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "passed"
+    assert payload["step_results"][0]["tool_result"]["success"] is True
+    assert payload["step_results"][0]["tool_result"]["payload"]["dry_run"] is True
 
 
 def test_get_feedback_execution_plan_cli_rejects_non_approved_review(monkeypatch) -> None:

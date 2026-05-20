@@ -2,6 +2,7 @@ import pytest
 
 from ads_growth_agent.contracts import (
     AgentRole,
+    CampaignFeedbackExecutionPlanResponse,
     CampaignFeedbackOptimizationReviewRequest,
     CampaignObjective,
     CampaignPerformanceEventDetailResponse,
@@ -19,10 +20,60 @@ from ads_growth_agent.feedback import (
     build_campaign_feedback_optimization_draft,
     build_campaign_feedback_optimization_review,
 )
+from ads_growth_agent.feedback_execution_dry_run import dry_run_feedback_execution_plan
 from ads_growth_agent.feedback_execution_plan import (
     FeedbackExecutionPlanNotApprovedError,
     build_feedback_execution_plan,
 )
+
+
+def _approved_feedback_execution_plan(
+    review_id: str = "feedback_review_dry_run_001",
+) -> CampaignFeedbackExecutionPlanResponse:
+    event = CampaignPerformanceEventRequest(
+        event_id=f"evt_{review_id}",
+        advertiser_id="adv_fitness_001",
+        run_id="run_001",
+        campaign_id="cmp_fittrack",
+        draft_id="draft_fittrack",
+        objective=CampaignObjective.REGISTRATIONS,
+        occurred_at="2026-05-12T12:00:00Z",
+        metrics=PerformanceMetrics(
+            impressions=10_000,
+            clicks=500,
+            spend="1000.00",
+            conversions=20,
+        ),
+        target_cpa="20.00",
+    )
+    analysis = analyze_campaign_performance_event(event)
+    detail = CampaignPerformanceEventDetailResponse(
+        event_id=event.event_id,
+        advertiser_id=event.advertiser_id,
+        run_id=event.run_id,
+        campaign_id=event.campaign_id,
+        draft_id=event.draft_id,
+        objective=event.objective,
+        event_type=event.event_type,
+        occurred_at=event.occurred_at,
+        metrics=event.metrics,
+        status="analyzed",
+        metadata={},
+        analysis=analysis,
+        created_at=analysis.created_at,
+        updated_at=analysis.created_at,
+    )
+    optimization_draft = build_campaign_feedback_optimization_draft(detail)
+    review = build_campaign_feedback_optimization_review(
+        optimization_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.APPROVED,
+            reviewer_id="operator_001",
+            selected_change_ids=[optimization_draft.changes[0].change_id],
+        ),
+        review_id=review_id,
+    )
+    return build_feedback_execution_plan(review)
 
 
 def test_feedback_analysis_flags_underperforming_cpa() -> None:
@@ -506,3 +557,50 @@ def test_feedback_execution_plan_requires_approved_review() -> None:
 
     with pytest.raises(FeedbackExecutionPlanNotApprovedError):
         build_feedback_execution_plan(review)
+
+
+def test_feedback_execution_dry_run_validates_draft_tool_intents() -> None:
+    execution_plan = _approved_feedback_execution_plan()
+
+    dry_run = dry_run_feedback_execution_plan(execution_plan)
+
+    assert dry_run.dry_run_id.startswith("feedback_dry_run_")
+    assert dry_run.execution_plan_id == execution_plan.execution_plan_id
+    assert dry_run.status == "passed"
+    assert dry_run.validated_step_count == 1
+    assert dry_run.blocked_step_count == 0
+    assert dry_run.step_results[0].status == "validated"
+    assert dry_run.step_results[0].tool_result.success is True
+    assert dry_run.step_results[0].tool_result.payload["mutation_performed"] is False
+
+
+def test_feedback_execution_dry_run_blocks_mismatched_tool_identity() -> None:
+    execution_plan = _approved_feedback_execution_plan("feedback_review_identity_001")
+    step = execution_plan.steps[0]
+    mismatched_intent = step.tool_intent.model_copy(
+        update={
+            "params": {
+                **step.tool_intent.params,
+                "advertiser_id": "adv_other",
+            }
+        }
+    )
+    mismatched_plan = execution_plan.model_copy(
+        update={
+            "steps": [
+                step.model_copy(update={"tool_intent": mismatched_intent}),
+            ]
+        }
+    )
+
+    dry_run = dry_run_feedback_execution_plan(mismatched_plan)
+
+    assert dry_run.status == "failed"
+    assert dry_run.validated_step_count == 0
+    assert dry_run.blocked_step_count == 1
+    assert dry_run.step_results[0].status == "blocked"
+    assert (
+        dry_run.step_results[0].tool_result.error is not None
+        and dry_run.step_results[0].tool_result.error.code == "EXECUTION_CONTEXT_MISMATCH"
+    )
+    assert "tool_registry_validation_skipped" in dry_run.step_results[0].safety_checks[-1]
