@@ -1137,6 +1137,61 @@ def test_get_feedback_execution_plan_api_returns_dry_run_plan() -> None:
     assert payload["steps"][0]["tool_intent"]["params"]["dry_run"] is True
 
 
+def test_get_feedback_handoff_package_api_returns_ready_package() -> None:
+    event = api_module.CampaignPerformanceEventRequest.model_validate(
+        _event_payload_with_strategy_context()
+    )
+    detail = _event_detail(event)
+    optimization_draft = build_campaign_feedback_optimization_draft(detail)
+    review = build_campaign_feedback_optimization_review(
+        optimization_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.APPROVED,
+            reviewer_id="operator_001",
+            selected_change_ids=[optimization_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_handoff_api_001",
+    )
+    review_store = CapturingFeedbackOptimizationReviewStore(reviews=[review])
+    execution_store = CapturingFeedbackExecutionDryRunStore()
+    api_app.dependency_overrides[get_runtime_settings] = lambda: Settings(
+        feedback_review_persistence_backend="postgres",
+        feedback_execution_persistence_backend="postgres",
+    )
+    api_app.dependency_overrides[get_runtime_feedback_review_store] = lambda: review_store
+    api_app.dependency_overrides[get_runtime_feedback_execution_store] = (
+        lambda: execution_store
+    )
+    try:
+        client = TestClient(api_app)
+        dry_run_response = client.post(
+            f"/feedback-optimization-reviews/{review.review_id}/execution-plan/dry-run",
+            headers={"X-Tenant-ID": "tenant_api"},
+        )
+        package_response = client.get(
+            f"/feedback-optimization-reviews/{review.review_id}/handoff-package",
+            headers={"X-Tenant-ID": "tenant_api"},
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    dry_run_payload = dry_run_response.json()
+    payload = package_response.json()
+    assert dry_run_response.status_code == 200
+    assert package_response.status_code == 200
+    assert package_response.headers["feedback-handoff-status"] == (
+        "ready_for_manual_handoff"
+    )
+    assert package_response.headers["feedback-review-id"] == review.review_id
+    assert payload["status"] == "ready_for_manual_handoff"
+    assert payload["review_id"] == review.review_id
+    assert payload["latest_dry_run_id"] == dry_run_payload["dry_run_id"]
+    assert payload["validated_step_count"] == 1
+    assert payload["blocked_step_count"] == 0
+    assert payload["manual_steps"][0]["dry_run_status"] == "validated"
+    assert payload["latest_dry_run"]["dry_run_id"] == dry_run_payload["dry_run_id"]
+
+
 def test_dry_run_feedback_execution_plan_api_validates_draft_tools() -> None:
     event = api_module.CampaignPerformanceEventRequest.model_validate(
         _event_payload_with_strategy_context()
@@ -2011,6 +2066,57 @@ def test_get_feedback_execution_plan_cli_returns_dry_run_plan(monkeypatch) -> No
     assert payload["review_id"] == review.review_id
     assert payload["execution_mode"] == "dry_run"
     assert payload["steps"][0]["tool_intent"]["tool_name"] == "draft_budget_reallocation"
+
+
+def test_get_feedback_handoff_package_cli_returns_ready_package(monkeypatch) -> None:
+    event = api_module.CampaignPerformanceEventRequest.model_validate(
+        _event_payload_with_strategy_context()
+    )
+    detail = _event_detail(event)
+    optimization_draft = build_campaign_feedback_optimization_draft(detail)
+    review = build_campaign_feedback_optimization_review(
+        optimization_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.APPROVED,
+            reviewer_id="operator_001",
+            selected_change_ids=[optimization_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_handoff_cli_001",
+    )
+    execution_plan = api_module.build_feedback_execution_plan(review)
+    dry_run = api_module.dry_run_feedback_execution_plan(execution_plan)
+    review_store = CapturingFeedbackOptimizationReviewStore(reviews=[review])
+    execution_store = CapturingFeedbackExecutionDryRunStore(dry_runs=[dry_run])
+
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.get_settings",
+        lambda: Settings(
+            tenant_id="tenant_cli",
+            feedback_review_persistence_backend="postgres",
+            feedback_execution_persistence_backend="postgres",
+        ),
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_feedback_review_store",
+        lambda settings: review_store,
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_feedback_execution_store",
+        lambda settings: execution_store,
+    )
+
+    result = CliRunner().invoke(
+        cli_app,
+        ["get-feedback-handoff-package", review.review_id],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ready_for_manual_handoff"
+    assert payload["review_id"] == review.review_id
+    assert payload["latest_dry_run_id"] == dry_run.dry_run_id
+    assert payload["manual_steps"][0]["dry_run_status"] == "validated"
+    assert payload["operator_checklist"][-1].endswith("manual campaign-platform handoff.")
 
 
 def test_dry_run_feedback_execution_plan_cli_validates_draft_tools(monkeypatch) -> None:

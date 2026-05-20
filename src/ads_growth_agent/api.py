@@ -28,6 +28,7 @@ from ads_growth_agent.contracts import (
     CampaignFeedbackExecutionDryRunListResponse,
     CampaignFeedbackExecutionDryRunResponse,
     CampaignFeedbackExecutionPlanResponse,
+    CampaignFeedbackHandoffPackageResponse,
     CampaignFeedbackLoopSummaryResponse,
     CampaignFeedbackOptimizationDraftResponse,
     CampaignFeedbackOptimizationReviewLineageListResponse,
@@ -69,6 +70,7 @@ from ads_growth_agent.feedback_execution_plan import (
 from ads_growth_agent.feedback_execution_store_factory import (
     build_configured_feedback_execution_store,
 )
+from ads_growth_agent.feedback_handoff_package import build_feedback_handoff_package
 from ads_growth_agent.feedback_lineage import (
     build_feedback_optimization_review_lineage,
     list_feedback_optimization_review_lineages,
@@ -1406,6 +1408,64 @@ def get_feedback_execution_plan(
     response.headers["Optimization-Draft-ID"] = review.optimization_draft_id
     response.headers["Feedback-ID"] = review.feedback_id
     return execution_plan
+
+
+@app.get(
+    "/feedback-optimization-reviews/{review_id}/handoff-package",
+    response_model=CampaignFeedbackHandoffPackageResponse,
+    dependencies=[Depends(require_api_auth)],
+)
+def get_feedback_handoff_package(
+    review_id: str,
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    review_store: Annotated[
+        FeedbackOptimizationReviewStore,
+        Depends(get_runtime_feedback_review_store),
+    ],
+    feedback_execution_store: Annotated[
+        FeedbackExecutionDryRunStore,
+        Depends(get_runtime_feedback_execution_store),
+    ],
+) -> CampaignFeedbackHandoffPackageResponse:
+    _require_feedback_review_persistence_enabled(settings)
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    review = review_store.get_review(review_id)
+    if review is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": "Feedback optimization review was not found for the effective tenant.",
+                "error_code": "FEEDBACK_OPTIMIZATION_REVIEW_NOT_FOUND",
+                "review_id": review_id,
+            },
+        )
+    try:
+        package = build_feedback_handoff_package(review, feedback_execution_store)
+    except FeedbackExecutionPlanNotApprovedError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": str(exc),
+                "error_code": "FEEDBACK_HANDOFF_PACKAGE_NOT_APPROVED",
+                "review_id": exc.review_id,
+                "decision": exc.decision.value,
+            },
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": str(exc),
+                "error_code": "FEEDBACK_HANDOFF_PACKAGE_INVALID",
+            },
+        ) from exc
+
+    response.headers["Feedback-Review-ID"] = review.review_id
+    response.headers["Feedback-Handoff-Package-ID"] = package.handoff_package_id
+    response.headers["Feedback-Handoff-Status"] = package.status
+    response.headers["Feedback-Execution-Plan-ID"] = package.execution_plan_id
+    return package
 
 
 @app.post(

@@ -41,6 +41,9 @@
 - Added feedback loop summary API and CLI surfaces so operators can inspect
   current stage, next actions, reviews, lineage, and dry-run audit from one
   persisted performance event.
+- Added read-only feedback handoff package API and CLI surfaces for approved
+  reviews with latest dry-run validation, manual steps, checklist, and
+  guardrails.
 - Added dry-run feedback execution plans through API and CLI for approved
   optimization reviews.
 - Added dry-run feedback execution validation through draft-only typed tool

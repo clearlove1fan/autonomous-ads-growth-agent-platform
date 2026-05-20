@@ -32,6 +32,7 @@ from ads_growth_agent.feedback_execution_plan import (
     FeedbackExecutionPlanNotApprovedError,
     build_feedback_execution_plan,
 )
+from ads_growth_agent.feedback_handoff_package import build_feedback_handoff_package
 from ads_growth_agent.feedback_lineage import (
     build_feedback_optimization_review_lineage,
     list_feedback_optimization_review_lineages,
@@ -916,6 +917,47 @@ def test_feedback_execution_plan_maps_approved_review_to_dry_run_tool_intents() 
     assert "second live-execution gate" in step.preconditions[-1]
     assert step.rollback_plan.startswith("Discard the draft budget")
     assert execution_plan.guardrails[0].startswith("Execution mode is dry_run")
+
+
+def test_feedback_handoff_package_marks_passed_dry_run_ready_for_manual_handoff() -> None:
+    review = _feedback_optimization_review(
+        decision=FeedbackOptimizationReviewDecision.APPROVED,
+        review_id="feedback_review_handoff_ready",
+    )
+    execution_plan = build_feedback_execution_plan(review)
+    dry_run = dry_run_feedback_execution_plan(execution_plan)
+    execution_store = _ExecutionLineageStore([dry_run])
+
+    package = build_feedback_handoff_package(review, execution_store)
+
+    assert package.handoff_package_id.startswith("feedback_handoff_")
+    assert package.status == "ready_for_manual_handoff"
+    assert package.review_id == review.review_id
+    assert package.execution_plan_id == execution_plan.execution_plan_id
+    assert package.latest_dry_run_id == dry_run.dry_run_id
+    assert package.latest_dry_run_status == "passed"
+    assert package.step_count == 1
+    assert package.validated_step_count == 1
+    assert package.blocked_step_count == 0
+    assert package.manual_steps[0].dry_run_status == "validated"
+    assert package.manual_steps[0].source_params["approval_reference_id"] == review.review_id
+    assert "manual campaign-platform handoff" in package.operator_checklist[-1]
+
+
+def test_feedback_handoff_package_marks_missing_validation_when_no_dry_run() -> None:
+    review = _feedback_optimization_review(
+        decision=FeedbackOptimizationReviewDecision.APPROVED,
+        review_id="feedback_review_handoff_missing_validation",
+    )
+
+    package = build_feedback_handoff_package(review)
+
+    assert package.status == "validation_missing"
+    assert package.latest_dry_run_id is None
+    assert package.validated_step_count == 0
+    assert package.blocked_step_count == 0
+    assert package.manual_steps[0].dry_run_status == "not_validated"
+    assert "Run dry-run execution validation" in package.operator_checklist[-1]
 
 
 def test_feedback_execution_plan_requires_approved_review() -> None:

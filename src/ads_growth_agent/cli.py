@@ -21,6 +21,7 @@ from ads_growth_agent.contracts import (
     AdvertiserMemoryType,
     CampaignDraftListResponse,
     CampaignFeedbackExecutionDryRunListResponse,
+    CampaignFeedbackHandoffPackageResponse,
     CampaignFeedbackLoopSummaryResponse,
     CampaignFeedbackOptimizationReviewLineageListResponse,
     CampaignFeedbackOptimizationReviewListResponse,
@@ -51,6 +52,7 @@ from ads_growth_agent.feedback_execution_plan import (
 from ads_growth_agent.feedback_execution_store_factory import (
     build_configured_feedback_execution_store,
 )
+from ads_growth_agent.feedback_handoff_package import build_feedback_handoff_package
 from ads_growth_agent.feedback_lineage import (
     build_feedback_optimization_review_lineage,
 )
@@ -535,6 +537,30 @@ def get_feedback_execution_plan(review_id: str = FEEDBACK_REVIEW_ID_ARGUMENT) ->
         raise typer.Exit(2) from exc
 
     typer.echo(execution_plan.model_dump_json(indent=2))
+
+
+@app.command("get-feedback-handoff-package")
+def get_feedback_handoff_package(review_id: str = FEEDBACK_REVIEW_ID_ARGUMENT) -> None:
+    """Fetch a read-only manual handoff package for one approved feedback review."""
+    try:
+        settings = get_settings()
+        _ensure_feedback_review_persistence_enabled(settings)
+        store = build_configured_feedback_review_store(settings)
+        review = store.get_review(review_id)
+        if review is None:
+            typer.echo(f"Feedback optimization review not found: {review_id}", err=True)
+            raise typer.Exit(1)
+        execution_store = build_configured_feedback_execution_store(settings)
+        package = build_feedback_handoff_package(review, execution_store)
+    except FeedbackExecutionPlanNotApprovedError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from exc
+
+    response = CampaignFeedbackHandoffPackageResponse.model_validate(package)
+    typer.echo(response.model_dump_json(indent=2))
 
 
 @app.command("dry-run-feedback-execution-plan")

@@ -457,6 +457,21 @@ def run_persisted_product_loop(
                 ),
                 label="dry run revision feedback execution plan",
             )
+            handoff_package = _api_json(
+                client.get(
+                    "/feedback-optimization-reviews/"
+                    f"{cli_revision_review['review_id']}/handoff-package",
+                    headers=_tenant_headers(tenant_id),
+                ),
+                label="get feedback handoff package",
+            )
+            cli_handoff_package = _invoke_cli(
+                settings,
+                [
+                    "get-feedback-handoff-package",
+                    cli_revision_review["review_id"],
+                ],
+            )
             review_lineage = _api_json(
                 client.get(
                     f"/feedback-optimization-reviews/{cli_submitted_review['review_id']}/lineage",
@@ -628,6 +643,24 @@ def run_persisted_product_loop(
                 "revision dry run should validate the revision execution plan",
             )
             _expect(
+                handoff_package["status"] == "ready_for_manual_handoff",
+                "handoff package should be ready after passed dry-run validation",
+            )
+            _expect(
+                handoff_package["latest_dry_run_id"]
+                == revision_execution_dry_run["dry_run_id"],
+                "handoff package should include the latest revision dry run",
+            )
+            _expect(
+                handoff_package["manual_steps"][0]["dry_run_status"] == "validated",
+                "handoff package should mark validated manual steps",
+            )
+            _expect(
+                cli_handoff_package["handoff_package_id"]
+                == handoff_package["handoff_package_id"],
+                "CLI handoff package should match API package",
+            )
+            _expect(
                 review_lineage["revision_draft"]["revision_draft_id"]
                 == revision_draft["revision_draft_id"],
                 "review lineage should include the revision draft",
@@ -789,6 +822,17 @@ def run_persisted_product_loop(
                 "dry_run_id": revision_execution_dry_run["dry_run_id"],
                 "dry_run_status": revision_execution_dry_run["status"],
             },
+            "handoff_package": {
+                "handoff_package_id": handoff_package["handoff_package_id"],
+                "status": handoff_package["status"],
+                "latest_dry_run_id": handoff_package["latest_dry_run_id"],
+                "manual_step_count": len(handoff_package["manual_steps"]),
+                "first_manual_step_status": handoff_package["manual_steps"][0][
+                    "dry_run_status"
+                ],
+                "cli_handoff_package_id": cli_handoff_package["handoff_package_id"],
+                "cli_status": cli_handoff_package["status"],
+            },
             "review_lineage": {
                 "requested_review_id": review_lineage["requested_review_id"],
                 "source_review_id": review_lineage["source_review_id"],
@@ -852,6 +896,7 @@ def run_persisted_product_loop(
                 "review_count": cli_review_list["count"],
                 "revision_draft_id": cli_revision_draft["revision_draft_id"],
                 "revision_review_id": cli_revision_review["review_id"],
+                "handoff_package_id": cli_handoff_package["handoff_package_id"],
                 "review_lineage_stage": cli_review_lineage["lineage_stage"],
                 "review_lineage_count": cli_review_lineage_list["count"],
                 "feedback_loop_stage": cli_feedback_loop_summary["current_stage"],
@@ -943,6 +988,13 @@ def render_summary(summary: dict[str, Any]) -> str:
                 f"dry_run={summary['revision_review']['dry_run_id']}"
             ),
             (
+                "Handoff package: "
+                f"{summary['handoff_package']['handoff_package_id']} "
+                f"status={summary['handoff_package']['status']} "
+                f"manual_steps={summary['handoff_package']['manual_step_count']} "
+                f"first_step={summary['handoff_package']['first_manual_step_status']}"
+            ),
+            (
                 "Review lineage: "
                 f"source={summary['review_lineage']['source_review_id']} "
                 f"stage={summary['review_lineage']['lineage_stage']} "
@@ -1001,6 +1053,7 @@ def render_summary(summary: dict[str, Any]) -> str:
                 f"reviews={summary['cli_reads']['review_count']} "
                 f"revision_draft={summary['cli_reads']['revision_draft_id']} "
                 f"revision_review={summary['cli_reads']['revision_review_id']} "
+                f"handoff={summary['cli_reads']['handoff_package_id']} "
                 f"lineage={summary['cli_reads']['review_lineage_stage']} "
                 f"lineage_reads={summary['cli_reads']['review_lineage_count']} "
                 f"loop={summary['cli_reads']['feedback_loop_stage']} "

@@ -1040,6 +1040,57 @@ class CampaignFeedbackExecutionDryRunListResponse(BaseModel):
     status: Literal["passed", "failed"] | None = None
 
 
+class FeedbackManualHandoffStep(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    step_id: str = Field(min_length=1, max_length=220)
+    change_id: str = Field(min_length=1, max_length=220)
+    sequence: int = Field(ge=1)
+    title: str = Field(min_length=1, max_length=160)
+    change_type: FeedbackOptimizationChangeType
+    owner_role: AgentRole
+    risk_level: RiskLevel
+    tool_name: str = Field(min_length=1, max_length=120)
+    dry_run_status: Literal["validated", "blocked", "not_validated"]
+    manual_action: str = Field(min_length=1, max_length=500)
+    source_params: dict[str, Any] = Field(default_factory=dict)
+
+
+class CampaignFeedbackHandoffPackageResponse(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    handoff_package_id: str = Field(min_length=1, max_length=160)
+    package_version: Literal["v0.1"] = "v0.1"
+    status: Literal[
+        "ready_for_manual_handoff",
+        "validation_missing",
+        "validation_failed",
+    ]
+    review_id: str = Field(min_length=1, max_length=160)
+    execution_plan_id: str = Field(min_length=1, max_length=160)
+    optimization_draft_id: str = Field(min_length=1, max_length=160)
+    event_id: str = Field(min_length=1, max_length=128)
+    feedback_id: str = Field(min_length=1, max_length=160)
+    advertiser_id: str = Field(min_length=1, max_length=128)
+    run_id: str | None = Field(default=None, min_length=1, max_length=128)
+    campaign_id: str | None = Field(default=None, min_length=1, max_length=128)
+    base_draft_id: str | None = Field(default=None, min_length=1, max_length=160)
+    strategy_id: str | None = Field(default=None, min_length=1, max_length=128)
+    latest_dry_run_id: str | None = Field(default=None, min_length=1, max_length=160)
+    latest_dry_run_status: Literal["passed", "failed"] | None = None
+    step_count: int = Field(ge=1)
+    validated_step_count: int = Field(ge=0)
+    blocked_step_count: int = Field(ge=0)
+    review: CampaignFeedbackOptimizationReviewResponse
+    execution_plan: CampaignFeedbackExecutionPlanResponse
+    latest_dry_run: CampaignFeedbackExecutionDryRunResponse | None = None
+    manual_steps: list[FeedbackManualHandoffStep] = Field(min_length=1)
+    operator_checklist: list[str] = Field(min_length=1)
+    summary: str = Field(min_length=1, max_length=1_000)
+    guardrails: list[str] = Field(default_factory=list)
+    created_at: datetime
+
+
 class CampaignPerformanceEventResponse(BaseModel):
     event_id: str = Field(min_length=1, max_length=128)
     advertiser_id: str = Field(min_length=1, max_length=128)

@@ -19,6 +19,7 @@ PROTECTED_PATHS = {
     "/feedback-optimization-reviews",
     "/feedback-optimization-review-lineages",
     "/feedback-optimization-reviews/{review_id}",
+    "/feedback-optimization-reviews/{review_id}/handoff-package",
     "/feedback-optimization-reviews/{review_id}/lineage",
     "/feedback-optimization-reviews/{review_id}/revision-draft",
     "/feedback-optimization-reviews/{review_id}/revision-draft/reviews",
