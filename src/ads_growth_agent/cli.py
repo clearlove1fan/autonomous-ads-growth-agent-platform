@@ -398,7 +398,8 @@ def get_feedback_optimization_review_lineage(
         if review is None:
             typer.echo(f"Feedback optimization review not found: {review_id}", err=True)
             raise typer.Exit(1)
-        lineage = build_feedback_optimization_review_lineage(review, store)
+        execution_store = build_configured_feedback_execution_store(settings)
+        lineage = build_feedback_optimization_review_lineage(review, store, execution_store)
     except ValueError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(2) from exc

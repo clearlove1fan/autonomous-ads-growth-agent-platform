@@ -449,6 +449,14 @@ def run_persisted_product_loop(
                 ),
                 label="get revision feedback execution plan",
             )
+            revision_execution_dry_run = _api_json(
+                client.post(
+                    "/feedback-optimization-reviews/"
+                    f"{cli_revision_review['review_id']}/execution-plan/dry-run",
+                    headers=_tenant_headers(tenant_id),
+                ),
+                label="dry run revision feedback execution plan",
+            )
             review_lineage = _api_json(
                 client.get(
                     f"/feedback-optimization-reviews/{cli_submitted_review['review_id']}/lineage",
@@ -571,6 +579,11 @@ def run_persisted_product_loop(
                 "revision execution plan should target the revision draft",
             )
             _expect(
+                revision_execution_dry_run["execution_plan_id"]
+                == revision_execution_plan["execution_plan_id"],
+                "revision dry run should validate the revision execution plan",
+            )
+            _expect(
                 review_lineage["revision_draft"]["revision_draft_id"]
                 == revision_draft["revision_draft_id"],
                 "review lineage should include the revision draft",
@@ -581,6 +594,11 @@ def run_persisted_product_loop(
                 "review lineage should identify the approved revision review",
             )
             _expect(
+                review_lineage["execution_summaries"][0]["dry_runs"][0]["dry_run_id"]
+                == revision_execution_dry_run["dry_run_id"],
+                "review lineage should include the persisted revision dry run",
+            )
+            _expect(
                 cli_review_lineage["source_review_id"] == cli_submitted_review["review_id"],
                 "CLI lineage should resolve source review from revision review",
             )
@@ -588,6 +606,10 @@ def run_persisted_product_loop(
                 cli_review_lineage["target_review"]["review_id"]
                 == cli_revision_review["review_id"],
                 "CLI lineage should include the requested revision review",
+            )
+            _expect(
+                cli_review_lineage["execution_summaries"][0]["dry_run_count"] == 1,
+                "CLI lineage should include dry-run audit for revision review",
             )
             _expect(cli_event_list["count"] == 1, "CLI event list should find feedback event")
             _expect(
@@ -668,6 +690,8 @@ def run_persisted_product_loop(
                 "selected_change_count": len(cli_revision_review["selected_change_ids"]),
                 "execution_plan_id": revision_execution_plan["execution_plan_id"],
                 "execution_plan_step_count": len(revision_execution_plan["steps"]),
+                "dry_run_id": revision_execution_dry_run["dry_run_id"],
+                "dry_run_status": revision_execution_dry_run["status"],
             },
             "review_lineage": {
                 "requested_review_id": review_lineage["requested_review_id"],
@@ -675,6 +699,13 @@ def run_persisted_product_loop(
                 "lineage_stage": review_lineage["lineage_stage"],
                 "revision_review_count": len(review_lineage["revision_reviews"]),
                 "execution_ready_review_ids": review_lineage["execution_ready_review_ids"],
+                "execution_summary_count": len(review_lineage["execution_summaries"]),
+                "dry_run_count": review_lineage["execution_summaries"][0][
+                    "dry_run_count"
+                ],
+                "latest_dry_run_status": review_lineage["execution_summaries"][0][
+                    "latest_dry_run_status"
+                ],
                 "cli_lineage_stage": cli_review_lineage["lineage_stage"],
                 "cli_target_review_id": cli_review_lineage["target_review"]["review_id"],
             },
@@ -792,7 +823,8 @@ def render_summary(summary: dict[str, Any]) -> str:
                 f"{summary['revision_review']['review_id']} "
                 f"decision={summary['revision_review']['decision']} "
                 f"selected_changes={summary['revision_review']['selected_change_count']} "
-                f"execution_plan={summary['revision_review']['execution_plan_id']}"
+                f"execution_plan={summary['revision_review']['execution_plan_id']} "
+                f"dry_run={summary['revision_review']['dry_run_id']}"
             ),
             (
                 "Review lineage: "
@@ -800,7 +832,9 @@ def render_summary(summary: dict[str, Any]) -> str:
                 f"stage={summary['review_lineage']['lineage_stage']} "
                 f"revision_reviews={summary['review_lineage']['revision_review_count']} "
                 "execution_ready="
-                f"{', '.join(summary['review_lineage']['execution_ready_review_ids'])}"
+                f"{', '.join(summary['review_lineage']['execution_ready_review_ids'])} "
+                f"dry_runs={summary['review_lineage']['dry_run_count']} "
+                f"latest={summary['review_lineage']['latest_dry_run_status']}"
             ),
             (
                 "Execution plan: "

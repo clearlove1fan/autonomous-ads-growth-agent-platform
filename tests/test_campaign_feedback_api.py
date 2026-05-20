@@ -854,12 +854,21 @@ def test_get_feedback_optimization_review_lineage_api_returns_revision_chain() -
     review_store = CapturingFeedbackOptimizationReviewStore(
         reviews=[source_review, revision_review]
     )
+    execution_store = CapturingFeedbackExecutionDryRunStore()
     api_app.dependency_overrides[get_runtime_settings] = lambda: Settings(
-        feedback_review_persistence_backend="postgres"
+        feedback_review_persistence_backend="postgres",
+        feedback_execution_persistence_backend="postgres",
     )
     api_app.dependency_overrides[get_runtime_feedback_review_store] = lambda: review_store
+    api_app.dependency_overrides[get_runtime_feedback_execution_store] = (
+        lambda: execution_store
+    )
     try:
         client = TestClient(api_app)
+        dry_run_response = client.post(
+            f"/feedback-optimization-reviews/{revision_review.review_id}/execution-plan/dry-run",
+            headers={"X-Tenant-ID": "tenant_api"},
+        )
         source_response = client.get(
             f"/feedback-optimization-reviews/{source_review.review_id}/lineage",
             headers={"X-Tenant-ID": "tenant_api"},
@@ -873,6 +882,8 @@ def test_get_feedback_optimization_review_lineage_api_returns_revision_chain() -
 
     source_payload = source_response.json()
     revision_payload = revision_response.json()
+    dry_run_payload = dry_run_response.json()
+    assert dry_run_response.status_code == 200
     assert source_response.status_code == 200
     assert source_response.headers["feedback-lineage-stage"] == "revision_requested"
     assert source_payload["source_review_id"] == source_review.review_id
@@ -881,10 +892,19 @@ def test_get_feedback_optimization_review_lineage_api_returns_revision_chain() -
     )
     assert source_payload["revision_reviews"][0]["review_id"] == revision_review.review_id
     assert source_payload["execution_ready_review_ids"] == [revision_review.review_id]
+    assert source_payload["execution_summaries"][0]["review_id"] == revision_review.review_id
+    assert source_payload["execution_summaries"][0]["dry_run_count"] == 1
+    assert source_payload["execution_summaries"][0]["latest_dry_run_status"] == "passed"
+    assert source_payload["execution_summaries"][0]["dry_runs"][0]["dry_run_id"] == (
+        dry_run_payload["dry_run_id"]
+    )
     assert revision_response.status_code == 200
     assert revision_payload["lineage_stage"] == "revision_review"
     assert revision_payload["source_review_id"] == source_review.review_id
     assert revision_payload["target_review"]["review_id"] == revision_review.review_id
+    assert revision_payload["execution_summaries"][0]["dry_runs"][0]["dry_run_id"] == (
+        dry_run_payload["dry_run_id"]
+    )
 
 
 def test_submit_feedback_optimization_revision_review_api_rejects_non_revision_source() -> None:
@@ -1606,6 +1626,8 @@ def test_get_feedback_optimization_review_lineage_cli_returns_revision_chain(
     assert payload["source_review_id"] == source_review.review_id
     assert payload["revision_reviews"][0]["review_id"] == revision_review.review_id
     assert payload["execution_ready_review_ids"] == [revision_review.review_id]
+    assert payload["execution_summaries"][0]["review_id"] == revision_review.review_id
+    assert payload["execution_summaries"][0]["dry_run_count"] == 0
 
 
 def test_submit_feedback_optimization_revision_review_cli_rejects_approved_source(

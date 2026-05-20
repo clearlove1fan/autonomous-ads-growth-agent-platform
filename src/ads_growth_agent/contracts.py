@@ -887,6 +887,31 @@ class CampaignFeedbackOptimizationReviewListResponse(BaseModel):
     decision: FeedbackOptimizationReviewDecision | None = None
 
 
+class FeedbackReviewLineageDryRunSummary(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    dry_run_id: str = Field(min_length=1, max_length=160)
+    execution_plan_id: str = Field(min_length=1, max_length=160)
+    review_id: str = Field(min_length=1, max_length=160)
+    status: Literal["passed", "failed"]
+    validated_step_count: int = Field(ge=0)
+    blocked_step_count: int = Field(ge=0)
+    created_at: datetime
+
+
+class FeedbackReviewLineageExecutionSummary(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    review_id: str = Field(min_length=1, max_length=160)
+    execution_plan_id: str = Field(min_length=1, max_length=160)
+    execution_mode: Literal["dry_run"] = "dry_run"
+    status: Literal["ready"] = "ready"
+    step_count: int = Field(ge=1)
+    dry_run_count: int = Field(ge=0)
+    latest_dry_run_status: Literal["passed", "failed"] | None = None
+    dry_runs: list[FeedbackReviewLineageDryRunSummary] = Field(default_factory=list)
+
+
 class CampaignFeedbackOptimizationReviewLineageResponse(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -906,6 +931,9 @@ class CampaignFeedbackOptimizationReviewLineageResponse(BaseModel):
     )
     approved_review_ids: list[str] = Field(default_factory=list)
     execution_ready_review_ids: list[str] = Field(default_factory=list)
+    execution_summaries: list[FeedbackReviewLineageExecutionSummary] = Field(
+        default_factory=list
+    )
     summary: str = Field(min_length=1, max_length=1_000)
     guardrails: list[str] = Field(default_factory=list)
 

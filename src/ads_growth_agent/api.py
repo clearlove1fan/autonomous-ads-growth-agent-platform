@@ -1102,6 +1102,10 @@ def get_feedback_optimization_review_lineage(
         FeedbackOptimizationReviewStore,
         Depends(get_runtime_feedback_review_store),
     ],
+    feedback_execution_store: Annotated[
+        FeedbackExecutionDryRunStore,
+        Depends(get_runtime_feedback_execution_store),
+    ],
 ) -> CampaignFeedbackOptimizationReviewLineageResponse:
     _require_feedback_review_persistence_enabled(settings)
     response.headers["X-Tenant-ID"] = settings.tenant_id
@@ -1117,7 +1121,11 @@ def get_feedback_optimization_review_lineage(
         )
 
     try:
-        lineage = build_feedback_optimization_review_lineage(review, review_store)
+        lineage = build_feedback_optimization_review_lineage(
+            review,
+            review_store,
+            feedback_execution_store,
+        )
     except ValueError as exc:
         raise HTTPException(
             status_code=422,

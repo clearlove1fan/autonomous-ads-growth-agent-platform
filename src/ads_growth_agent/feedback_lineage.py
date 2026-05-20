@@ -1,12 +1,16 @@
 from typing import Protocol
 
 from ads_growth_agent.contracts import (
+    CampaignFeedbackExecutionDryRunListResponse,
     CampaignFeedbackOptimizationReviewLineageResponse,
     CampaignFeedbackOptimizationReviewListResponse,
     CampaignFeedbackOptimizationReviewResponse,
     FeedbackOptimizationReviewDecision,
+    FeedbackReviewLineageDryRunSummary,
+    FeedbackReviewLineageExecutionSummary,
 )
 from ads_growth_agent.feedback import build_campaign_feedback_optimization_revision_draft
+from ads_growth_agent.feedback_execution_plan import build_feedback_execution_plan
 
 
 class FeedbackReviewLineageStore(Protocol):
@@ -28,9 +32,24 @@ class FeedbackReviewLineageStore(Protocol):
         """Return recent optimization reviews for the configured tenant."""
 
 
+class FeedbackExecutionLineageStore(Protocol):
+    def list_dry_runs(
+        self,
+        *,
+        review_id: str | None = None,
+        execution_plan_id: str | None = None,
+        event_id: str | None = None,
+        advertiser_id: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> CampaignFeedbackExecutionDryRunListResponse:
+        """Return recent persisted dry-run validation results for the configured tenant."""
+
+
 def build_feedback_optimization_review_lineage(
     target_review: CampaignFeedbackOptimizationReviewResponse,
     store: FeedbackReviewLineageStore,
+    execution_store: FeedbackExecutionLineageStore | None = None,
 ) -> CampaignFeedbackOptimizationReviewLineageResponse:
     """Build an audit lineage around a feedback optimization review."""
 
@@ -54,11 +73,18 @@ def build_feedback_optimization_review_lineage(
         ).items
 
     reviewed_records = [source_review, *revision_reviews]
-    approved_review_ids = [
-        review.review_id
+    approved_reviews = [
+        review
         for review in reviewed_records
         if review.decision == FeedbackOptimizationReviewDecision.APPROVED
     ]
+    approved_review_ids = [review.review_id for review in approved_reviews]
+    execution_summaries = [
+        summary
+        for review in approved_reviews
+        if (summary := _execution_summary(review, execution_store)) is not None
+    ]
+    execution_ready_review_ids = [summary.review_id for summary in execution_summaries]
 
     return CampaignFeedbackOptimizationReviewLineageResponse(
         requested_review_id=target_review.review_id,
@@ -69,12 +95,14 @@ def build_feedback_optimization_review_lineage(
         revision_draft=revision_draft,
         revision_reviews=revision_reviews,
         approved_review_ids=approved_review_ids,
-        execution_ready_review_ids=approved_review_ids,
+        execution_ready_review_ids=execution_ready_review_ids,
+        execution_summaries=execution_summaries,
         summary=_lineage_summary(
             source_review=source_review,
             target_review=target_review,
             revision_review_count=len(revision_reviews),
-            execution_ready_count=len(approved_review_ids),
+            execution_ready_count=len(execution_ready_review_ids),
+            dry_run_count=sum(summary.dry_run_count for summary in execution_summaries),
         ),
         guardrails=[
             "Lineage is derived from persisted review snapshots for audit and debugging.",
@@ -83,6 +111,44 @@ def build_feedback_optimization_review_lineage(
                 "plan; it is not live execution."
             ),
         ],
+    )
+
+
+def _execution_summary(
+    review: CampaignFeedbackOptimizationReviewResponse,
+    execution_store: FeedbackExecutionLineageStore | None,
+) -> FeedbackReviewLineageExecutionSummary | None:
+    try:
+        execution_plan = build_feedback_execution_plan(review)
+    except ValueError:
+        return None
+
+    dry_runs: list[FeedbackReviewLineageDryRunSummary] = []
+    if execution_store is not None:
+        dry_runs = [
+            FeedbackReviewLineageDryRunSummary(
+                dry_run_id=dry_run.dry_run_id,
+                execution_plan_id=dry_run.execution_plan_id,
+                review_id=dry_run.review_id,
+                status=dry_run.status,
+                validated_step_count=dry_run.validated_step_count,
+                blocked_step_count=dry_run.blocked_step_count,
+                created_at=dry_run.created_at,
+            )
+            for dry_run in execution_store.list_dry_runs(
+                execution_plan_id=execution_plan.execution_plan_id,
+                limit=20,
+            ).items
+        ]
+
+    latest_dry_run_status = dry_runs[0].status if dry_runs else None
+    return FeedbackReviewLineageExecutionSummary(
+        review_id=review.review_id,
+        execution_plan_id=execution_plan.execution_plan_id,
+        step_count=len(execution_plan.steps),
+        dry_run_count=len(dry_runs),
+        latest_dry_run_status=latest_dry_run_status,
+        dry_runs=dry_runs,
     )
 
 
@@ -115,10 +181,12 @@ def _lineage_summary(
     target_review: CampaignFeedbackOptimizationReviewResponse,
     revision_review_count: int,
     execution_ready_count: int,
+    dry_run_count: int,
 ) -> str:
     return (
         f"Lineage for review {target_review.review_id}. Source review "
         f"{source_review.review_id} has decision {source_review.decision.value}, "
         f"{revision_review_count} revision review(s), and {execution_ready_count} "
-        "execution-ready approved review(s)."
+        f"execution-ready approved review(s), with {dry_run_count} persisted "
+        "dry-run validation record(s)."
     )

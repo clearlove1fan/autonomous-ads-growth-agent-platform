@@ -2,6 +2,8 @@ import pytest
 
 from ads_growth_agent.contracts import (
     AgentRole,
+    CampaignFeedbackExecutionDryRunListResponse,
+    CampaignFeedbackExecutionDryRunResponse,
     CampaignFeedbackExecutionPlanResponse,
     CampaignFeedbackOptimizationReviewRequest,
     CampaignFeedbackOptimizationReviewResponse,
@@ -171,6 +173,41 @@ class _ReviewLineageStore:
                 self.items = items
 
         return _ListResult(items)
+
+
+class _ExecutionLineageStore:
+    def __init__(self, dry_runs: list[CampaignFeedbackExecutionDryRunResponse]) -> None:
+        self._dry_runs = dry_runs
+
+    def list_dry_runs(
+        self,
+        *,
+        review_id: str | None = None,
+        execution_plan_id: str | None = None,
+        event_id: str | None = None,
+        advertiser_id: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> CampaignFeedbackExecutionDryRunListResponse:
+        items = [
+            dry_run
+            for dry_run in self._dry_runs
+            if (review_id is None or dry_run.review_id == review_id)
+            and (execution_plan_id is None or dry_run.execution_plan_id == execution_plan_id)
+            and (event_id is None or dry_run.event_id == event_id)
+            and (advertiser_id is None or dry_run.advertiser_id == advertiser_id)
+            and (status is None or dry_run.status == status)
+        ][:limit]
+        return CampaignFeedbackExecutionDryRunListResponse(
+            items=items,
+            count=len(items),
+            limit=limit,
+            review_id=review_id,
+            execution_plan_id=execution_plan_id,
+            event_id=event_id,
+            advertiser_id=advertiser_id,
+            status=status,
+        )
 
 
 def test_feedback_analysis_flags_underperforming_cpa() -> None:
@@ -630,8 +667,15 @@ def test_feedback_review_lineage_links_source_revision_and_execution_ready_revie
         review_id="feedback_review_lineage_revision_approved",
     )
     store = _ReviewLineageStore([source_review, approved_revision_review])
+    execution_plan = build_feedback_execution_plan(approved_revision_review)
+    dry_run = dry_run_feedback_execution_plan(execution_plan)
+    execution_store = _ExecutionLineageStore([dry_run])
 
-    lineage = build_feedback_optimization_review_lineage(source_review, store)
+    lineage = build_feedback_optimization_review_lineage(
+        source_review,
+        store,
+        execution_store,
+    )
 
     assert lineage.requested_review_id == source_review.review_id
     assert lineage.lineage_stage == "revision_requested"
@@ -642,6 +686,14 @@ def test_feedback_review_lineage_links_source_revision_and_execution_ready_revie
         approved_revision_review.review_id
     ]
     assert lineage.execution_ready_review_ids == [approved_revision_review.review_id]
+    assert len(lineage.execution_summaries) == 1
+    execution_summary = lineage.execution_summaries[0]
+    assert execution_summary.review_id == approved_revision_review.review_id
+    assert execution_summary.execution_plan_id == execution_plan.execution_plan_id
+    assert execution_summary.step_count == 1
+    assert execution_summary.dry_run_count == 1
+    assert execution_summary.latest_dry_run_status == "passed"
+    assert execution_summary.dry_runs[0].dry_run_id == dry_run.dry_run_id
 
 
 def test_feedback_review_lineage_resolves_source_from_revision_review() -> None:
