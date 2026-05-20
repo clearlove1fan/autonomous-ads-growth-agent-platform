@@ -204,6 +204,73 @@ feedback_optimization_reviews = sa.Table(
     ),
 )
 
+feedback_execution_dry_runs = sa.Table(
+    "feedback_execution_dry_runs",
+    metadata,
+    tenant_column(),
+    sa.Column("dry_run_id", sa.Text(), nullable=False),
+    sa.Column("execution_plan_id", sa.Text(), nullable=False),
+    sa.Column("review_id", sa.Text(), nullable=False),
+    sa.Column("optimization_draft_id", sa.Text(), nullable=False),
+    sa.Column("event_id", sa.Text(), nullable=False),
+    sa.Column("feedback_id", sa.Text(), nullable=False),
+    sa.Column("advertiser_id", sa.Text(), nullable=False),
+    sa.Column("run_id", sa.Text(), nullable=True),
+    sa.Column("campaign_id", sa.Text(), nullable=True),
+    sa.Column("base_draft_id", sa.Text(), nullable=True),
+    sa.Column("strategy_id", sa.Text(), nullable=True),
+    sa.Column("status", sa.Text(), nullable=False),
+    sa.Column("execution_mode", sa.Text(), nullable=False, server_default="dry_run"),
+    sa.Column("validated_step_count", sa.Integer(), nullable=False),
+    sa.Column("blocked_step_count", sa.Integer(), nullable=False),
+    sa.Column("execution_plan_snapshot", postgresql.JSONB(), nullable=False),
+    sa.Column("dry_run_snapshot", postgresql.JSONB(), nullable=False),
+    sa.Column(
+        "metadata", postgresql.JSONB(), nullable=False, server_default=sa.text("'{}'::jsonb")
+    ),
+    *partition_columns(),
+    *timestamp_columns(),
+    sa.PrimaryKeyConstraint("tenant_id", "dry_run_id"),
+    sa.ForeignKeyConstraint(
+        ["tenant_id", "review_id"],
+        ["feedback_optimization_reviews.tenant_id", "feedback_optimization_reviews.review_id"],
+        ondelete="CASCADE",
+    ),
+    sa.ForeignKeyConstraint(
+        ["tenant_id", "event_id"],
+        ["campaign_performance_events.tenant_id", "campaign_performance_events.event_id"],
+        ondelete="CASCADE",
+    ),
+    sa.ForeignKeyConstraint(
+        ["tenant_id", "advertiser_id"],
+        ["advertisers.tenant_id", "advertisers.advertiser_id"],
+    ),
+    sa.CheckConstraint(
+        "status in ('passed', 'failed')",
+        name="feedback_execution_dry_run_status",
+    ),
+    sa.CheckConstraint(
+        "execution_mode = 'dry_run'",
+        name="feedback_execution_dry_run_mode",
+    ),
+    sa.CheckConstraint(
+        "validated_step_count >= 0",
+        name="feedback_execution_dry_run_validated_count_nonnegative",
+    ),
+    sa.CheckConstraint(
+        "blocked_step_count >= 0",
+        name="feedback_execution_dry_run_blocked_count_nonnegative",
+    ),
+    sa.CheckConstraint(
+        "validated_step_count + blocked_step_count > 0",
+        name="feedback_execution_dry_run_step_count_positive",
+    ),
+    sa.CheckConstraint(
+        f"partition_bucket >= 0 and partition_bucket < {PARTITION_BUCKETS}",
+        name="feedback_execution_dry_run_partition_bucket_range",
+    ),
+)
+
 strategy_jobs = sa.Table(
     "strategy_jobs",
     metadata,
@@ -621,6 +688,42 @@ sa.Index(
     feedback_optimization_reviews.c.partition_bucket,
 )
 sa.Index(
+    "ix_feedback_execution_dry_runs_review_created",
+    feedback_execution_dry_runs.c.tenant_id,
+    feedback_execution_dry_runs.c.review_id,
+    feedback_execution_dry_runs.c.created_at,
+)
+sa.Index(
+    "ix_feedback_execution_dry_runs_plan_created",
+    feedback_execution_dry_runs.c.tenant_id,
+    feedback_execution_dry_runs.c.execution_plan_id,
+    feedback_execution_dry_runs.c.created_at,
+)
+sa.Index(
+    "ix_feedback_execution_dry_runs_event_created",
+    feedback_execution_dry_runs.c.tenant_id,
+    feedback_execution_dry_runs.c.event_id,
+    feedback_execution_dry_runs.c.created_at,
+)
+sa.Index(
+    "ix_feedback_execution_dry_runs_advertiser_created",
+    feedback_execution_dry_runs.c.tenant_id,
+    feedback_execution_dry_runs.c.advertiser_id,
+    feedback_execution_dry_runs.c.created_at,
+)
+sa.Index(
+    "ix_feedback_execution_dry_runs_status_created",
+    feedback_execution_dry_runs.c.tenant_id,
+    feedback_execution_dry_runs.c.status,
+    feedback_execution_dry_runs.c.created_at,
+)
+sa.Index(
+    "ix_feedback_execution_dry_runs_partition_date",
+    feedback_execution_dry_runs.c.tenant_id,
+    feedback_execution_dry_runs.c.partition_date,
+    feedback_execution_dry_runs.c.partition_bucket,
+)
+sa.Index(
     "ix_strategy_jobs_status_created",
     strategy_jobs.c.tenant_id,
     strategy_jobs.c.status,
@@ -796,6 +899,7 @@ CORE_TABLES = (
     campaign_drafts,
     campaign_performance_events,
     feedback_optimization_reviews,
+    feedback_execution_dry_runs,
     strategy_jobs,
     outbox_events,
     knowledge_documents,
@@ -811,6 +915,7 @@ HIGH_VOLUME_TABLES = {
     "campaign_drafts",
     "campaign_performance_events",
     "feedback_optimization_reviews",
+    "feedback_execution_dry_runs",
     "strategy_jobs",
     "outbox_events",
     "knowledge_documents",

@@ -933,6 +933,19 @@ class CampaignFeedbackExecutionDryRunResponse(BaseModel):
     created_at: datetime
 
 
+class CampaignFeedbackExecutionDryRunListResponse(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    items: list[CampaignFeedbackExecutionDryRunResponse] = Field(default_factory=list)
+    count: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    review_id: str | None = Field(default=None, min_length=1, max_length=160)
+    execution_plan_id: str | None = Field(default=None, min_length=1, max_length=160)
+    event_id: str | None = Field(default=None, min_length=1, max_length=128)
+    advertiser_id: str | None = Field(default=None, min_length=1, max_length=128)
+    status: Literal["passed", "failed"] | None = None
+
+
 class CampaignPerformanceEventResponse(BaseModel):
     event_id: str = Field(min_length=1, max_length=128)
     advertiser_id: str = Field(min_length=1, max_length=128)

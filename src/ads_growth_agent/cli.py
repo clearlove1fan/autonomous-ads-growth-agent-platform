@@ -20,6 +20,7 @@ from ads_growth_agent.contracts import (
     AdvertiserMemoryListResponse,
     AdvertiserMemoryType,
     CampaignDraftListResponse,
+    CampaignFeedbackExecutionDryRunListResponse,
     CampaignFeedbackOptimizationReviewListResponse,
     CampaignFeedbackOptimizationReviewRequest,
     CampaignPerformanceEventListResponse,
@@ -42,12 +43,16 @@ from ads_growth_agent.feedback_execution_plan import (
     FeedbackExecutionPlanNotApprovedError,
     build_feedback_execution_plan,
 )
+from ads_growth_agent.feedback_execution_store_factory import (
+    build_configured_feedback_execution_store,
+)
 from ads_growth_agent.feedback_review_store_factory import build_configured_feedback_review_store
 from ads_growth_agent.logging_config import configure_logging
 from ads_growth_agent.outbox import process_configured_outbox
 from ads_growth_agent.performance_event_store_factory import (
     build_configured_performance_event_store,
 )
+from ads_growth_agent.persistence.feedback_execution_store import FeedbackExecutionDryRunStatus
 from ads_growth_agent.persistence.knowledge_seed import seed_default_knowledge
 from ads_growth_agent.strategy import StrategyGenerationError, generate_growth_strategy
 from ads_growth_agent.strategy_job_store_factory import build_configured_strategy_job_store
@@ -140,6 +145,14 @@ FEEDBACK_REVIEW_SELECTED_CHANGE_ID_OPTION = typer.Option(None, "--selected-chang
 FEEDBACK_REVIEW_EVENT_ID_OPTION = typer.Option(None, "--event-id")
 FEEDBACK_REVIEW_OPTIMIZATION_DRAFT_ID_OPTION = typer.Option(None, "--optimization-draft-id")
 FEEDBACK_REVIEW_LIST_LIMIT_OPTION = typer.Option(50, "--limit", min=1, max=100)
+FEEDBACK_EXECUTION_DRY_RUN_ID_ARGUMENT = typer.Argument(
+    ...,
+    help="Feedback execution dry-run ID.",
+)
+FEEDBACK_EXECUTION_REVIEW_ID_OPTION = typer.Option(None, "--review-id")
+FEEDBACK_EXECUTION_PLAN_ID_OPTION = typer.Option(None, "--execution-plan-id")
+FEEDBACK_EXECUTION_DRY_RUN_STATUS_OPTION = typer.Option(None, "--status")
+FEEDBACK_EXECUTION_DRY_RUN_LIST_LIMIT_OPTION = typer.Option(50, "--limit", min=1, max=100)
 ALLOWED_PERFORMANCE_EVENT_TYPES = {
     "performance_snapshot",
     "budget_pacing",
@@ -150,6 +163,10 @@ ALLOWED_FEEDBACK_REVIEW_DECISIONS = {
     "approved",
     "rejected",
     "needs_revision",
+}
+ALLOWED_FEEDBACK_EXECUTION_DRY_RUN_STATUSES = {
+    "passed",
+    "failed",
 }
 
 
@@ -401,6 +418,8 @@ def dry_run_feedback_execution_plan_command(
             raise typer.Exit(1)
         execution_plan = build_feedback_execution_plan(review)
         dry_run = dry_run_feedback_execution_plan(execution_plan)
+        feedback_execution_store = build_configured_feedback_execution_store(settings)
+        dry_run = feedback_execution_store.record_dry_run(execution_plan, dry_run)
     except FeedbackExecutionPlanNotApprovedError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
@@ -409,6 +428,56 @@ def dry_run_feedback_execution_plan_command(
         raise typer.Exit(2) from exc
 
     typer.echo(dry_run.model_dump_json(indent=2))
+
+
+@app.command("get-feedback-execution-dry-run")
+def get_feedback_execution_dry_run(
+    dry_run_id: str = FEEDBACK_EXECUTION_DRY_RUN_ID_ARGUMENT,
+) -> None:
+    """Fetch one persisted feedback execution dry-run result by ID."""
+    settings = get_settings()
+    _ensure_feedback_execution_persistence_enabled(settings)
+    store = build_configured_feedback_execution_store(settings)
+    dry_run = store.get_dry_run(dry_run_id)
+    if dry_run is None:
+        typer.echo(f"Feedback execution dry run not found: {dry_run_id}", err=True)
+        raise typer.Exit(1)
+    typer.echo(dry_run.model_dump_json(indent=2))
+
+
+@app.command("list-feedback-execution-dry-runs")
+def list_feedback_execution_dry_runs(
+    review_id: str | None = FEEDBACK_EXECUTION_REVIEW_ID_OPTION,
+    execution_plan_id: str | None = FEEDBACK_EXECUTION_PLAN_ID_OPTION,
+    event_id: str | None = FEEDBACK_REVIEW_EVENT_ID_OPTION,
+    advertiser_id: str | None = PERFORMANCE_EVENT_ADVERTISER_ID_OPTION,
+    status: str | None = FEEDBACK_EXECUTION_DRY_RUN_STATUS_OPTION,
+    limit: int = FEEDBACK_EXECUTION_DRY_RUN_LIST_LIMIT_OPTION,
+) -> None:
+    """List recent persisted feedback execution dry-run results."""
+    settings = get_settings()
+    _ensure_feedback_execution_persistence_enabled(settings)
+    validated_status = _feedback_execution_dry_run_status_or_exit(status)
+    store = build_configured_feedback_execution_store(settings)
+    dry_runs = store.list_dry_runs(
+        review_id=review_id,
+        execution_plan_id=execution_plan_id,
+        event_id=event_id,
+        advertiser_id=advertiser_id,
+        status=validated_status,
+        limit=limit,
+    )
+    response = CampaignFeedbackExecutionDryRunListResponse(
+        items=dry_runs.items,
+        count=dry_runs.count,
+        limit=limit,
+        review_id=review_id,
+        execution_plan_id=execution_plan_id,
+        event_id=event_id,
+        advertiser_id=advertiser_id,
+        status=validated_status,
+    )
+    typer.echo(response.model_dump_json(indent=2))
 
 
 @app.command("list-feedback-optimization-reviews")
@@ -875,10 +944,34 @@ def _feedback_review_decision_or_exit(
     raise typer.Exit(2)
 
 
+def _feedback_execution_dry_run_status_or_exit(
+    value: str | None,
+) -> FeedbackExecutionDryRunStatus | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if normalized in ALLOWED_FEEDBACK_EXECUTION_DRY_RUN_STATUSES:
+        return cast(FeedbackExecutionDryRunStatus, normalized)
+
+    allowed = ", ".join(sorted(ALLOWED_FEEDBACK_EXECUTION_DRY_RUN_STATUSES))
+    typer.echo(
+        f"Invalid feedback execution dry-run status: {value}. Expected one of: {allowed}",
+        err=True,
+    )
+    raise typer.Exit(2)
+
+
 def _ensure_feedback_review_persistence_enabled(settings) -> None:
     if settings.feedback_review_persistence_backend != "none":
         return
     typer.echo("Feedback optimization review persistence is disabled.", err=True)
+    raise typer.Exit(2)
+
+
+def _ensure_feedback_execution_persistence_enabled(settings) -> None:
+    if settings.feedback_execution_persistence_backend != "none":
+        return
+    typer.echo("Feedback execution dry-run persistence is disabled.", err=True)
     raise typer.Exit(2)
 
 

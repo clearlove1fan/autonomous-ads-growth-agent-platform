@@ -25,6 +25,7 @@ from ads_growth_agent.contracts import (
     CampaignDraftListResponse,
     CampaignFeedbackActionPlanResponse,
     CampaignFeedbackAnalysis,
+    CampaignFeedbackExecutionDryRunListResponse,
     CampaignFeedbackExecutionDryRunResponse,
     CampaignFeedbackExecutionPlanResponse,
     CampaignFeedbackOptimizationDraftResponse,
@@ -58,6 +59,9 @@ from ads_growth_agent.feedback_execution_plan import (
     FeedbackExecutionPlanNotApprovedError,
     build_feedback_execution_plan,
 )
+from ads_growth_agent.feedback_execution_store_factory import (
+    build_configured_feedback_execution_store,
+)
 from ads_growth_agent.feedback_review_store_factory import build_configured_feedback_review_store
 from ads_growth_agent.graph import strategy_id_for_brief
 from ads_growth_agent.health import ReadinessResponse, check_readiness
@@ -75,6 +79,10 @@ from ads_growth_agent.persistence.advertiser_memory_store import (
     AdvertiserMemoryWriteResult,
 )
 from ads_growth_agent.persistence.campaign_draft_store import CampaignDraftStore
+from ads_growth_agent.persistence.feedback_execution_store import (
+    FeedbackExecutionDryRunStatus,
+    FeedbackExecutionDryRunStore,
+)
 from ads_growth_agent.persistence.feedback_review_store import FeedbackOptimizationReviewStore
 from ads_growth_agent.persistence.idempotency_store import (
     IdempotencyConflictError,
@@ -237,6 +245,12 @@ def get_runtime_feedback_review_store(
     settings: Annotated[Settings, Depends(get_request_settings)],
 ) -> FeedbackOptimizationReviewStore:
     return build_configured_feedback_review_store(settings)
+
+
+def get_runtime_feedback_execution_store(
+    settings: Annotated[Settings, Depends(get_request_settings)],
+) -> FeedbackExecutionDryRunStore:
+    return build_configured_feedback_execution_store(settings)
 
 
 def get_runtime_advertiser_memory_store(
@@ -1136,6 +1150,10 @@ def dry_run_feedback_execution_plan_api(
         FeedbackOptimizationReviewStore,
         Depends(get_runtime_feedback_review_store),
     ],
+    feedback_execution_store: Annotated[
+        FeedbackExecutionDryRunStore,
+        Depends(get_runtime_feedback_execution_store),
+    ],
 ) -> CampaignFeedbackExecutionDryRunResponse:
     _require_feedback_review_persistence_enabled(settings)
     response.headers["X-Tenant-ID"] = settings.tenant_id
@@ -1171,11 +1189,80 @@ def dry_run_feedback_execution_plan_api(
         ) from exc
 
     dry_run = dry_run_feedback_execution_plan(execution_plan)
+    dry_run = feedback_execution_store.record_dry_run(execution_plan, dry_run)
     response.headers["Feedback-Review-ID"] = review.review_id
     response.headers["Feedback-Execution-Plan-ID"] = execution_plan.execution_plan_id
     response.headers["Feedback-Dry-Run-ID"] = dry_run.dry_run_id
+    response.headers["Feedback-Dry-Run-Status"] = (
+        "recorded"
+        if settings.feedback_execution_persistence_backend != "none"
+        else "not_recorded"
+    )
     response.headers["Optimization-Draft-ID"] = review.optimization_draft_id
     response.headers["Feedback-ID"] = review.feedback_id
+    return dry_run
+
+
+@app.get(
+    "/feedback-execution-dry-runs",
+    response_model=CampaignFeedbackExecutionDryRunListResponse,
+    dependencies=[Depends(require_api_auth)],
+)
+def list_feedback_execution_dry_runs(
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    feedback_execution_store: Annotated[
+        FeedbackExecutionDryRunStore,
+        Depends(get_runtime_feedback_execution_store),
+    ],
+    review_id: Annotated[str | None, Query(min_length=1, max_length=160)] = None,
+    execution_plan_id: Annotated[str | None, Query(min_length=1, max_length=160)] = None,
+    event_id: Annotated[str | None, Query(min_length=1, max_length=128)] = None,
+    advertiser_id: Annotated[str | None, Query(min_length=1, max_length=128)] = None,
+    status: Annotated[FeedbackExecutionDryRunStatus | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> CampaignFeedbackExecutionDryRunListResponse:
+    _require_feedback_execution_persistence_enabled(settings)
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    return feedback_execution_store.list_dry_runs(
+        review_id=review_id,
+        execution_plan_id=execution_plan_id,
+        event_id=event_id,
+        advertiser_id=advertiser_id,
+        status=status,
+        limit=limit,
+    )
+
+
+@app.get(
+    "/feedback-execution-dry-runs/{dry_run_id}",
+    response_model=CampaignFeedbackExecutionDryRunResponse,
+    dependencies=[Depends(require_api_auth)],
+)
+def get_feedback_execution_dry_run(
+    dry_run_id: str,
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    feedback_execution_store: Annotated[
+        FeedbackExecutionDryRunStore,
+        Depends(get_runtime_feedback_execution_store),
+    ],
+) -> CampaignFeedbackExecutionDryRunResponse:
+    _require_feedback_execution_persistence_enabled(settings)
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    dry_run = feedback_execution_store.get_dry_run(dry_run_id)
+    if dry_run is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": "Feedback execution dry run was not found for the effective tenant.",
+                "error_code": "FEEDBACK_EXECUTION_DRY_RUN_NOT_FOUND",
+                "dry_run_id": dry_run_id,
+            },
+        )
+    response.headers["Feedback-Dry-Run-ID"] = dry_run.dry_run_id
+    response.headers["Feedback-Review-ID"] = dry_run.review_id
+    response.headers["Feedback-Execution-Plan-ID"] = dry_run.execution_plan_id
     return dry_run
 
 
@@ -1198,6 +1285,18 @@ def _require_feedback_review_persistence_enabled(settings: Settings) -> None:
         detail={
             "message": "Feedback optimization review persistence is disabled.",
             "error_code": "FEEDBACK_REVIEW_PERSISTENCE_DISABLED",
+        },
+    )
+
+
+def _require_feedback_execution_persistence_enabled(settings: Settings) -> None:
+    if settings.feedback_execution_persistence_backend != "none":
+        return
+    raise HTTPException(
+        status_code=503,
+        detail={
+            "message": "Feedback execution dry-run persistence is disabled.",
+            "error_code": "FEEDBACK_EXECUTION_PERSISTENCE_DISABLED",
         },
     )
 

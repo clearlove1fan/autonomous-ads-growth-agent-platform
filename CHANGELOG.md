@@ -32,6 +32,8 @@
   optimization reviews.
 - Added dry-run feedback execution validation through draft-only typed tool
   registry APIs and CLI commands, preserving no live campaign mutation.
+- Added optional PostgreSQL persistence plus API/CLI read surfaces for feedback
+  execution dry-run validation audit records.
 
 ## v0.1.0 - 2026-05-18
 

@@ -22,7 +22,8 @@ v0.1 Phase 1 MVP is complete as of 2026-05-18. The current milestone is a determ
 12. Record and inspect human review decisions for optimization drafts.
 13. Generate a dry-run execution plan from approved review decisions.
 14. Validate the dry-run execution plan through draft-only typed tools without mutation.
-15. Retrieve learned advertiser memory in a later PostgreSQL-backed strategy run.
+15. Persist and inspect execution dry-run validation results when PostgreSQL execution persistence is enabled.
+16. Retrieve learned advertiser memory in a later PostgreSQL-backed strategy run.
 
 Phase 1 is intentionally a functional MVP, not a production launch claim. A single advertiser can run the core product loop locally through CLI or FastAPI without external model keys. The system still does not execute live ad spend, enforce real authentication, provide production SLO dashboards, or require GitHub branch protection in repository settings.
 
@@ -126,8 +127,8 @@ RUN_POSTGRES_INTEGRATION=1 \
 
 This creates a temporary database, applies migrations, seeds knowledge, then
 validates strategy draft -> performance feedback event -> optimization review ->
-dry-run execution plan -> execution dry-run validation -> outbox memory ->
-API/CLI reads -> later RAG retrieval of the learned memory.
+dry-run execution plan -> persisted execution dry-run validation -> outbox
+memory -> API/CLI reads -> later RAG retrieval of the learned memory.
 
 The demo executes the complete deterministic product loop:
 
@@ -162,7 +163,7 @@ This project is designed around the same engineering themes as an AI Agent-power
 | RAG | Strategy playbooks, historical cases, and advertiser memory are retrieved and cited in final outputs |
 | Multi-agent orchestration | Planner, retriever, tool executor, critic, revision, and finalizer nodes model role-based agent responsibilities |
 | Structured output | Pydantic contracts validate briefs, tool intents/results, critique reports, final strategies, feedback analyses, and eval reports |
-| Event-driven feedback | Campaign performance events produce health status, matched optimization rules, draft-only recommendations, action plans, optimization drafts, human review records, dry-run execution plans, and execution dry-run validation |
+| Event-driven feedback | Campaign performance events produce health status, matched optimization rules, draft-only recommendations, action plans, optimization drafts, human review records, dry-run execution plans, persisted dry-run validation, and later memory retrieval |
 | Self-reflection / critique loop | Critic report gates finalization; optional LLM critic can route through a bounded revision loop |
 | LLMOps / observability | LangSmith-compatible run metadata, structured JSON logs, local eval suite, and CI smoke coverage |
 | Ads growth domain | Output covers audience, creative, budget, bidding, measurement, campaign drafts, performance forecasts, and optimization rules |
@@ -559,19 +560,33 @@ notes, and guardrails. Approval is still not live execution; v0.1 remains
 draft-only until an explicit execution workflow is added.
 
 Approved execution plans can also be validated through the internal typed tool
-registry in dry-run mode:
+registry in dry-run mode. Set `FEEDBACK_EXECUTION_PERSISTENCE_BACKEND=postgres`
+to persist and inspect validation results:
 
 ```bash
 curl -X POST http://localhost:8000/feedback-optimization-reviews/feedback_review_example/execution-plan/dry-run \
   -H "X-Tenant-ID: tenant_demo"
 
-FEEDBACK_REVIEW_PERSISTENCE_BACKEND=postgres ads-growth-agent dry-run-feedback-execution-plan feedback_review_example
+FEEDBACK_REVIEW_PERSISTENCE_BACKEND=postgres FEEDBACK_EXECUTION_PERSISTENCE_BACKEND=postgres \
+  ads-growth-agent dry-run-feedback-execution-plan feedback_review_example
+
+curl http://localhost:8000/feedback-execution-dry-runs/feedback_dry_run_example \
+  -H "X-Tenant-ID: tenant_demo"
+
+curl "http://localhost:8000/feedback-execution-dry-runs?review_id=feedback_review_example&status=passed&limit=20" \
+  -H "X-Tenant-ID: tenant_demo"
+
+FEEDBACK_EXECUTION_PERSISTENCE_BACKEND=postgres ads-growth-agent get-feedback-execution-dry-run feedback_dry_run_example
+
+FEEDBACK_EXECUTION_PERSISTENCE_BACKEND=postgres ads-growth-agent list-feedback-execution-dry-runs --review-id feedback_review_example --status passed --limit 20
 ```
 
 The dry run executes only `draft_*` feedback tools, validates the tool intent
 parameters with Pydantic, and returns structured step results with
 `mutation_performed=false`. This proves the approved plan is executable without
-changing live campaign state.
+changing live campaign state. When persistence is enabled, the latest dry-run
+validation snapshot is stored by deterministic `dry_run_id` for audit and
+review.
 
 Campaign draft persistence is separately opt-in. Set `CAMPAIGN_DRAFT_PERSISTENCE_BACKEND=postgres` to store the `create_campaign_draft` tool output in `campaign_drafts`:
 

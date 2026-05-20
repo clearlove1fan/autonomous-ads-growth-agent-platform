@@ -8,6 +8,7 @@ from ads_growth_agent.persistence.schema import (
     agent_run_steps,
     agent_runs,
     campaign_performance_events,
+    feedback_execution_dry_runs,
     feedback_optimization_reviews,
     idempotency_keys,
     knowledge_chunks,
@@ -26,6 +27,7 @@ def test_core_schema_tables_are_defined() -> None:
         "campaign_drafts",
         "campaign_performance_events",
         "feedback_optimization_reviews",
+        "feedback_execution_dry_runs",
         "strategy_jobs",
         "outbox_events",
         "knowledge_documents",
@@ -141,6 +143,42 @@ def test_feedback_optimization_reviews_support_human_review_access_patterns() ->
     } == {"advertisers", "campaign_performance_events"}
     assert "approved" in check_constraints["feedback_optimization_review_decision"]
     assert "needs_revision" in check_constraints["feedback_optimization_review_decision"]
+
+
+def test_feedback_execution_dry_runs_support_validation_audit_access_patterns() -> None:
+    columns = feedback_execution_dry_runs.c
+    index_names = {index.name for index in feedback_execution_dry_runs.indexes}
+    check_constraints = {
+        constraint.name.removeprefix("ck_feedback_execution_dry_runs_"): str(
+            constraint.sqltext
+        )
+        for constraint in feedback_execution_dry_runs.constraints
+        if isinstance(constraint, sa.CheckConstraint) and constraint.name is not None
+    }
+
+    assert "dry_run_id" in columns
+    assert "execution_plan_id" in columns
+    assert "review_id" in columns
+    assert "event_id" in columns
+    assert "advertiser_id" in columns
+    assert "status" in columns
+    assert "execution_mode" in columns
+    assert "validated_step_count" in columns
+    assert "blocked_step_count" in columns
+    assert "execution_plan_snapshot" in columns
+    assert "dry_run_snapshot" in columns
+    assert "ix_feedback_execution_dry_runs_review_created" in index_names
+    assert "ix_feedback_execution_dry_runs_plan_created" in index_names
+    assert "ix_feedback_execution_dry_runs_event_created" in index_names
+    assert "ix_feedback_execution_dry_runs_advertiser_created" in index_names
+    assert "ix_feedback_execution_dry_runs_status_created" in index_names
+    assert "ix_feedback_execution_dry_runs_partition_date" in index_names
+    assert {
+        foreign_key.column.table.name
+        for foreign_key in feedback_execution_dry_runs.foreign_keys
+    } == {"advertisers", "campaign_performance_events", "feedback_optimization_reviews"}
+    assert "passed" in check_constraints["feedback_execution_dry_run_status"]
+    assert "dry_run" in check_constraints["feedback_execution_dry_run_mode"]
 
 
 def test_strategy_jobs_support_async_workflow_access_patterns() -> None:

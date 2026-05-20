@@ -19,6 +19,8 @@ PROTECTED_PATHS = {
     "/feedback-optimization-reviews/{review_id}",
     "/feedback-optimization-reviews/{review_id}/execution-plan",
     "/feedback-optimization-reviews/{review_id}/execution-plan/dry-run",
+    "/feedback-execution-dry-runs",
+    "/feedback-execution-dry-runs/{dry_run_id}",
     "/growth-strategies",
     "/growth-strategies/from-text",
     "/growth-strategies/jobs",

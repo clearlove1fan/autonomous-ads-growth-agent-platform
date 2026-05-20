@@ -35,6 +35,9 @@ from ads_growth_agent.campaign_draft_store_factory import (  # noqa: E402
     dispose_cached_campaign_draft_store_engines,
 )
 from ads_growth_agent.config import Settings  # noqa: E402
+from ads_growth_agent.feedback_execution_store_factory import (  # noqa: E402
+    dispose_cached_feedback_execution_store_engines,
+)
 from ads_growth_agent.feedback_review_store_factory import (  # noqa: E402
     dispose_cached_feedback_review_store_engines,
 )
@@ -288,6 +291,33 @@ def run_persisted_product_loop(
                 is False,
                 "execution dry run should not mutate live campaign state",
             )
+            execution_dry_run_detail = _api_json(
+                client.get(
+                    f"/feedback-execution-dry-runs/{execution_dry_run['dry_run_id']}",
+                    headers=_tenant_headers(tenant_id),
+                ),
+                label="get feedback execution dry run",
+            )
+            execution_dry_run_list = _api_json(
+                client.get(
+                    "/feedback-execution-dry-runs",
+                    params={
+                        "review_id": review_id,
+                        "status": "passed",
+                        "limit": "10",
+                    },
+                    headers=_tenant_headers(tenant_id),
+                ),
+                label="list feedback execution dry runs",
+            )
+            _expect(
+                execution_dry_run_detail["dry_run_id"] == execution_dry_run["dry_run_id"],
+                "execution dry-run detail should match submitted dry run",
+            )
+            _expect(
+                execution_dry_run_list["count"] == 1,
+                "execution dry-run list should contain one validation result",
+            )
 
             outbox_report = _invoke_cli(
                 settings,
@@ -339,6 +369,22 @@ def run_persisted_product_loop(
             cli_execution_dry_run = _invoke_cli(
                 settings,
                 ["dry-run-feedback-execution-plan", review_id],
+            )
+            cli_execution_dry_run_detail = _invoke_cli(
+                settings,
+                ["get-feedback-execution-dry-run", execution_dry_run["dry_run_id"]],
+            )
+            cli_execution_dry_run_list = _invoke_cli(
+                settings,
+                [
+                    "list-feedback-execution-dry-runs",
+                    "--review-id",
+                    review_id,
+                    "--status",
+                    "passed",
+                    "--limit",
+                    "10",
+                ],
             )
             cli_review_list = _invoke_cli(
                 settings,
@@ -418,6 +464,14 @@ def run_persisted_product_loop(
             _expect(
                 cli_execution_dry_run["dry_run_id"] == execution_dry_run["dry_run_id"],
                 "CLI dry run should match API dry run",
+            )
+            _expect(
+                cli_execution_dry_run_detail["dry_run_id"] == execution_dry_run["dry_run_id"],
+                "CLI dry-run detail should match API dry run",
+            )
+            _expect(
+                cli_execution_dry_run_list["count"] == 1,
+                "CLI dry-run list should find persisted dry run",
             )
             _expect(
                 cli_review_list["count"] == 1,
@@ -500,6 +554,8 @@ def run_persisted_product_loop(
                 "status": execution_dry_run["status"],
                 "validated_step_count": execution_dry_run["validated_step_count"],
                 "blocked_step_count": execution_dry_run["blocked_step_count"],
+                "detail_status": execution_dry_run_detail["status"],
+                "list_count": execution_dry_run_list["count"],
             },
             "outbox": outbox_report,
             "memory": {
@@ -516,6 +572,8 @@ def run_persisted_product_loop(
                 "review_count": cli_review_list["count"],
                 "execution_plan_id": cli_execution_plan["execution_plan_id"],
                 "execution_dry_run_id": cli_execution_dry_run["dry_run_id"],
+                "execution_dry_run_detail_id": cli_execution_dry_run_detail["dry_run_id"],
+                "execution_dry_run_count": cli_execution_dry_run_list["count"],
                 "memory_source_id": cli_memory["source_id"],
                 "event_count": cli_event_list["count"],
                 "memory_count": cli_memory_list["count"],
@@ -535,6 +593,7 @@ def run_persisted_product_loop(
         api_app.dependency_overrides.clear()
         dispose_cached_advertiser_memory_store_engines()
         dispose_cached_campaign_draft_store_engines()
+        dispose_cached_feedback_execution_store_engines()
         dispose_cached_feedback_review_store_engines()
         dispose_cached_knowledge_store_engines()
         dispose_cached_outbox_store_engines()
@@ -596,7 +655,8 @@ def render_summary(summary: dict[str, Any]) -> str:
                 f"{summary['execution_dry_run']['dry_run_id']} "
                 f"status={summary['execution_dry_run']['status']} "
                 f"validated={summary['execution_dry_run']['validated_step_count']} "
-                f"blocked={summary['execution_dry_run']['blocked_step_count']}"
+                f"blocked={summary['execution_dry_run']['blocked_step_count']} "
+                f"persisted={summary['execution_dry_run']['list_count']}"
             ),
             (
                 "Outbox: "
@@ -623,6 +683,7 @@ def render_summary(summary: dict[str, Any]) -> str:
                 f"reviews={summary['cli_reads']['review_count']} "
                 f"execution_plan={summary['cli_reads']['execution_plan_id']} "
                 f"dry_run={summary['cli_reads']['execution_dry_run_id']} "
+                f"dry_run_reads={summary['cli_reads']['execution_dry_run_count']} "
                 f"memories={summary['cli_reads']['memory_count']}"
             ),
         ]
@@ -690,6 +751,7 @@ def _walkthrough_settings(database_url: str, *, tenant_id: str) -> Settings:
         campaign_draft_persistence_backend="postgres",
         performance_event_persistence_backend="postgres",
         feedback_review_persistence_backend="postgres",
+        feedback_execution_persistence_backend="postgres",
         advertiser_memory_persistence_backend="postgres",
         outbox_backend="postgres",
         idempotency_backend="none",

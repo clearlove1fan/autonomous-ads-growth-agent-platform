@@ -7,6 +7,7 @@ from ads_growth_agent import api as api_module
 from ads_growth_agent.api import app as api_app
 from ads_growth_agent.api import (
     get_runtime_advertiser_memory_store,
+    get_runtime_feedback_execution_store,
     get_runtime_feedback_review_store,
     get_runtime_outbox_store,
     get_runtime_performance_event_store,
@@ -15,6 +16,8 @@ from ads_growth_agent.api import (
 from ads_growth_agent.cli import app as cli_app
 from ads_growth_agent.config import Settings
 from ads_growth_agent.contracts import (
+    CampaignFeedbackExecutionDryRunListResponse,
+    CampaignFeedbackExecutionDryRunResponse,
     CampaignFeedbackOptimizationReviewListResponse,
     CampaignFeedbackOptimizationReviewRequest,
     CampaignFeedbackOptimizationReviewResponse,
@@ -49,6 +52,14 @@ FeedbackReviewListRequest = tuple[
     str | None,
     str | None,
     FeedbackOptimizationReviewDecision | None,
+    int,
+]
+FeedbackExecutionDryRunListRequest = tuple[
+    str | None,
+    str | None,
+    str | None,
+    str | None,
+    str | None,
     int,
 ]
 
@@ -756,11 +767,84 @@ def test_dry_run_feedback_execution_plan_api_validates_draft_tools() -> None:
     payload = response.json()
     assert response.status_code == 200
     assert response.headers["feedback-dry-run-id"].startswith("feedback_dry_run_")
+    assert response.headers["feedback-dry-run-status"] == "not_recorded"
     assert payload["status"] == "passed"
     assert payload["validated_step_count"] == 1
     assert payload["blocked_step_count"] == 0
     assert payload["step_results"][0]["tool_result"]["success"] is True
     assert payload["step_results"][0]["tool_result"]["payload"]["mutation_performed"] is False
+
+
+def test_dry_run_feedback_execution_plan_api_records_validation_when_enabled() -> None:
+    event = api_module.CampaignPerformanceEventRequest.model_validate(
+        _event_payload_with_strategy_context()
+    )
+    detail = _event_detail(event)
+    optimization_draft = build_campaign_feedback_optimization_draft(detail)
+    review = build_campaign_feedback_optimization_review(
+        optimization_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.APPROVED,
+            reviewer_id="operator_001",
+            selected_change_ids=[optimization_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_dry_run_persisted_api_001",
+    )
+    review_store = CapturingFeedbackOptimizationReviewStore(reviews=[review])
+    execution_store = CapturingFeedbackExecutionDryRunStore()
+    api_app.dependency_overrides[get_runtime_settings] = lambda: Settings(
+        feedback_review_persistence_backend="postgres",
+        feedback_execution_persistence_backend="postgres",
+    )
+    api_app.dependency_overrides[get_runtime_feedback_review_store] = lambda: review_store
+    api_app.dependency_overrides[get_runtime_feedback_execution_store] = (
+        lambda: execution_store
+    )
+    try:
+        response = TestClient(api_app).post(
+            f"/feedback-optimization-reviews/{review.review_id}/execution-plan/dry-run",
+            headers={"X-Tenant-ID": "tenant_api"},
+        )
+        dry_run_id = response.json()["dry_run_id"]
+        detail_response = TestClient(api_app).get(
+            f"/feedback-execution-dry-runs/{dry_run_id}",
+            headers={"X-Tenant-ID": "tenant_api"},
+        )
+        list_response = TestClient(api_app).get(
+            "/feedback-execution-dry-runs",
+            params={"review_id": review.review_id, "status": "passed", "limit": "10"},
+            headers={"X-Tenant-ID": "tenant_api"},
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.headers["feedback-dry-run-status"] == "recorded"
+    assert execution_store.recorded_execution_plan_ids == [
+        response.json()["execution_plan_id"]
+    ]
+    assert detail_response.status_code == 200
+    assert detail_response.json()["dry_run_id"] == dry_run_id
+    assert detail_response.headers["feedback-review-id"] == review.review_id
+    assert list_response.status_code == 200
+    assert list_response.json()["count"] == 1
+    assert list_response.json()["items"][0]["dry_run_id"] == dry_run_id
+    assert execution_store.list_requests == [
+        (review.review_id, None, None, None, "passed", 10)
+    ]
+
+
+def test_get_feedback_execution_dry_run_api_requires_persistence() -> None:
+    api_app.dependency_overrides[get_runtime_settings] = lambda: Settings(
+        feedback_execution_persistence_backend="none"
+    )
+    try:
+        response = TestClient(api_app).get("/feedback-execution-dry-runs/dry_run_missing")
+    finally:
+        api_app.dependency_overrides.clear()
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["error_code"] == "FEEDBACK_EXECUTION_PERSISTENCE_DISABLED"
 
 
 def test_get_feedback_execution_plan_api_rejects_non_approved_review() -> None:
@@ -1193,6 +1277,106 @@ def test_dry_run_feedback_execution_plan_cli_validates_draft_tools(monkeypatch) 
     assert payload["step_results"][0]["tool_result"]["payload"]["dry_run"] is True
 
 
+def test_feedback_execution_dry_run_cli_records_and_reads_persisted_result(
+    monkeypatch,
+) -> None:
+    event = api_module.CampaignPerformanceEventRequest.model_validate(
+        _event_payload_with_strategy_context()
+    )
+    detail = _event_detail(event)
+    optimization_draft = build_campaign_feedback_optimization_draft(detail)
+    review = build_campaign_feedback_optimization_review(
+        optimization_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.APPROVED,
+            reviewer_id="operator_001",
+            selected_change_ids=[optimization_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_dry_run_persisted_cli_001",
+    )
+    review_store = CapturingFeedbackOptimizationReviewStore(reviews=[review])
+    execution_store = CapturingFeedbackExecutionDryRunStore()
+
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.get_settings",
+        lambda: Settings(
+            feedback_review_persistence_backend="postgres",
+            feedback_execution_persistence_backend="postgres",
+        ),
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_feedback_review_store",
+        lambda settings: review_store,
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_feedback_execution_store",
+        lambda settings: execution_store,
+    )
+
+    dry_run_result = CliRunner().invoke(
+        cli_app,
+        ["dry-run-feedback-execution-plan", review.review_id],
+    )
+    dry_run_id = json.loads(dry_run_result.stdout)["dry_run_id"]
+    get_result = CliRunner().invoke(
+        cli_app,
+        ["get-feedback-execution-dry-run", dry_run_id],
+    )
+    list_result = CliRunner().invoke(
+        cli_app,
+        [
+            "list-feedback-execution-dry-runs",
+            "--review-id",
+            review.review_id,
+            "--status",
+            "passed",
+            "--limit",
+            "10",
+        ],
+    )
+
+    assert dry_run_result.exit_code == 0
+    assert execution_store.recorded_execution_plan_ids == [
+        json.loads(dry_run_result.stdout)["execution_plan_id"]
+    ]
+    assert get_result.exit_code == 0
+    assert json.loads(get_result.stdout)["dry_run_id"] == dry_run_id
+    assert list_result.exit_code == 0
+    list_payload = json.loads(list_result.stdout)
+    assert list_payload["count"] == 1
+    assert list_payload["items"][0]["dry_run_id"] == dry_run_id
+
+
+def test_get_feedback_execution_dry_run_cli_requires_persistence(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.get_settings",
+        lambda: Settings(feedback_execution_persistence_backend="none"),
+    )
+
+    result = CliRunner().invoke(
+        cli_app,
+        ["get-feedback-execution-dry-run", "feedback_dry_run_missing"],
+    )
+
+    assert result.exit_code == 2
+    assert "Feedback execution dry-run persistence is disabled." in result.stderr
+
+
+def test_list_feedback_execution_dry_runs_cli_rejects_invalid_status(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.get_settings",
+        lambda: Settings(feedback_execution_persistence_backend="postgres"),
+    )
+
+    result = CliRunner().invoke(
+        cli_app,
+        ["list-feedback-execution-dry-runs", "--status", "unknown"],
+    )
+
+    assert result.exit_code == 2
+    assert "Invalid feedback execution dry-run status" in result.stderr
+
+
 def test_get_feedback_execution_plan_cli_rejects_non_approved_review(monkeypatch) -> None:
     event = api_module.CampaignPerformanceEventRequest.model_validate(
         _event_payload_with_strategy_context()
@@ -1427,6 +1611,71 @@ class CapturingFeedbackOptimizationReviewStore:
             advertiser_id=advertiser_id,
             optimization_draft_id=optimization_draft_id,
             decision=decision,
+        )
+
+
+class CapturingFeedbackExecutionDryRunStore:
+    def __init__(
+        self,
+        dry_runs: list[CampaignFeedbackExecutionDryRunResponse] | None = None,
+    ) -> None:
+        self.dry_runs = dry_runs or []
+        self.recorded_execution_plan_ids: list[str] = []
+        self.requested_dry_run_ids: list[str] = []
+        self.list_requests: list[FeedbackExecutionDryRunListRequest] = []
+
+    def record_dry_run(
+        self,
+        execution_plan,
+        dry_run: CampaignFeedbackExecutionDryRunResponse,
+    ) -> CampaignFeedbackExecutionDryRunResponse:
+        self.recorded_execution_plan_ids.append(execution_plan.execution_plan_id)
+        self.dry_runs = [
+            existing
+            for existing in self.dry_runs
+            if existing.dry_run_id != dry_run.dry_run_id
+        ]
+        self.dry_runs.append(dry_run)
+        return dry_run
+
+    def get_dry_run(self, dry_run_id: str) -> CampaignFeedbackExecutionDryRunResponse | None:
+        self.requested_dry_run_ids.append(dry_run_id)
+        for dry_run in self.dry_runs:
+            if dry_run.dry_run_id == dry_run_id:
+                return dry_run
+        return None
+
+    def list_dry_runs(
+        self,
+        *,
+        review_id: str | None = None,
+        execution_plan_id: str | None = None,
+        event_id: str | None = None,
+        advertiser_id: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> CampaignFeedbackExecutionDryRunListResponse:
+        self.list_requests.append(
+            (review_id, execution_plan_id, event_id, advertiser_id, status, limit)
+        )
+        items = [
+            dry_run
+            for dry_run in self.dry_runs
+            if (review_id is None or dry_run.review_id == review_id)
+            and (execution_plan_id is None or dry_run.execution_plan_id == execution_plan_id)
+            and (event_id is None or dry_run.event_id == event_id)
+            and (advertiser_id is None or dry_run.advertiser_id == advertiser_id)
+            and (status is None or dry_run.status == status)
+        ][:limit]
+        return CampaignFeedbackExecutionDryRunListResponse(
+            items=items,
+            count=len(items),
+            limit=limit,
+            review_id=review_id,
+            execution_plan_id=execution_plan_id,
+            event_id=event_id,
+            advertiser_id=advertiser_id,
+            status=status,
         )
 
 
