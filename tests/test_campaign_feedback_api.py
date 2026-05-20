@@ -29,6 +29,7 @@ from ads_growth_agent.feedback import (
     analyze_campaign_performance_event,
     build_campaign_feedback_optimization_draft,
     build_campaign_feedback_optimization_review,
+    build_campaign_feedback_revision_reviewable_draft,
 )
 from ads_growth_agent.persistence.advertiser_memory_store import (
     AdvertiserMemoryWriteResult,
@@ -824,6 +825,68 @@ def test_submit_feedback_optimization_revision_review_api_allows_execution_plan(
     assert plan_response.json()["optimization_draft_id"] == payload["optimization_draft_id"]
 
 
+def test_get_feedback_optimization_review_lineage_api_returns_revision_chain() -> None:
+    event = api_module.CampaignPerformanceEventRequest.model_validate(
+        _event_payload_with_strategy_context()
+    )
+    detail = _event_detail(event)
+    optimization_draft = build_campaign_feedback_optimization_draft(detail)
+    source_review = build_campaign_feedback_optimization_review(
+        optimization_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.NEEDS_REVISION,
+            reviewer_id="operator_001",
+            notes="Please reduce the budget movement before approval.",
+            selected_change_ids=[optimization_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_lineage_api_source",
+    )
+    revision_draft = build_campaign_feedback_revision_reviewable_draft(source_review)
+    revision_review = build_campaign_feedback_optimization_review(
+        revision_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.APPROVED,
+            reviewer_id="operator_002",
+            selected_change_ids=[revision_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_lineage_api_revision",
+    )
+    review_store = CapturingFeedbackOptimizationReviewStore(
+        reviews=[source_review, revision_review]
+    )
+    api_app.dependency_overrides[get_runtime_settings] = lambda: Settings(
+        feedback_review_persistence_backend="postgres"
+    )
+    api_app.dependency_overrides[get_runtime_feedback_review_store] = lambda: review_store
+    try:
+        client = TestClient(api_app)
+        source_response = client.get(
+            f"/feedback-optimization-reviews/{source_review.review_id}/lineage",
+            headers={"X-Tenant-ID": "tenant_api"},
+        )
+        revision_response = client.get(
+            f"/feedback-optimization-reviews/{revision_review.review_id}/lineage",
+            headers={"X-Tenant-ID": "tenant_api"},
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    source_payload = source_response.json()
+    revision_payload = revision_response.json()
+    assert source_response.status_code == 200
+    assert source_response.headers["feedback-lineage-stage"] == "revision_requested"
+    assert source_payload["source_review_id"] == source_review.review_id
+    assert source_payload["revision_draft"]["revision_draft_id"] == (
+        revision_draft.optimization_draft_id
+    )
+    assert source_payload["revision_reviews"][0]["review_id"] == revision_review.review_id
+    assert source_payload["execution_ready_review_ids"] == [revision_review.review_id]
+    assert revision_response.status_code == 200
+    assert revision_payload["lineage_stage"] == "revision_review"
+    assert revision_payload["source_review_id"] == source_review.review_id
+    assert revision_payload["target_review"]["review_id"] == revision_review.review_id
+
+
 def test_submit_feedback_optimization_revision_review_api_rejects_non_revision_source() -> None:
     event = api_module.CampaignPerformanceEventRequest.model_validate(
         _event_payload_with_strategy_context()
@@ -1489,6 +1552,60 @@ def test_submit_feedback_optimization_revision_review_cli_returns_review(
         "revision_source_review_id"
     ] == source_review.review_id
     assert review_store.recorded_draft_ids == [payload["optimization_draft_id"]]
+
+
+def test_get_feedback_optimization_review_lineage_cli_returns_revision_chain(
+    monkeypatch,
+) -> None:
+    event = api_module.CampaignPerformanceEventRequest.model_validate(
+        _event_payload_with_strategy_context()
+    )
+    detail = _event_detail(event)
+    optimization_draft = build_campaign_feedback_optimization_draft(detail)
+    source_review = build_campaign_feedback_optimization_review(
+        optimization_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.NEEDS_REVISION,
+            reviewer_id="operator_001",
+            selected_change_ids=[optimization_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_lineage_cli_source",
+    )
+    revision_draft = build_campaign_feedback_revision_reviewable_draft(source_review)
+    revision_review = build_campaign_feedback_optimization_review(
+        revision_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.APPROVED,
+            reviewer_id="operator_002",
+            selected_change_ids=[revision_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_lineage_cli_revision",
+    )
+    review_store = CapturingFeedbackOptimizationReviewStore(
+        reviews=[source_review, revision_review]
+    )
+
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.get_settings",
+        lambda: Settings(feedback_review_persistence_backend="postgres"),
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_feedback_review_store",
+        lambda settings: review_store,
+    )
+
+    result = CliRunner().invoke(
+        cli_app,
+        ["get-feedback-optimization-review-lineage", revision_review.review_id],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["requested_review_id"] == revision_review.review_id
+    assert payload["lineage_stage"] == "revision_review"
+    assert payload["source_review_id"] == source_review.review_id
+    assert payload["revision_reviews"][0]["review_id"] == revision_review.review_id
+    assert payload["execution_ready_review_ids"] == [revision_review.review_id]
 
 
 def test_submit_feedback_optimization_revision_review_cli_rejects_approved_source(

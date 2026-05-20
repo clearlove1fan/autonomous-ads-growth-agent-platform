@@ -1,0 +1,124 @@
+from typing import Protocol
+
+from ads_growth_agent.contracts import (
+    CampaignFeedbackOptimizationReviewLineageResponse,
+    CampaignFeedbackOptimizationReviewListResponse,
+    CampaignFeedbackOptimizationReviewResponse,
+    FeedbackOptimizationReviewDecision,
+)
+from ads_growth_agent.feedback import build_campaign_feedback_optimization_revision_draft
+
+
+class FeedbackReviewLineageStore(Protocol):
+    def get_review(
+        self,
+        review_id: str,
+    ) -> CampaignFeedbackOptimizationReviewResponse | None:
+        """Return one persisted optimization review for the configured tenant."""
+
+    def list_reviews(
+        self,
+        *,
+        event_id: str | None = None,
+        advertiser_id: str | None = None,
+        optimization_draft_id: str | None = None,
+        decision: FeedbackOptimizationReviewDecision | None = None,
+        limit: int = 50,
+    ) -> CampaignFeedbackOptimizationReviewListResponse:
+        """Return recent optimization reviews for the configured tenant."""
+
+
+def build_feedback_optimization_review_lineage(
+    target_review: CampaignFeedbackOptimizationReviewResponse,
+    store: FeedbackReviewLineageStore,
+) -> CampaignFeedbackOptimizationReviewLineageResponse:
+    """Build an audit lineage around a feedback optimization review."""
+
+    revision_source_review_id = _revision_source_review_id(target_review)
+    source_review = target_review
+    if revision_source_review_id is not None:
+        source_review = store.get_review(revision_source_review_id)
+        if source_review is None:
+            raise ValueError(
+                "revision source review was not found for the effective tenant: "
+                f"review_id={revision_source_review_id}"
+            )
+
+    revision_draft = None
+    revision_reviews: list[CampaignFeedbackOptimizationReviewResponse] = []
+    if source_review.decision == FeedbackOptimizationReviewDecision.NEEDS_REVISION:
+        revision_draft = build_campaign_feedback_optimization_revision_draft(source_review)
+        revision_reviews = store.list_reviews(
+            optimization_draft_id=revision_draft.revision_draft_id,
+            limit=100,
+        ).items
+
+    reviewed_records = [source_review, *revision_reviews]
+    approved_review_ids = [
+        review.review_id
+        for review in reviewed_records
+        if review.decision == FeedbackOptimizationReviewDecision.APPROVED
+    ]
+
+    return CampaignFeedbackOptimizationReviewLineageResponse(
+        requested_review_id=target_review.review_id,
+        lineage_stage=_lineage_stage(target_review, revision_source_review_id),
+        source_review_id=source_review.review_id,
+        target_review=target_review,
+        source_review=source_review,
+        revision_draft=revision_draft,
+        revision_reviews=revision_reviews,
+        approved_review_ids=approved_review_ids,
+        execution_ready_review_ids=approved_review_ids,
+        summary=_lineage_summary(
+            source_review=source_review,
+            target_review=target_review,
+            revision_review_count=len(revision_reviews),
+            execution_ready_count=len(approved_review_ids),
+        ),
+        guardrails=[
+            "Lineage is derived from persisted review snapshots for audit and debugging.",
+            (
+                "Execution readiness means an approved review can generate a dry-run "
+                "plan; it is not live execution."
+            ),
+        ],
+    )
+
+
+def _revision_source_review_id(
+    review: CampaignFeedbackOptimizationReviewResponse,
+) -> str | None:
+    for change in review.optimization_draft.changes:
+        value = change.params.get("revision_source_review_id")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _lineage_stage(
+    review: CampaignFeedbackOptimizationReviewResponse,
+    revision_source_review_id: str | None,
+):
+    if revision_source_review_id is not None:
+        return "revision_review"
+    if review.decision == FeedbackOptimizationReviewDecision.NEEDS_REVISION:
+        return "revision_requested"
+    if review.decision == FeedbackOptimizationReviewDecision.APPROVED:
+        return "approved"
+    return "rejected"
+
+
+def _lineage_summary(
+    *,
+    source_review: CampaignFeedbackOptimizationReviewResponse,
+    target_review: CampaignFeedbackOptimizationReviewResponse,
+    revision_review_count: int,
+    execution_ready_count: int,
+) -> str:
+    return (
+        f"Lineage for review {target_review.review_id}. Source review "
+        f"{source_review.review_id} has decision {source_review.decision.value}, "
+        f"{revision_review_count} revision review(s), and {execution_ready_count} "
+        "execution-ready approved review(s)."
+    )

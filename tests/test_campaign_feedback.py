@@ -29,6 +29,7 @@ from ads_growth_agent.feedback_execution_plan import (
     FeedbackExecutionPlanNotApprovedError,
     build_feedback_execution_plan,
 )
+from ads_growth_agent.feedback_lineage import build_feedback_optimization_review_lineage
 
 
 def _approved_feedback_execution_plan(
@@ -130,6 +131,46 @@ def _feedback_optimization_review(
         ),
         review_id=review_id,
     )
+
+
+class _ReviewLineageStore:
+    def __init__(
+        self,
+        reviews: list[CampaignFeedbackOptimizationReviewResponse],
+    ) -> None:
+        self._reviews = reviews
+
+    def get_review(self, review_id: str) -> CampaignFeedbackOptimizationReviewResponse | None:
+        for review in self._reviews:
+            if review.review_id == review_id:
+                return review
+        return None
+
+    def list_reviews(
+        self,
+        *,
+        event_id: str | None = None,
+        advertiser_id: str | None = None,
+        optimization_draft_id: str | None = None,
+        decision: FeedbackOptimizationReviewDecision | None = None,
+        limit: int = 50,
+    ):
+        del event_id, advertiser_id
+        items = [
+            review
+            for review in self._reviews
+            if (
+                optimization_draft_id is None
+                or review.optimization_draft_id == optimization_draft_id
+            )
+            and (decision is None or review.decision == decision)
+        ][:limit]
+
+        class _ListResult:
+            def __init__(self, items: list[CampaignFeedbackOptimizationReviewResponse]) -> None:
+                self.items = items
+
+        return _ListResult(items)
 
 
 def test_feedback_analysis_flags_underperforming_cpa() -> None:
@@ -570,6 +611,64 @@ def test_feedback_revision_reviewable_draft_can_be_approved_for_execution_plan()
     assert execution_plan.review_id == approved_revision_review.review_id
     assert execution_plan.optimization_draft_id == reviewable_draft.optimization_draft_id
     assert execution_plan.steps[0].change_id == reviewable_draft.changes[0].change_id
+
+
+def test_feedback_review_lineage_links_source_revision_and_execution_ready_review() -> None:
+    source_review = _feedback_optimization_review(
+        decision=FeedbackOptimizationReviewDecision.NEEDS_REVISION,
+        review_id="feedback_review_lineage_source",
+        notes="Revise budget movement before approval.",
+    )
+    reviewable_draft = build_campaign_feedback_revision_reviewable_draft(source_review)
+    approved_revision_review = build_campaign_feedback_optimization_review(
+        reviewable_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.APPROVED,
+            reviewer_id="operator_002",
+            selected_change_ids=[reviewable_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_lineage_revision_approved",
+    )
+    store = _ReviewLineageStore([source_review, approved_revision_review])
+
+    lineage = build_feedback_optimization_review_lineage(source_review, store)
+
+    assert lineage.requested_review_id == source_review.review_id
+    assert lineage.lineage_stage == "revision_requested"
+    assert lineage.source_review_id == source_review.review_id
+    assert lineage.revision_draft is not None
+    assert lineage.revision_draft.revision_draft_id == reviewable_draft.optimization_draft_id
+    assert [review.review_id for review in lineage.revision_reviews] == [
+        approved_revision_review.review_id
+    ]
+    assert lineage.execution_ready_review_ids == [approved_revision_review.review_id]
+
+
+def test_feedback_review_lineage_resolves_source_from_revision_review() -> None:
+    source_review = _feedback_optimization_review(
+        decision=FeedbackOptimizationReviewDecision.NEEDS_REVISION,
+        review_id="feedback_review_lineage_source_from_revision",
+    )
+    reviewable_draft = build_campaign_feedback_revision_reviewable_draft(source_review)
+    approved_revision_review = build_campaign_feedback_optimization_review(
+        reviewable_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.APPROVED,
+            reviewer_id="operator_002",
+            selected_change_ids=[reviewable_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_lineage_revision_target",
+    )
+    store = _ReviewLineageStore([source_review, approved_revision_review])
+
+    lineage = build_feedback_optimization_review_lineage(approved_revision_review, store)
+
+    assert lineage.requested_review_id == approved_revision_review.review_id
+    assert lineage.lineage_stage == "revision_review"
+    assert lineage.source_review_id == source_review.review_id
+    assert lineage.target_review.review_id == approved_revision_review.review_id
+    assert lineage.source_review.review_id == source_review.review_id
+    assert lineage.approved_review_ids == [approved_revision_review.review_id]
 
 
 def test_feedback_execution_plan_maps_approved_review_to_dry_run_tool_intents() -> None:

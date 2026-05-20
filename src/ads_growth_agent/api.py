@@ -29,6 +29,7 @@ from ads_growth_agent.contracts import (
     CampaignFeedbackExecutionDryRunResponse,
     CampaignFeedbackExecutionPlanResponse,
     CampaignFeedbackOptimizationDraftResponse,
+    CampaignFeedbackOptimizationReviewLineageResponse,
     CampaignFeedbackOptimizationReviewListResponse,
     CampaignFeedbackOptimizationReviewRequest,
     CampaignFeedbackOptimizationReviewResponse,
@@ -66,6 +67,7 @@ from ads_growth_agent.feedback_execution_plan import (
 from ads_growth_agent.feedback_execution_store_factory import (
     build_configured_feedback_execution_store,
 )
+from ads_growth_agent.feedback_lineage import build_feedback_optimization_review_lineage
 from ads_growth_agent.feedback_review_store_factory import build_configured_feedback_review_store
 from ads_growth_agent.graph import strategy_id_for_brief
 from ads_growth_agent.health import ReadinessResponse, check_readiness
@@ -1085,6 +1087,51 @@ def get_feedback_optimization_review(
     response.headers["Optimization-Draft-ID"] = review.optimization_draft_id
     response.headers["Feedback-ID"] = review.feedback_id
     return review
+
+
+@app.get(
+    "/feedback-optimization-reviews/{review_id}/lineage",
+    response_model=CampaignFeedbackOptimizationReviewLineageResponse,
+    dependencies=[Depends(require_api_auth)],
+)
+def get_feedback_optimization_review_lineage(
+    review_id: str,
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    review_store: Annotated[
+        FeedbackOptimizationReviewStore,
+        Depends(get_runtime_feedback_review_store),
+    ],
+) -> CampaignFeedbackOptimizationReviewLineageResponse:
+    _require_feedback_review_persistence_enabled(settings)
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    review = review_store.get_review(review_id)
+    if review is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": "Feedback optimization review was not found for the effective tenant.",
+                "error_code": "FEEDBACK_OPTIMIZATION_REVIEW_NOT_FOUND",
+                "review_id": review_id,
+            },
+        )
+
+    try:
+        lineage = build_feedback_optimization_review_lineage(review, review_store)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": str(exc),
+                "error_code": "FEEDBACK_OPTIMIZATION_REVIEW_LINEAGE_INVALID",
+            },
+        ) from exc
+
+    response.headers["Feedback-Review-ID"] = review.review_id
+    response.headers["Feedback-Lineage-Source-Review-ID"] = lineage.source_review_id
+    response.headers["Feedback-Lineage-Stage"] = lineage.lineage_stage
+    response.headers["Feedback-ID"] = review.feedback_id
+    return lineage
 
 
 @app.get(

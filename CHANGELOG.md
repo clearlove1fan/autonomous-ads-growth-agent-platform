@@ -32,6 +32,8 @@
   review records before another approval pass.
 - Added feedback revision review API and CLI commands so revised drafts can be
   approved and continue into the existing dry-run execution plan path.
+- Added feedback review lineage API and CLI commands for source review,
+  revision draft, revision review, and execution-readiness audit.
 - Added dry-run feedback execution plans through API and CLI for approved
   optimization reviews.
 - Added dry-run feedback execution validation through draft-only typed tool

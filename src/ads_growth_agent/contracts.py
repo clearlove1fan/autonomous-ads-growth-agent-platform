@@ -887,6 +887,29 @@ class CampaignFeedbackOptimizationReviewListResponse(BaseModel):
     decision: FeedbackOptimizationReviewDecision | None = None
 
 
+class CampaignFeedbackOptimizationReviewLineageResponse(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    requested_review_id: str = Field(min_length=1, max_length=160)
+    lineage_stage: Literal[
+        "approved",
+        "rejected",
+        "revision_requested",
+        "revision_review",
+    ]
+    source_review_id: str = Field(min_length=1, max_length=160)
+    target_review: CampaignFeedbackOptimizationReviewResponse
+    source_review: CampaignFeedbackOptimizationReviewResponse
+    revision_draft: CampaignFeedbackOptimizationRevisionDraftResponse | None = None
+    revision_reviews: list[CampaignFeedbackOptimizationReviewResponse] = Field(
+        default_factory=list
+    )
+    approved_review_ids: list[str] = Field(default_factory=list)
+    execution_ready_review_ids: list[str] = Field(default_factory=list)
+    summary: str = Field(min_length=1, max_length=1_000)
+    guardrails: list[str] = Field(default_factory=list)
+
+
 class FeedbackExecutionPlanStep(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 

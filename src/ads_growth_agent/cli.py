@@ -49,6 +49,7 @@ from ads_growth_agent.feedback_execution_plan import (
 from ads_growth_agent.feedback_execution_store_factory import (
     build_configured_feedback_execution_store,
 )
+from ads_growth_agent.feedback_lineage import build_feedback_optimization_review_lineage
 from ads_growth_agent.feedback_review_store_factory import build_configured_feedback_review_store
 from ads_growth_agent.logging_config import configure_logging
 from ads_growth_agent.outbox import process_configured_outbox
@@ -382,6 +383,27 @@ def get_feedback_optimization_review(review_id: str = FEEDBACK_REVIEW_ID_ARGUMEN
         typer.echo(f"Feedback optimization review not found: {review_id}", err=True)
         raise typer.Exit(1)
     typer.echo(review.model_dump_json(indent=2))
+
+
+@app.command("get-feedback-optimization-review-lineage")
+def get_feedback_optimization_review_lineage(
+    review_id: str = FEEDBACK_REVIEW_ID_ARGUMENT,
+) -> None:
+    """Fetch audit lineage for one feedback optimization review."""
+    try:
+        settings = get_settings()
+        _ensure_feedback_review_persistence_enabled(settings)
+        store = build_configured_feedback_review_store(settings)
+        review = store.get_review(review_id)
+        if review is None:
+            typer.echo(f"Feedback optimization review not found: {review_id}", err=True)
+            raise typer.Exit(1)
+        lineage = build_feedback_optimization_review_lineage(review, store)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from exc
+
+    typer.echo(lineage.model_dump_json(indent=2))
 
 
 @app.command("get-feedback-optimization-revision-draft")

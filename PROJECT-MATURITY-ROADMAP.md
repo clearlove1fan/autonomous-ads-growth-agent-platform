@@ -11,7 +11,7 @@ This roadmap defines the order in which the Autonomous Ads Growth Agent Platform
 | Production architecture skeleton | 68-72% | 75-80% | In progress |
 | True production-ready system | 15-20% | 60%+ for this repo | Early |
 
-These numbers are intentionally conservative. The project now has a credible agent-runtime and production-skeleton foundation, including persistence, tenant scoping, retry/resume, checkpointing, async strategy jobs, event feedback, feedback action plans, feedback optimization drafts, persisted feedback review decisions, revision drafts and second-pass reviews for `needs_revision` reviews, persisted dry-run execution validation, performance event discovery, advertiser memory write/read surfaces, dependency locking, explicit CI quality gates, a deterministic one-command MVP demo, local agent evals, curated positive/negative demo verifiers, a persisted product loop verifier, and an optional local API key boundary. Phase 1 is complete for the v0.1 MVP, while branch protection remains a GitHub repository setting tracked in Phase 1.5 and is currently blocked for the private repo by GitHub plan limits. The project should still not claim production-grade availability, full security, or distributed-system readiness yet.
+These numbers are intentionally conservative. The project now has a credible agent-runtime and production-skeleton foundation, including persistence, tenant scoping, retry/resume, checkpointing, async strategy jobs, event feedback, feedback action plans, feedback optimization drafts, persisted feedback review decisions, revision drafts and second-pass reviews for `needs_revision` reviews, review lineage, persisted dry-run execution validation, performance event discovery, advertiser memory write/read surfaces, dependency locking, explicit CI quality gates, a deterministic one-command MVP demo, local agent evals, curated positive/negative demo verifiers, a persisted product loop verifier, and an optional local API key boundary. Phase 1 is complete for the v0.1 MVP, while branch protection remains a GitHub repository setting tracked in Phase 1.5 and is currently blocked for the private repo by GitHub plan limits. The project should still not claim production-grade availability, full security, or distributed-system readiness yet.
 
 ## Phase 1: Interview-Quality Technical Project
 
@@ -59,6 +59,8 @@ Completed:
   decisions on draft-only changes.
 - Feedback revision draft API and CLI for `needs_revision` review decisions.
 - Feedback revision review API and CLI so revised drafts can re-enter approval.
+- Feedback review lineage API and CLI for audit across original and revision
+  reviews.
 - Dry-run feedback execution plan API and CLI for approved review decisions,
   plus typed registry validation of approved dry-run steps.
 - Feedback execution dry-run persistence and read APIs/CLI for validation audit.
@@ -174,6 +176,7 @@ Planned work:
 - Feedback revision draft APIs/CLI for `needs_revision` review decisions.
 - Feedback revision review APIs/CLI for second-pass approval before execution
   planning.
+- Feedback review lineage APIs/CLI for audit and debugging.
 - Feedback execution plan APIs/CLI for approved feedback optimization reviews,
   including draft-only typed registry validation.
 - Feedback execution dry-run persistence and tenant-scoped read APIs/CLI.
@@ -200,15 +203,17 @@ Exit criteria:
   proposals for another approval pass.
 - Revised proposals can be approved through the same persisted review store and
   continue into execution planning.
+- Review lineage can be inspected from either the source review or a later
+  revision review.
 - Approved feedback optimization reviews can produce dry-run tool intent plans
   and validate those plans through draft-only tools without live campaign
   mutation.
 - Persisted feedback execution dry-run results can be retrieved and listed for
   validation audit.
 - A live PostgreSQL walkthrough proves strategy draft -> feedback event ->
-  optimization review -> revision draft -> revision review -> dry-run execution
-  plan -> persisted execution dry-run validation -> outbox memory -> API/CLI
-  reads -> later RAG retrieval.
+  optimization review -> revision draft -> revision review -> review lineage ->
+  dry-run execution plan -> persisted execution dry-run validation -> outbox
+  memory -> API/CLI reads -> later RAG retrieval.
 - Failed runs can be retried and failed/running runs can be resumed with clear semantics.
 - Strategy generation can be submitted as a pollable job with persisted status.
 - Alembic migrations create the local database from scratch.
