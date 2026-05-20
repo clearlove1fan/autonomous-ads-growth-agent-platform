@@ -501,6 +501,11 @@ def run_persisted_product_loop(
                 "revision draft should link to the needs-revision review",
             )
             _expect(
+                len(revision_draft["changes"])
+                == len(cli_submitted_review["selected_change_ids"]),
+                "revision draft should carry every selected change from the review",
+            )
+            _expect(
                 cli_revision_draft["revision_draft_id"]
                 == revision_draft["revision_draft_id"],
                 "CLI revision draft should match API revision draft",
@@ -567,6 +572,9 @@ def run_persisted_product_loop(
                 "selected_change_count": len(review["selected_change_ids"]),
                 "cli_submitted_decision": cli_submitted_review["decision"],
                 "cli_submitted_review_id": cli_submitted_review["review_id"],
+                "cli_submitted_selected_change_count": len(
+                    cli_submitted_review["selected_change_ids"]
+                ),
             },
             "revision_draft": {
                 "revision_draft_id": revision_draft["revision_draft_id"],

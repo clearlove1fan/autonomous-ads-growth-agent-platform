@@ -42,7 +42,9 @@ def test_persisted_product_loop_walkthrough() -> None:
     assert summary["revision_draft"]["source_review_id"] == summary["review"][
         "cli_submitted_review_id"
     ]
-    assert summary["revision_draft"]["change_count"] == 1
+    assert summary["revision_draft"]["change_count"] == summary["review"][
+        "cli_submitted_selected_change_count"
+    ]
     assert summary["execution_plan"]["execution_mode"] == "dry_run"
     assert summary["execution_plan"]["first_tool_name"] == "draft_budget_reallocation"
     assert summary["execution_dry_run"]["status"] == "passed"
