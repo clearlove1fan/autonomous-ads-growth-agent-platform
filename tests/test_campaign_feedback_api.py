@@ -695,6 +695,79 @@ def test_get_feedback_optimization_review_api_returns_404_when_missing() -> None
     assert response.json()["detail"]["error_code"] == "FEEDBACK_OPTIMIZATION_REVIEW_NOT_FOUND"
 
 
+def test_get_feedback_optimization_revision_draft_api_returns_revised_draft() -> None:
+    event = api_module.CampaignPerformanceEventRequest.model_validate(
+        _event_payload_with_strategy_context()
+    )
+    detail = _event_detail(event)
+    optimization_draft = build_campaign_feedback_optimization_draft(detail)
+    review = build_campaign_feedback_optimization_review(
+        optimization_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.NEEDS_REVISION,
+            reviewer_id="operator_001",
+            notes="Reduce the budget shift and explain the creative tradeoff.",
+            selected_change_ids=[optimization_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_revision_api_001",
+    )
+    review_store = CapturingFeedbackOptimizationReviewStore(reviews=[review])
+    api_app.dependency_overrides[get_runtime_settings] = lambda: Settings(
+        feedback_review_persistence_backend="postgres"
+    )
+    api_app.dependency_overrides[get_runtime_feedback_review_store] = lambda: review_store
+    try:
+        response = TestClient(api_app).get(
+            f"/feedback-optimization-reviews/{review.review_id}/revision-draft",
+            headers={"X-Tenant-ID": "tenant_api"},
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert response.headers["feedback-review-id"] == review.review_id
+    assert response.headers["feedback-revision-draft-id"].startswith(
+        "feedback_revision_draft_"
+    )
+    assert payload["source_review_id"] == review.review_id
+    assert payload["status"] == "draft"
+    assert payload["reviewer_notes"] == review.notes
+    assert payload["changes"][0]["params"]["revision_source_review_id"] == review.review_id
+    assert "Reduce the budget shift" in payload["changes"][0]["description"]
+
+
+def test_get_feedback_optimization_revision_draft_api_rejects_approved_review() -> None:
+    event = api_module.CampaignPerformanceEventRequest.model_validate(
+        _event_payload_with_strategy_context()
+    )
+    detail = _event_detail(event)
+    optimization_draft = build_campaign_feedback_optimization_draft(detail)
+    review = build_campaign_feedback_optimization_review(
+        optimization_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.APPROVED,
+            reviewer_id="operator_001",
+            selected_change_ids=[optimization_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_revision_api_blocked",
+    )
+    review_store = CapturingFeedbackOptimizationReviewStore(reviews=[review])
+    api_app.dependency_overrides[get_runtime_settings] = lambda: Settings(
+        feedback_review_persistence_backend="postgres"
+    )
+    api_app.dependency_overrides[get_runtime_feedback_review_store] = lambda: review_store
+    try:
+        response = TestClient(api_app).get(
+            f"/feedback-optimization-reviews/{review.review_id}/revision-draft"
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["error_code"] == "FEEDBACK_REVISION_DRAFT_NOT_REQUESTED"
+
+
 def test_get_feedback_execution_plan_api_returns_dry_run_plan() -> None:
     event = api_module.CampaignPerformanceEventRequest.model_validate(
         _event_payload_with_strategy_context()
@@ -1196,6 +1269,85 @@ def test_get_and_list_feedback_optimization_review_cli_returns_reviews(monkeypat
     list_payload = json.loads(list_result.stdout)
     assert list_payload["count"] == 1
     assert list_payload["items"][0]["decision"] == "needs_revision"
+
+
+def test_get_feedback_optimization_revision_draft_cli_returns_revised_draft(
+    monkeypatch,
+) -> None:
+    event = api_module.CampaignPerformanceEventRequest.model_validate(
+        _event_payload_with_strategy_context()
+    )
+    detail = _event_detail(event)
+    optimization_draft = build_campaign_feedback_optimization_draft(detail)
+    review = build_campaign_feedback_optimization_review(
+        optimization_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.NEEDS_REVISION,
+            reviewer_id="operator_001",
+            notes="Make the budget change more conservative.",
+            selected_change_ids=[optimization_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_revision_cli_001",
+    )
+    review_store = CapturingFeedbackOptimizationReviewStore(reviews=[review])
+
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.get_settings",
+        lambda: Settings(feedback_review_persistence_backend="postgres"),
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_feedback_review_store",
+        lambda settings: review_store,
+    )
+
+    result = CliRunner().invoke(
+        cli_app,
+        ["get-feedback-optimization-revision-draft", review.review_id],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["source_review_id"] == review.review_id
+    assert payload["status"] == "draft"
+    assert payload["changes"][0]["params"]["revision_source_review_id"] == review.review_id
+    assert "Make the budget change" in payload["changes"][0]["description"]
+
+
+def test_get_feedback_optimization_revision_draft_cli_rejects_approved_review(
+    monkeypatch,
+) -> None:
+    event = api_module.CampaignPerformanceEventRequest.model_validate(
+        _event_payload_with_strategy_context()
+    )
+    detail = _event_detail(event)
+    optimization_draft = build_campaign_feedback_optimization_draft(detail)
+    review = build_campaign_feedback_optimization_review(
+        optimization_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.APPROVED,
+            reviewer_id="operator_001",
+            selected_change_ids=[optimization_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_revision_cli_blocked",
+    )
+    review_store = CapturingFeedbackOptimizationReviewStore(reviews=[review])
+
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.get_settings",
+        lambda: Settings(feedback_review_persistence_backend="postgres"),
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_feedback_review_store",
+        lambda settings: review_store,
+    )
+
+    result = CliRunner().invoke(
+        cli_app,
+        ["get-feedback-optimization-revision-draft", review.review_id],
+    )
+
+    assert result.exit_code == 1
+    assert "must request revision" in result.stderr
 
 
 def test_get_feedback_execution_plan_cli_returns_dry_run_plan(monkeypatch) -> None:

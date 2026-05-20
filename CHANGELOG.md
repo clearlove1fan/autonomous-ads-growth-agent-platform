@@ -28,6 +28,8 @@
   persisted campaign performance events.
 - Added feedback optimization review persistence, API, and CLI commands so a
   reviewer can approve, reject, or request revision for draft-only changes.
+- Added feedback revision draft API and CLI commands for `needs_revision`
+  review records before another approval pass.
 - Added dry-run feedback execution plans through API and CLI for approved
   optimization reviews.
 - Added dry-run feedback execution validation through draft-only typed tool

@@ -411,6 +411,21 @@ def run_persisted_product_loop(
                     "Request a revision before approving every draft change.",
                 ],
             )
+            revision_draft = _api_json(
+                client.get(
+                    "/feedback-optimization-reviews/"
+                    f"{cli_submitted_review['review_id']}/revision-draft",
+                    headers=_tenant_headers(tenant_id),
+                ),
+                label="get feedback optimization revision draft",
+            )
+            cli_revision_draft = _invoke_cli(
+                settings,
+                [
+                    "get-feedback-optimization-revision-draft",
+                    cli_submitted_review["review_id"],
+                ],
+            )
             cli_event_list = _invoke_cli(
                 settings,
                 [
@@ -481,6 +496,15 @@ def run_persisted_product_loop(
                 cli_submitted_review["decision"] == "needs_revision",
                 "CLI review submit should persist a revision request",
             )
+            _expect(
+                revision_draft["source_review_id"] == cli_submitted_review["review_id"],
+                "revision draft should link to the needs-revision review",
+            )
+            _expect(
+                cli_revision_draft["revision_draft_id"]
+                == revision_draft["revision_draft_id"],
+                "CLI revision draft should match API revision draft",
+            )
             _expect(cli_event_list["count"] == 1, "CLI event list should find feedback event")
             _expect(
                 cli_memory["source_id"] == memory_source_id,
@@ -542,6 +566,13 @@ def run_persisted_product_loop(
                 "decision": review["decision"],
                 "selected_change_count": len(review["selected_change_ids"]),
                 "cli_submitted_decision": cli_submitted_review["decision"],
+                "cli_submitted_review_id": cli_submitted_review["review_id"],
+            },
+            "revision_draft": {
+                "revision_draft_id": revision_draft["revision_draft_id"],
+                "source_review_id": revision_draft["source_review_id"],
+                "change_count": len(revision_draft["changes"]),
+                "cli_revision_draft_id": cli_revision_draft["revision_draft_id"],
             },
             "execution_plan": {
                 "execution_plan_id": execution_plan["execution_plan_id"],
@@ -570,6 +601,7 @@ def run_persisted_product_loop(
                 "first_change_type": cli_optimization_draft["changes"][0]["change_type"],
                 "review_id": cli_review["review_id"],
                 "review_count": cli_review_list["count"],
+                "revision_draft_id": cli_revision_draft["revision_draft_id"],
                 "execution_plan_id": cli_execution_plan["execution_plan_id"],
                 "execution_dry_run_id": cli_execution_dry_run["dry_run_id"],
                 "execution_dry_run_detail_id": cli_execution_dry_run_detail["dry_run_id"],
@@ -644,6 +676,12 @@ def render_summary(summary: dict[str, Any]) -> str:
                 f"cli_submit={summary['review']['cli_submitted_decision']}"
             ),
             (
+                "Revision draft: "
+                f"{summary['revision_draft']['revision_draft_id']} "
+                f"source_review={summary['revision_draft']['source_review_id']} "
+                f"changes={summary['revision_draft']['change_count']}"
+            ),
+            (
                 "Execution plan: "
                 f"{summary['execution_plan']['execution_plan_id']} "
                 f"mode={summary['execution_plan']['execution_mode']} "
@@ -681,6 +719,7 @@ def render_summary(summary: dict[str, Any]) -> str:
                 f"first_action={summary['cli_reads']['first_action_type']} "
                 f"first_change={summary['cli_reads']['first_change_type']} "
                 f"reviews={summary['cli_reads']['review_count']} "
+                f"revision_draft={summary['cli_reads']['revision_draft_id']} "
                 f"execution_plan={summary['cli_reads']['execution_plan_id']} "
                 f"dry_run={summary['cli_reads']['execution_dry_run_id']} "
                 f"dry_run_reads={summary['cli_reads']['execution_dry_run_count']} "

@@ -34,9 +34,11 @@ from ads_growth_agent.contracts import (
 )
 from ads_growth_agent.evaluation import load_eval_cases, run_local_eval_suite
 from ads_growth_agent.feedback import (
+    FeedbackRevisionDraftNotRequestedError,
     analyze_campaign_performance_event,
     build_campaign_feedback_action_plan,
     build_campaign_feedback_optimization_draft,
+    build_campaign_feedback_optimization_revision_draft,
 )
 from ads_growth_agent.feedback_execution_dry_run import dry_run_feedback_execution_plan
 from ads_growth_agent.feedback_execution_plan import (
@@ -379,6 +381,30 @@ def get_feedback_optimization_review(review_id: str = FEEDBACK_REVIEW_ID_ARGUMEN
         typer.echo(f"Feedback optimization review not found: {review_id}", err=True)
         raise typer.Exit(1)
     typer.echo(review.model_dump_json(indent=2))
+
+
+@app.command("get-feedback-optimization-revision-draft")
+def get_feedback_optimization_revision_draft(
+    review_id: str = FEEDBACK_REVIEW_ID_ARGUMENT,
+) -> None:
+    """Fetch a revised optimization draft for one needs-revision review."""
+    try:
+        settings = get_settings()
+        _ensure_feedback_review_persistence_enabled(settings)
+        store = build_configured_feedback_review_store(settings)
+        review = store.get_review(review_id)
+        if review is None:
+            typer.echo(f"Feedback optimization review not found: {review_id}", err=True)
+            raise typer.Exit(1)
+        revision_draft = build_campaign_feedback_optimization_revision_draft(review)
+    except FeedbackRevisionDraftNotRequestedError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from exc
+
+    typer.echo(revision_draft.model_dump_json(indent=2))
 
 
 @app.command("get-feedback-execution-plan")

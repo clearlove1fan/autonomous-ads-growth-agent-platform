@@ -4,6 +4,7 @@ from ads_growth_agent.contracts import (
     AgentRole,
     CampaignFeedbackExecutionPlanResponse,
     CampaignFeedbackOptimizationReviewRequest,
+    CampaignFeedbackOptimizationReviewResponse,
     CampaignObjective,
     CampaignPerformanceEventDetailResponse,
     CampaignPerformanceEventRequest,
@@ -15,10 +16,12 @@ from ads_growth_agent.contracts import (
     PerformanceMetrics,
 )
 from ads_growth_agent.feedback import (
+    FeedbackRevisionDraftNotRequestedError,
     analyze_campaign_performance_event,
     build_campaign_feedback_action_plan,
     build_campaign_feedback_optimization_draft,
     build_campaign_feedback_optimization_review,
+    build_campaign_feedback_optimization_revision_draft,
 )
 from ads_growth_agent.feedback_execution_dry_run import dry_run_feedback_execution_plan
 from ads_growth_agent.feedback_execution_plan import (
@@ -74,6 +77,58 @@ def _approved_feedback_execution_plan(
         review_id=review_id,
     )
     return build_feedback_execution_plan(review)
+
+
+def _feedback_optimization_review(
+    *,
+    decision: FeedbackOptimizationReviewDecision,
+    review_id: str,
+    notes: str | None = None,
+) -> CampaignFeedbackOptimizationReviewResponse:
+    event = CampaignPerformanceEventRequest(
+        event_id=f"evt_{review_id}",
+        advertiser_id="adv_fitness_001",
+        run_id="run_001",
+        campaign_id="cmp_fittrack",
+        draft_id="draft_fittrack",
+        objective=CampaignObjective.REGISTRATIONS,
+        occurred_at="2026-05-12T12:00:00Z",
+        metrics=PerformanceMetrics(
+            impressions=10_000,
+            clicks=500,
+            spend="1000.00",
+            conversions=20,
+        ),
+        target_cpa="20.00",
+    )
+    analysis = analyze_campaign_performance_event(event)
+    detail = CampaignPerformanceEventDetailResponse(
+        event_id=event.event_id,
+        advertiser_id=event.advertiser_id,
+        run_id=event.run_id,
+        campaign_id=event.campaign_id,
+        draft_id=event.draft_id,
+        objective=event.objective,
+        event_type=event.event_type,
+        occurred_at=event.occurred_at,
+        metrics=event.metrics,
+        status="analyzed",
+        metadata={},
+        analysis=analysis,
+        created_at=analysis.created_at,
+        updated_at=analysis.created_at,
+    )
+    optimization_draft = build_campaign_feedback_optimization_draft(detail)
+    return build_campaign_feedback_optimization_review(
+        optimization_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=decision,
+            reviewer_id="operator_001",
+            notes=notes,
+            selected_change_ids=[optimization_draft.changes[0].change_id],
+        ),
+        review_id=review_id,
+    )
 
 
 def test_feedback_analysis_flags_underperforming_cpa() -> None:
@@ -446,6 +501,42 @@ def test_feedback_optimization_review_rejects_unknown_selected_change_id() -> No
                 selected_change_ids=["missing_change"],
             ),
         )
+
+
+def test_feedback_revision_draft_uses_reviewer_notes_for_selected_changes() -> None:
+    review = _feedback_optimization_review(
+        decision=FeedbackOptimizationReviewDecision.NEEDS_REVISION,
+        review_id="feedback_review_revision_001",
+        notes="Reduce budget movement and explain why creative is not changed.",
+    )
+
+    revision_draft = build_campaign_feedback_optimization_revision_draft(review)
+
+    assert revision_draft.revision_draft_id.startswith("feedback_revision_draft_")
+    assert revision_draft.source_review_id == review.review_id
+    assert revision_draft.original_optimization_draft_id == review.optimization_draft_id
+    assert revision_draft.status == "draft"
+    assert revision_draft.requires_human_approval is True
+    assert revision_draft.reviewer_notes == review.notes
+    assert len(revision_draft.changes) == 1
+    revised_change = revision_draft.changes[0]
+    assert revised_change.change_id.startswith("feedback_revision_change_")
+    assert revised_change.status == "draft_change"
+    assert revised_change.requires_human_approval is True
+    assert revised_change.params["revision_source_review_id"] == review.review_id
+    assert revised_change.params["original_change_id"] == review.selected_change_ids[0]
+    assert "Reduce budget movement" in revised_change.description
+    assert revision_draft.guardrails[-1].startswith("Revision draft generation")
+
+
+def test_feedback_revision_draft_requires_needs_revision_review() -> None:
+    review = _feedback_optimization_review(
+        decision=FeedbackOptimizationReviewDecision.APPROVED,
+        review_id="feedback_review_revision_blocked",
+    )
+
+    with pytest.raises(FeedbackRevisionDraftNotRequestedError):
+        build_campaign_feedback_optimization_revision_draft(review)
 
 
 def test_feedback_execution_plan_maps_approved_review_to_dry_run_tool_intents() -> None:

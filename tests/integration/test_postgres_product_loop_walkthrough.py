@@ -39,6 +39,10 @@ def test_persisted_product_loop_walkthrough() -> None:
     assert summary["review"]["decision"] == "approved"
     assert summary["review"]["selected_change_count"] == 1
     assert summary["review"]["cli_submitted_decision"] == "needs_revision"
+    assert summary["revision_draft"]["source_review_id"] == summary["review"][
+        "cli_submitted_review_id"
+    ]
+    assert summary["revision_draft"]["change_count"] == 1
     assert summary["execution_plan"]["execution_mode"] == "dry_run"
     assert summary["execution_plan"]["first_tool_name"] == "draft_budget_reallocation"
     assert summary["execution_dry_run"]["status"] == "passed"
@@ -51,6 +55,9 @@ def test_persisted_product_loop_walkthrough() -> None:
     assert summary["cli_reads"]["first_action_type"] == "adjust_budget"
     assert summary["cli_reads"]["first_change_type"] == "budget"
     assert summary["cli_reads"]["review_count"] == 1
+    assert summary["cli_reads"]["revision_draft_id"] == summary["revision_draft"][
+        "revision_draft_id"
+    ]
     assert summary["cli_reads"]["execution_plan_id"] == summary["execution_plan"][
         "execution_plan_id"
     ]

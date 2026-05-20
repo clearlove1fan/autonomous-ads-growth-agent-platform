@@ -9,12 +9,14 @@ from ads_growth_agent.contracts import (
     CampaignFeedbackOptimizationDraftResponse,
     CampaignFeedbackOptimizationReviewRequest,
     CampaignFeedbackOptimizationReviewResponse,
+    CampaignFeedbackOptimizationRevisionDraftResponse,
     CampaignPerformanceEventDetailResponse,
     CampaignPerformanceEventRequest,
     FeedbackActionPlanStep,
     FeedbackActionType,
     FeedbackHealthStatus,
     FeedbackOptimizationDraftChange,
+    FeedbackOptimizationReviewDecision,
     FeedbackRecommendation,
     RiskLevel,
     StrategyRuleMatch,
@@ -23,6 +25,20 @@ from ads_growth_agent.contracts import (
 CENTS = Decimal("0.01")
 LOW_CTR_THRESHOLD = Decimal("0.0100")
 HIGH_CPA_MULTIPLIER = Decimal("1.25")
+
+
+class FeedbackRevisionDraftNotRequestedError(Exception):
+    def __init__(
+        self,
+        review_id: str,
+        decision: FeedbackOptimizationReviewDecision,
+    ) -> None:
+        super().__init__(
+            "Feedback optimization review must request revision before building a revision "
+            f"draft: review_id={review_id} decision={decision.value}"
+        )
+        self.review_id = review_id
+        self.decision = decision
 
 
 def analyze_campaign_performance_event(
@@ -159,6 +175,49 @@ def build_campaign_feedback_optimization_review(
     )
 
 
+def build_campaign_feedback_optimization_revision_draft(
+    review: CampaignFeedbackOptimizationReviewResponse,
+) -> CampaignFeedbackOptimizationRevisionDraftResponse:
+    """Build a revised optimization draft from a needs-revision review."""
+
+    if review.decision != FeedbackOptimizationReviewDecision.NEEDS_REVISION:
+        raise FeedbackRevisionDraftNotRequestedError(review.review_id, review.decision)
+
+    selected_change_ids = set(review.selected_change_ids)
+    revised_changes = [
+        _revision_change(review, change)
+        for change in review.optimization_draft.changes
+        if change.change_id in selected_change_ids
+    ]
+    if not revised_changes:
+        raise ValueError("needs-revision review does not include any selected changes")
+
+    return CampaignFeedbackOptimizationRevisionDraftResponse(
+        revision_draft_id=_revision_draft_id(review.review_id),
+        source_review_id=review.review_id,
+        original_optimization_draft_id=review.optimization_draft_id,
+        event_id=review.event_id,
+        feedback_id=review.feedback_id,
+        advertiser_id=review.advertiser_id,
+        run_id=review.run_id,
+        campaign_id=review.campaign_id,
+        base_draft_id=review.base_draft_id,
+        strategy_id=review.strategy_id,
+        status="draft",
+        reviewer_id=review.reviewer_id,
+        reviewer_notes=review.notes,
+        summary=_revision_draft_summary(review, revised_changes),
+        changes=revised_changes,
+        requires_human_approval=True,
+        guardrails=[
+            *review.optimization_draft.guardrails,
+            "Revision draft is review-only and must be approved before execution planning.",
+            "Revision draft generation does not mutate live campaign state.",
+        ],
+        created_at=datetime.now(UTC),
+    )
+
+
 def _metrics_summary(event: CampaignPerformanceEventRequest) -> dict[str, str | int | None]:
     metrics = event.metrics
     ctr = _ratio(metrics.clicks, metrics.impressions)
@@ -269,6 +328,55 @@ def _selected_optimization_change_ids(
         raise ValueError(f"selected_change_ids include unknown change IDs: {unknown}")
 
     return requested_change_ids
+
+
+def _revision_change(
+    review: CampaignFeedbackOptimizationReviewResponse,
+    change: FeedbackOptimizationDraftChange,
+) -> FeedbackOptimizationDraftChange:
+    revision_note = review.notes or "Reviewer requested revision before approval."
+    return FeedbackOptimizationDraftChange(
+        change_id=_revision_change_id(review.review_id, change.change_id),
+        source_step_id=change.source_step_id,
+        change_type=change.change_type,
+        title=_bounded_text(f"Revised {change.title}", max_length=160),
+        description=_bounded_text(
+            f"{change.description} Reviewer revision request: {revision_note}",
+            max_length=1_000,
+        ),
+        owner_role=change.owner_role,
+        risk_level=change.risk_level,
+        status="draft_change",
+        requires_human_approval=True,
+        params={
+            **change.params,
+            "revision_source_review_id": review.review_id,
+            "original_change_id": change.change_id,
+            "reviewer_id": review.reviewer_id,
+            "reviewer_notes": review.notes,
+            "revision_status": "needs_review",
+        },
+    )
+
+
+def _revision_draft_summary(
+    review: CampaignFeedbackOptimizationReviewResponse,
+    changes: list[FeedbackOptimizationDraftChange],
+) -> str:
+    note = f" Reviewer notes: {review.notes}" if review.notes else ""
+    return _bounded_text(
+        (
+            f"Revision draft for review {review.review_id}. Prepared {len(changes)} "
+            f"revised draft change(s) for another approval pass.{note}"
+        ),
+        max_length=1_000,
+    )
+
+
+def _bounded_text(value: str, *, max_length: int) -> str:
+    if len(value) <= max_length:
+        return value
+    return value[: max_length - 3].rstrip() + "..."
 
 
 def _change_type_for_action(action_type: FeedbackActionType):
@@ -438,6 +546,15 @@ def _optimization_draft_summary(
 
 def _optimization_draft_id(event_id: str) -> str:
     return f"optimization_draft_{uuid5(NAMESPACE_URL, event_id).hex[:16]}"
+
+
+def _revision_draft_id(review_id: str) -> str:
+    return f"feedback_revision_draft_{uuid5(NAMESPACE_URL, review_id).hex[:16]}"
+
+
+def _revision_change_id(review_id: str, change_id: str) -> str:
+    source = f"{review_id}:{change_id}"
+    return f"feedback_revision_change_{uuid5(NAMESPACE_URL, source).hex[:16]}"
 
 
 def _health_status(

@@ -852,6 +852,29 @@ class CampaignFeedbackOptimizationReviewResponse(BaseModel):
     created_at: datetime
 
 
+class CampaignFeedbackOptimizationRevisionDraftResponse(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    revision_draft_id: str = Field(min_length=1, max_length=160)
+    source_review_id: str = Field(min_length=1, max_length=160)
+    original_optimization_draft_id: str = Field(min_length=1, max_length=160)
+    event_id: str = Field(min_length=1, max_length=128)
+    feedback_id: str = Field(min_length=1, max_length=160)
+    advertiser_id: str = Field(min_length=1, max_length=128)
+    run_id: str | None = Field(default=None, min_length=1, max_length=128)
+    campaign_id: str | None = Field(default=None, min_length=1, max_length=128)
+    base_draft_id: str | None = Field(default=None, min_length=1, max_length=160)
+    strategy_id: str | None = Field(default=None, min_length=1, max_length=128)
+    status: Literal["draft"]
+    reviewer_id: str = Field(min_length=1, max_length=128)
+    reviewer_notes: str | None = Field(default=None, max_length=1_000)
+    summary: str = Field(min_length=1, max_length=1_000)
+    changes: list[FeedbackOptimizationDraftChange] = Field(min_length=1)
+    requires_human_approval: bool
+    guardrails: list[str] = Field(default_factory=list)
+    created_at: datetime
+
+
 class CampaignFeedbackOptimizationReviewListResponse(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
