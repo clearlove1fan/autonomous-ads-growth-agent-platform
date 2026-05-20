@@ -471,6 +471,50 @@ def run_persisted_product_loop(
                     cli_revision_review["review_id"],
                 ],
             )
+            review_lineage_list = _api_json(
+                client.get(
+                    "/feedback-optimization-review-lineages",
+                    params={
+                        "event_id": event_id,
+                        "decision": "approved",
+                        "lineage_stage": "revision_review",
+                        "limit": "10",
+                    },
+                    headers=_tenant_headers(tenant_id),
+                ),
+                label="list feedback optimization review lineages",
+            )
+            cli_review_lineage_list = _invoke_cli(
+                settings,
+                [
+                    "list-feedback-optimization-review-lineages",
+                    "--event-id",
+                    event_id,
+                    "--decision",
+                    "approved",
+                    "--lineage-stage",
+                    "revision_review",
+                    "--limit",
+                    "10",
+                ],
+            )
+            feedback_loop_summary = _api_json(
+                client.get(
+                    f"/campaign-events/performance/{event_id}/feedback-loop-summary",
+                    params={"limit": "10"},
+                    headers=_tenant_headers(tenant_id),
+                ),
+                label="get feedback loop summary",
+            )
+            cli_feedback_loop_summary = _invoke_cli(
+                settings,
+                [
+                    "get-feedback-loop-summary",
+                    event_id,
+                    "--limit",
+                    "10",
+                ],
+            )
             cli_event_list = _invoke_cli(
                 settings,
                 [
@@ -611,6 +655,58 @@ def run_persisted_product_loop(
                 cli_review_lineage["execution_summaries"][0]["dry_run_count"] == 1,
                 "CLI lineage should include dry-run audit for revision review",
             )
+            _expect(
+                review_lineage_list["count"] == 1,
+                "lineage list should include exactly one approved revision review",
+            )
+            _expect(
+                review_lineage_list["items"][0]["requested_review_id"]
+                == cli_revision_review["review_id"],
+                "lineage list should return the approved revision review lineage",
+            )
+            _expect(
+                review_lineage_list["items"][0]["execution_summaries"][0]["dry_runs"][0][
+                    "dry_run_id"
+                ]
+                == revision_execution_dry_run["dry_run_id"],
+                "lineage list should include persisted revision dry-run audit",
+            )
+            _expect(
+                cli_review_lineage_list["count"] == 1,
+                "CLI lineage list should include exactly one approved revision review",
+            )
+            _expect(
+                cli_review_lineage_list["items"][0]["requested_review_id"]
+                == cli_revision_review["review_id"],
+                "CLI lineage list should return the approved revision review lineage",
+            )
+            _expect(
+                feedback_loop_summary["current_stage"] == "dry_run_passed",
+                "feedback loop summary should report the latest loop as dry-run passed",
+            )
+            _expect(
+                feedback_loop_summary["review_count"] == 3,
+                "feedback loop summary should include original, revision request, "
+                "and revision approval reviews",
+            )
+            _expect(
+                feedback_loop_summary["lineage_count"] == 3,
+                "feedback loop summary should include lineage for each review on the event",
+            )
+            _expect(
+                feedback_loop_summary["dry_run_count"] == 2,
+                "feedback loop summary should include original and revision dry-run audits",
+            )
+            _expect(
+                cli_feedback_loop_summary["current_stage"]
+                == feedback_loop_summary["current_stage"],
+                "CLI feedback loop summary should match API current stage",
+            )
+            _expect(
+                cli_feedback_loop_summary["dry_run_count"]
+                == feedback_loop_summary["dry_run_count"],
+                "CLI feedback loop summary should match API dry-run count",
+            )
             _expect(cli_event_list["count"] == 1, "CLI event list should find feedback event")
             _expect(
                 cli_memory["source_id"] == memory_source_id,
@@ -708,6 +804,24 @@ def run_persisted_product_loop(
                 ],
                 "cli_lineage_stage": cli_review_lineage["lineage_stage"],
                 "cli_target_review_id": cli_review_lineage["target_review"]["review_id"],
+                "list_count": review_lineage_list["count"],
+                "list_requested_review_id": review_lineage_list["items"][0][
+                    "requested_review_id"
+                ],
+                "list_dry_run_id": review_lineage_list["items"][0]["execution_summaries"][0][
+                    "dry_runs"
+                ][0]["dry_run_id"],
+                "cli_list_count": cli_review_lineage_list["count"],
+            },
+            "feedback_loop_summary": {
+                "current_stage": feedback_loop_summary["current_stage"],
+                "review_count": feedback_loop_summary["review_count"],
+                "lineage_count": feedback_loop_summary["lineage_count"],
+                "dry_run_count": feedback_loop_summary["dry_run_count"],
+                "latest_review_id": feedback_loop_summary["latest_review_id"],
+                "latest_dry_run_status": feedback_loop_summary["latest_dry_run_status"],
+                "cli_current_stage": cli_feedback_loop_summary["current_stage"],
+                "cli_dry_run_count": cli_feedback_loop_summary["dry_run_count"],
             },
             "execution_plan": {
                 "execution_plan_id": execution_plan["execution_plan_id"],
@@ -739,6 +853,8 @@ def run_persisted_product_loop(
                 "revision_draft_id": cli_revision_draft["revision_draft_id"],
                 "revision_review_id": cli_revision_review["review_id"],
                 "review_lineage_stage": cli_review_lineage["lineage_stage"],
+                "review_lineage_count": cli_review_lineage_list["count"],
+                "feedback_loop_stage": cli_feedback_loop_summary["current_stage"],
                 "execution_plan_id": cli_execution_plan["execution_plan_id"],
                 "execution_dry_run_id": cli_execution_dry_run["dry_run_id"],
                 "execution_dry_run_detail_id": cli_execution_dry_run_detail["dry_run_id"],
@@ -834,7 +950,16 @@ def render_summary(summary: dict[str, Any]) -> str:
                 "execution_ready="
                 f"{', '.join(summary['review_lineage']['execution_ready_review_ids'])} "
                 f"dry_runs={summary['review_lineage']['dry_run_count']} "
-                f"latest={summary['review_lineage']['latest_dry_run_status']}"
+                f"latest={summary['review_lineage']['latest_dry_run_status']} "
+                f"list={summary['review_lineage']['list_count']}"
+            ),
+            (
+                "Feedback loop summary: "
+                f"stage={summary['feedback_loop_summary']['current_stage']} "
+                f"reviews={summary['feedback_loop_summary']['review_count']} "
+                f"lineages={summary['feedback_loop_summary']['lineage_count']} "
+                f"dry_runs={summary['feedback_loop_summary']['dry_run_count']} "
+                f"cli_stage={summary['feedback_loop_summary']['cli_current_stage']}"
             ),
             (
                 "Execution plan: "
@@ -877,6 +1002,8 @@ def render_summary(summary: dict[str, Any]) -> str:
                 f"revision_draft={summary['cli_reads']['revision_draft_id']} "
                 f"revision_review={summary['cli_reads']['revision_review_id']} "
                 f"lineage={summary['cli_reads']['review_lineage_stage']} "
+                f"lineage_reads={summary['cli_reads']['review_lineage_count']} "
+                f"loop={summary['cli_reads']['feedback_loop_stage']} "
                 f"execution_plan={summary['cli_reads']['execution_plan_id']} "
                 f"dry_run={summary['cli_reads']['execution_dry_run_id']} "
                 f"dry_run_reads={summary['cli_reads']['execution_dry_run_count']} "

@@ -5,6 +5,7 @@ from ads_growth_agent.contracts import (
     CampaignFeedbackExecutionDryRunListResponse,
     CampaignFeedbackExecutionDryRunResponse,
     CampaignFeedbackExecutionPlanResponse,
+    CampaignFeedbackOptimizationReviewListResponse,
     CampaignFeedbackOptimizationReviewRequest,
     CampaignFeedbackOptimizationReviewResponse,
     CampaignObjective,
@@ -31,7 +32,11 @@ from ads_growth_agent.feedback_execution_plan import (
     FeedbackExecutionPlanNotApprovedError,
     build_feedback_execution_plan,
 )
-from ads_growth_agent.feedback_lineage import build_feedback_optimization_review_lineage
+from ads_growth_agent.feedback_lineage import (
+    build_feedback_optimization_review_lineage,
+    list_feedback_optimization_review_lineages,
+)
+from ads_growth_agent.feedback_loop_summary import build_campaign_feedback_loop_summary
 
 
 def _approved_feedback_execution_plan(
@@ -157,22 +162,26 @@ class _ReviewLineageStore:
         decision: FeedbackOptimizationReviewDecision | None = None,
         limit: int = 50,
     ):
-        del event_id, advertiser_id
         items = [
             review
             for review in self._reviews
-            if (
+            if (event_id is None or review.event_id == event_id)
+            and (advertiser_id is None or review.advertiser_id == advertiser_id)
+            and (
                 optimization_draft_id is None
                 or review.optimization_draft_id == optimization_draft_id
             )
             and (decision is None or review.decision == decision)
         ][:limit]
-
-        class _ListResult:
-            def __init__(self, items: list[CampaignFeedbackOptimizationReviewResponse]) -> None:
-                self.items = items
-
-        return _ListResult(items)
+        return CampaignFeedbackOptimizationReviewListResponse(
+            items=items,
+            count=len(items),
+            limit=limit,
+            event_id=event_id,
+            advertiser_id=advertiser_id,
+            optimization_draft_id=optimization_draft_id,
+            decision=decision,
+        )
 
 
 class _ExecutionLineageStore:
@@ -721,6 +730,128 @@ def test_feedback_review_lineage_resolves_source_from_revision_review() -> None:
     assert lineage.target_review.review_id == approved_revision_review.review_id
     assert lineage.source_review.review_id == source_review.review_id
     assert lineage.approved_review_ids == [approved_revision_review.review_id]
+
+
+def test_feedback_review_lineage_list_filters_revision_reviews_with_execution_audit() -> None:
+    source_review = _feedback_optimization_review(
+        decision=FeedbackOptimizationReviewDecision.NEEDS_REVISION,
+        review_id="feedback_review_lineage_list_source",
+    )
+    reviewable_draft = build_campaign_feedback_revision_reviewable_draft(source_review)
+    approved_revision_review = build_campaign_feedback_optimization_review(
+        reviewable_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.APPROVED,
+            reviewer_id="operator_002",
+            selected_change_ids=[reviewable_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_lineage_list_revision",
+    )
+    store = _ReviewLineageStore([source_review, approved_revision_review])
+    execution_plan = build_feedback_execution_plan(approved_revision_review)
+    dry_run = dry_run_feedback_execution_plan(execution_plan)
+    execution_store = _ExecutionLineageStore([dry_run])
+
+    lineages = list_feedback_optimization_review_lineages(
+        store,
+        execution_store,
+        decision=FeedbackOptimizationReviewDecision.APPROVED,
+        lineage_stage="revision_review",
+        limit=10,
+    )
+
+    assert lineages.count == 1
+    assert lineages.limit == 10
+    assert lineages.decision == FeedbackOptimizationReviewDecision.APPROVED
+    assert lineages.lineage_stage == "revision_review"
+    lineage = lineages.items[0]
+    assert lineage.requested_review_id == approved_revision_review.review_id
+    assert lineage.source_review_id == source_review.review_id
+    assert lineage.execution_summaries[0].dry_run_count == 1
+    assert lineage.execution_summaries[0].dry_runs[0].dry_run_id == dry_run.dry_run_id
+
+
+def test_feedback_loop_summary_reports_current_operator_stage() -> None:
+    event = CampaignPerformanceEventRequest(
+        event_id="evt_feedback_loop_summary",
+        advertiser_id="adv_fitness_001",
+        run_id="run_001",
+        campaign_id="cmp_fittrack",
+        draft_id="draft_fittrack",
+        objective=CampaignObjective.REGISTRATIONS,
+        occurred_at="2026-05-12T12:00:00Z",
+        metrics=PerformanceMetrics(
+            impressions=10_000,
+            clicks=500,
+            spend="1000.00",
+            conversions=20,
+        ),
+        target_cpa="20.00",
+    )
+    analysis = analyze_campaign_performance_event(event)
+    detail = CampaignPerformanceEventDetailResponse(
+        event_id=event.event_id,
+        advertiser_id=event.advertiser_id,
+        run_id=event.run_id,
+        campaign_id=event.campaign_id,
+        draft_id=event.draft_id,
+        objective=event.objective,
+        event_type=event.event_type,
+        occurred_at=event.occurred_at,
+        metrics=event.metrics,
+        status="analyzed",
+        metadata={},
+        analysis=analysis,
+        created_at=analysis.created_at,
+        updated_at=analysis.created_at,
+    )
+    optimization_draft = build_campaign_feedback_optimization_draft(detail)
+    source_review = build_campaign_feedback_optimization_review(
+        optimization_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.NEEDS_REVISION,
+            reviewer_id="operator_001",
+            selected_change_ids=[optimization_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_summary_source",
+    )
+    revision_draft = build_campaign_feedback_revision_reviewable_draft(source_review)
+    approved_revision_review = build_campaign_feedback_optimization_review(
+        revision_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.APPROVED,
+            reviewer_id="operator_002",
+            selected_change_ids=[revision_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_summary_revision",
+    )
+    execution_plan = build_feedback_execution_plan(approved_revision_review)
+    dry_run = dry_run_feedback_execution_plan(execution_plan)
+    review_store = _ReviewLineageStore([source_review, approved_revision_review])
+    execution_store = _ExecutionLineageStore([dry_run])
+
+    summary = build_campaign_feedback_loop_summary(
+        detail,
+        review_store,
+        execution_store,
+        review_persistence_enabled=True,
+        execution_persistence_enabled=True,
+    )
+
+    assert summary.event_id == event.event_id
+    assert summary.current_stage == "dry_run_passed"
+    assert summary.review_count == 2
+    assert summary.lineage_count == 2
+    assert summary.dry_run_count == 1
+    assert summary.latest_review_id == approved_revision_review.review_id
+    assert summary.latest_dry_run_id == dry_run.dry_run_id
+    assert summary.approved_review_ids == [approved_revision_review.review_id]
+    assert summary.execution_ready_review_ids == [approved_revision_review.review_id]
+    assert summary.action_plan.event_id == event.event_id
+    assert summary.optimization_draft.optimization_draft_id == (
+        optimization_draft.optimization_draft_id
+    )
+    assert "manual campaign-platform handoff" in summary.next_operator_actions[0]
 
 
 def test_feedback_execution_plan_maps_approved_review_to_dry_run_tool_intents() -> None:

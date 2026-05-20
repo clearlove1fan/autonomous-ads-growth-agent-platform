@@ -2,6 +2,7 @@ from typing import Protocol
 
 from ads_growth_agent.contracts import (
     CampaignFeedbackExecutionDryRunListResponse,
+    CampaignFeedbackOptimizationReviewLineageListResponse,
     CampaignFeedbackOptimizationReviewLineageResponse,
     CampaignFeedbackOptimizationReviewListResponse,
     CampaignFeedbackOptimizationReviewResponse,
@@ -111,6 +112,51 @@ def build_feedback_optimization_review_lineage(
                 "plan; it is not live execution."
             ),
         ],
+    )
+
+
+def list_feedback_optimization_review_lineages(
+    store: FeedbackReviewLineageStore,
+    execution_store: FeedbackExecutionLineageStore | None = None,
+    *,
+    event_id: str | None = None,
+    advertiser_id: str | None = None,
+    optimization_draft_id: str | None = None,
+    decision: FeedbackOptimizationReviewDecision | None = None,
+    lineage_stage: str | None = None,
+    limit: int = 50,
+) -> CampaignFeedbackOptimizationReviewLineageListResponse:
+    """Return derived lineage records for a filtered review set."""
+
+    review_list = store.list_reviews(
+        event_id=event_id,
+        advertiser_id=advertiser_id,
+        optimization_draft_id=optimization_draft_id,
+        decision=decision,
+        limit=100,
+    )
+    lineages: list[CampaignFeedbackOptimizationReviewLineageResponse] = []
+    for review in review_list.items:
+        lineage = build_feedback_optimization_review_lineage(
+            review,
+            store,
+            execution_store,
+        )
+        if lineage_stage is not None and lineage.lineage_stage != lineage_stage:
+            continue
+        lineages.append(lineage)
+        if len(lineages) >= limit:
+            break
+
+    return CampaignFeedbackOptimizationReviewLineageListResponse(
+        items=lineages,
+        count=len(lineages),
+        limit=limit,
+        event_id=event_id,
+        advertiser_id=advertiser_id,
+        optimization_draft_id=optimization_draft_id,
+        decision=decision,
+        lineage_stage=lineage_stage,
     )
 
 

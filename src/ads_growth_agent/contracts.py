@@ -938,6 +938,26 @@ class CampaignFeedbackOptimizationReviewLineageResponse(BaseModel):
     guardrails: list[str] = Field(default_factory=list)
 
 
+class CampaignFeedbackOptimizationReviewLineageListResponse(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    items: list[CampaignFeedbackOptimizationReviewLineageResponse] = Field(
+        default_factory=list
+    )
+    count: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    event_id: str | None = Field(default=None, min_length=1, max_length=128)
+    advertiser_id: str | None = Field(default=None, min_length=1, max_length=128)
+    optimization_draft_id: str | None = Field(default=None, min_length=1, max_length=160)
+    decision: FeedbackOptimizationReviewDecision | None = None
+    lineage_stage: Literal[
+        "approved",
+        "rejected",
+        "revision_requested",
+        "revision_review",
+    ] | None = None
+
+
 class FeedbackExecutionPlanStep(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -1063,3 +1083,42 @@ class CampaignPerformanceEventListResponse(BaseModel):
     campaign_id: str | None = Field(default=None, min_length=1, max_length=128)
     draft_id: str | None = Field(default=None, min_length=1, max_length=128)
     event_type: PerformanceEventType | None = None
+
+
+class CampaignFeedbackLoopSummaryResponse(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    event_id: str = Field(min_length=1, max_length=128)
+    advertiser_id: str = Field(min_length=1, max_length=128)
+    run_id: str | None = Field(default=None, min_length=1, max_length=128)
+    campaign_id: str | None = Field(default=None, min_length=1, max_length=128)
+    draft_id: str | None = Field(default=None, min_length=1, max_length=160)
+    current_stage: Literal[
+        "event_analyzed",
+        "review_pending",
+        "revision_requested",
+        "rejected",
+        "execution_ready",
+        "dry_run_passed",
+        "dry_run_failed",
+    ]
+    review_persistence_enabled: bool
+    execution_persistence_enabled: bool
+    review_count: int = Field(ge=0)
+    lineage_count: int = Field(ge=0)
+    dry_run_count: int = Field(ge=0)
+    latest_review_id: str | None = Field(default=None, min_length=1, max_length=160)
+    latest_review_decision: FeedbackOptimizationReviewDecision | None = None
+    latest_dry_run_id: str | None = Field(default=None, min_length=1, max_length=160)
+    latest_dry_run_status: Literal["passed", "failed"] | None = None
+    approved_review_ids: list[str] = Field(default_factory=list)
+    execution_ready_review_ids: list[str] = Field(default_factory=list)
+    next_operator_actions: list[str] = Field(min_length=1)
+    summary: str = Field(min_length=1, max_length=1_000)
+    event: CampaignPerformanceEventDetailResponse
+    action_plan: CampaignFeedbackActionPlanResponse
+    optimization_draft: CampaignFeedbackOptimizationDraftResponse
+    reviews: CampaignFeedbackOptimizationReviewListResponse
+    lineages: CampaignFeedbackOptimizationReviewLineageListResponse
+    dry_runs: CampaignFeedbackExecutionDryRunListResponse
+    guardrails: list[str] = Field(default_factory=list)

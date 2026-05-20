@@ -22,11 +22,12 @@ v0.1 Phase 1 MVP is complete as of 2026-05-18. The current milestone is a determ
 12. Record and inspect human review decisions for optimization drafts.
 13. Generate a revision draft from `needs_revision` review decisions.
 14. Record a second-pass human review for revision drafts.
-15. Inspect review lineage across original review, revision draft, revision review, execution readiness, and persisted dry-run validation.
+15. Inspect individual and filtered review lineage across original review, revision draft, revision review, execution readiness, and persisted dry-run validation.
 16. Generate a dry-run execution plan from approved review decisions.
 17. Validate the dry-run execution plan through draft-only typed tools without mutation.
 18. Persist and inspect execution dry-run validation results when PostgreSQL execution persistence is enabled.
-19. Retrieve learned advertiser memory in a later PostgreSQL-backed strategy run.
+19. View an operator-facing feedback loop summary for one persisted performance event.
+20. Retrieve learned advertiser memory in a later PostgreSQL-backed strategy run.
 
 Phase 1 is intentionally a functional MVP, not a production launch claim. A single advertiser can run the core product loop locally through CLI or FastAPI without external model keys. The system still does not execute live ad spend, enforce real authentication, provide production SLO dashboards, or require GitHub branch protection in repository settings.
 
@@ -131,8 +132,9 @@ RUN_POSTGRES_INTEGRATION=1 \
 This creates a temporary database, applies migrations, seeds knowledge, then
 validates strategy draft -> performance feedback event -> optimization review ->
 revision draft -> revision review -> dry-run execution plan -> persisted
-execution dry-run validation -> review lineage with execution audit -> outbox
-memory -> API/CLI reads -> later RAG retrieval of the learned memory.
+execution dry-run validation -> review lineage and filtered lineage list with
+execution audit -> feedback loop summary -> outbox memory -> API/CLI reads ->
+later RAG retrieval of the learned memory.
 
 The demo executes the complete deterministic product loop:
 
@@ -167,7 +169,7 @@ This project is designed around the same engineering themes as an AI Agent-power
 | RAG | Strategy playbooks, historical cases, and advertiser memory are retrieved and cited in final outputs |
 | Multi-agent orchestration | Planner, retriever, tool executor, critic, revision, and finalizer nodes model role-based agent responsibilities |
 | Structured output | Pydantic contracts validate briefs, tool intents/results, critique reports, final strategies, feedback analyses, and eval reports |
-| Event-driven feedback | Campaign performance events produce health status, matched optimization rules, draft-only recommendations, action plans, optimization drafts, human review records, revision drafts, second-pass revision reviews, review lineage with execution/dry-run audit, dry-run execution plans, persisted dry-run validation, and later memory retrieval |
+| Event-driven feedback | Campaign performance events produce health status, matched optimization rules, draft-only recommendations, action plans, optimization drafts, human review records, revision drafts, second-pass revision reviews, individual and filtered review lineage with execution/dry-run audit, dry-run execution plans, persisted dry-run validation, operator feedback loop summaries, and later memory retrieval |
 | Self-reflection / critique loop | Critic report gates finalization; optional LLM critic can route through a bounded revision loop |
 | LLMOps / observability | LangSmith-compatible run metadata, structured JSON logs, local eval suite, and CI smoke coverage |
 | Ads growth domain | Output covers audience, creative, budget, bidding, measurement, campaign drafts, performance forecasts, and optimization rules |
@@ -557,8 +559,27 @@ audit summaries:
 curl http://localhost:8000/feedback-optimization-reviews/feedback_review_example/lineage \
   -H "X-Tenant-ID: tenant_demo"
 
+curl "http://localhost:8000/feedback-optimization-review-lineages?event_id=evt_perf_001&lineage_stage=revision_review&limit=20" \
+  -H "X-Tenant-ID: tenant_demo"
+
 FEEDBACK_REVIEW_PERSISTENCE_BACKEND=postgres FEEDBACK_EXECUTION_PERSISTENCE_BACKEND=postgres \
   ads-growth-agent get-feedback-optimization-review-lineage feedback_review_example
+
+FEEDBACK_REVIEW_PERSISTENCE_BACKEND=postgres FEEDBACK_EXECUTION_PERSISTENCE_BACKEND=postgres \
+  ads-growth-agent list-feedback-optimization-review-lineages --event-id evt_perf_001 --lineage-stage revision_review --limit 20
+```
+
+For an operator-oriented view of the whole event feedback loop, fetch the
+summary projection. It includes the event, action plan, optimization draft,
+reviews, lineage records, dry-run records, current stage, and next operator
+actions:
+
+```bash
+curl "http://localhost:8000/campaign-events/performance/evt_perf_001/feedback-loop-summary?limit=20" \
+  -H "X-Tenant-ID: tenant_demo"
+
+FEEDBACK_REVIEW_PERSISTENCE_BACKEND=postgres FEEDBACK_EXECUTION_PERSISTENCE_BACKEND=postgres \
+  ads-growth-agent get-feedback-loop-summary evt_perf_001 --limit 20
 ```
 
 A review created with `decision=needs_revision` can be turned into a new

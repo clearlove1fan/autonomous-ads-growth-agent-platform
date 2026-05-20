@@ -1,7 +1,7 @@
 import re
 import secrets
 from collections.abc import Callable
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query, Response
 from pydantic import BaseModel, ValidationError
@@ -28,7 +28,9 @@ from ads_growth_agent.contracts import (
     CampaignFeedbackExecutionDryRunListResponse,
     CampaignFeedbackExecutionDryRunResponse,
     CampaignFeedbackExecutionPlanResponse,
+    CampaignFeedbackLoopSummaryResponse,
     CampaignFeedbackOptimizationDraftResponse,
+    CampaignFeedbackOptimizationReviewLineageListResponse,
     CampaignFeedbackOptimizationReviewLineageResponse,
     CampaignFeedbackOptimizationReviewListResponse,
     CampaignFeedbackOptimizationReviewRequest,
@@ -67,7 +69,11 @@ from ads_growth_agent.feedback_execution_plan import (
 from ads_growth_agent.feedback_execution_store_factory import (
     build_configured_feedback_execution_store,
 )
-from ads_growth_agent.feedback_lineage import build_feedback_optimization_review_lineage
+from ads_growth_agent.feedback_lineage import (
+    build_feedback_optimization_review_lineage,
+    list_feedback_optimization_review_lineages,
+)
+from ads_growth_agent.feedback_loop_summary import build_campaign_feedback_loop_summary
 from ads_growth_agent.feedback_review_store_factory import build_configured_feedback_review_store
 from ads_growth_agent.graph import strategy_id_for_brief
 from ads_growth_agent.health import ReadinessResponse, check_readiness
@@ -977,6 +983,57 @@ def get_campaign_feedback_optimization_draft(
     return draft
 
 
+@app.get(
+    "/campaign-events/performance/{event_id}/feedback-loop-summary",
+    response_model=CampaignFeedbackLoopSummaryResponse,
+    dependencies=[Depends(require_api_auth)],
+)
+def get_campaign_feedback_loop_summary(
+    event_id: str,
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    event_store: Annotated[
+        CampaignPerformanceEventStore,
+        Depends(get_runtime_performance_event_store),
+    ],
+    review_store: Annotated[
+        FeedbackOptimizationReviewStore,
+        Depends(get_runtime_feedback_review_store),
+    ],
+    feedback_execution_store: Annotated[
+        FeedbackExecutionDryRunStore,
+        Depends(get_runtime_feedback_execution_store),
+    ],
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> CampaignFeedbackLoopSummaryResponse:
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    event = event_store.get_event(event_id)
+    if event is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": "Campaign performance event was not found for the effective tenant.",
+                "error_code": "PERFORMANCE_EVENT_NOT_FOUND",
+                "event_id": event_id,
+            },
+        )
+    summary = build_campaign_feedback_loop_summary(
+        event,
+        review_store,
+        feedback_execution_store,
+        review_persistence_enabled=settings.feedback_review_persistence_backend != "none",
+        execution_persistence_enabled=(
+            settings.feedback_execution_persistence_backend != "none"
+        ),
+        limit=limit,
+    )
+    response.headers["Feedback-ID"] = event.analysis.feedback_id
+    response.headers["Feedback-Loop-Stage"] = summary.current_stage
+    response.headers["Feedback-Review-Count"] = str(summary.review_count)
+    response.headers["Feedback-Dry-Run-Count"] = str(summary.dry_run_count)
+    return summary
+
+
 @app.post(
     "/campaign-events/performance/{event_id}/optimization-draft/reviews",
     response_model=CampaignFeedbackOptimizationReviewResponse,
@@ -1055,6 +1112,48 @@ def list_feedback_optimization_reviews(
         decision=decision,
         limit=limit,
     )
+
+
+@app.get(
+    "/feedback-optimization-review-lineages",
+    response_model=CampaignFeedbackOptimizationReviewLineageListResponse,
+    dependencies=[Depends(require_api_auth)],
+)
+def list_feedback_optimization_review_lineage_api(
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    review_store: Annotated[
+        FeedbackOptimizationReviewStore,
+        Depends(get_runtime_feedback_review_store),
+    ],
+    feedback_execution_store: Annotated[
+        FeedbackExecutionDryRunStore,
+        Depends(get_runtime_feedback_execution_store),
+    ],
+    event_id: Annotated[str | None, Query(min_length=1, max_length=128)] = None,
+    advertiser_id: Annotated[str | None, Query(min_length=1, max_length=128)] = None,
+    optimization_draft_id: Annotated[str | None, Query(min_length=1, max_length=160)] = None,
+    decision: Annotated[FeedbackOptimizationReviewDecision | None, Query()] = None,
+    lineage_stage: Annotated[
+        Literal["approved", "rejected", "revision_requested", "revision_review"] | None,
+        Query(),
+    ] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> CampaignFeedbackOptimizationReviewLineageListResponse:
+    _require_feedback_review_persistence_enabled(settings)
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    lineages = list_feedback_optimization_review_lineages(
+        review_store,
+        feedback_execution_store,
+        event_id=event_id,
+        advertiser_id=advertiser_id,
+        optimization_draft_id=optimization_draft_id,
+        decision=decision,
+        lineage_stage=lineage_stage,
+        limit=limit,
+    )
+    response.headers["Feedback-Lineage-Count"] = str(lineages.count)
+    return lineages
 
 
 @app.get(

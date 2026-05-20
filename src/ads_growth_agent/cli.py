@@ -21,6 +21,8 @@ from ads_growth_agent.contracts import (
     AdvertiserMemoryType,
     CampaignDraftListResponse,
     CampaignFeedbackExecutionDryRunListResponse,
+    CampaignFeedbackLoopSummaryResponse,
+    CampaignFeedbackOptimizationReviewLineageListResponse,
     CampaignFeedbackOptimizationReviewListResponse,
     CampaignFeedbackOptimizationReviewRequest,
     CampaignPerformanceEventListResponse,
@@ -49,7 +51,13 @@ from ads_growth_agent.feedback_execution_plan import (
 from ads_growth_agent.feedback_execution_store_factory import (
     build_configured_feedback_execution_store,
 )
-from ads_growth_agent.feedback_lineage import build_feedback_optimization_review_lineage
+from ads_growth_agent.feedback_lineage import (
+    build_feedback_optimization_review_lineage,
+)
+from ads_growth_agent.feedback_lineage import (
+    list_feedback_optimization_review_lineages as build_feedback_optimization_review_lineage_list,
+)
+from ads_growth_agent.feedback_loop_summary import build_campaign_feedback_loop_summary
 from ads_growth_agent.feedback_review_store_factory import build_configured_feedback_review_store
 from ads_growth_agent.logging_config import configure_logging
 from ads_growth_agent.outbox import process_configured_outbox
@@ -148,6 +156,7 @@ FEEDBACK_REVIEW_NOTES_OPTION = typer.Option(None, "--notes")
 FEEDBACK_REVIEW_SELECTED_CHANGE_ID_OPTION = typer.Option(None, "--selected-change-id")
 FEEDBACK_REVIEW_EVENT_ID_OPTION = typer.Option(None, "--event-id")
 FEEDBACK_REVIEW_OPTIMIZATION_DRAFT_ID_OPTION = typer.Option(None, "--optimization-draft-id")
+FEEDBACK_REVIEW_LINEAGE_STAGE_OPTION = typer.Option(None, "--lineage-stage")
 FEEDBACK_REVIEW_LIST_LIMIT_OPTION = typer.Option(50, "--limit", min=1, max=100)
 FEEDBACK_EXECUTION_DRY_RUN_ID_ARGUMENT = typer.Argument(
     ...,
@@ -171,6 +180,12 @@ ALLOWED_FEEDBACK_REVIEW_DECISIONS = {
 ALLOWED_FEEDBACK_EXECUTION_DRY_RUN_STATUSES = {
     "passed",
     "failed",
+}
+ALLOWED_FEEDBACK_REVIEW_LINEAGE_STAGES = {
+    "approved",
+    "rejected",
+    "revision_requested",
+    "revision_review",
 }
 
 
@@ -331,6 +346,34 @@ def get_feedback_optimization_draft(event_id: str = PERFORMANCE_EVENT_ID_ARGUMEN
         raise typer.Exit(1)
     optimization_draft = build_campaign_feedback_optimization_draft(event)
     typer.echo(optimization_draft.model_dump_json(indent=2))
+
+
+@app.command("get-feedback-loop-summary")
+def get_feedback_loop_summary(
+    event_id: str = PERFORMANCE_EVENT_ID_ARGUMENT,
+    limit: int = FEEDBACK_REVIEW_LIST_LIMIT_OPTION,
+) -> None:
+    """Fetch a read-only operator summary for one persisted feedback event."""
+    settings = get_settings()
+    event_store = build_configured_performance_event_store(settings)
+    event = event_store.get_event(event_id)
+    if event is None:
+        typer.echo(f"Performance event not found: {event_id}", err=True)
+        raise typer.Exit(1)
+    review_store = build_configured_feedback_review_store(settings)
+    execution_store = build_configured_feedback_execution_store(settings)
+    summary = build_campaign_feedback_loop_summary(
+        event,
+        review_store,
+        execution_store,
+        review_persistence_enabled=settings.feedback_review_persistence_backend != "none",
+        execution_persistence_enabled=(
+            settings.feedback_execution_persistence_backend != "none"
+        ),
+        limit=limit,
+    )
+    response = CampaignFeedbackLoopSummaryResponse.model_validate(summary)
+    typer.echo(response.model_dump_json(indent=2))
 
 
 @app.command("submit-feedback-optimization-review")
@@ -599,6 +642,45 @@ def list_feedback_optimization_reviews(
         advertiser_id=advertiser_id,
         optimization_draft_id=optimization_draft_id,
         decision=validated_decision,
+    )
+    typer.echo(response.model_dump_json(indent=2))
+
+
+@app.command("list-feedback-optimization-review-lineages")
+def list_feedback_optimization_review_lineages_command(
+    event_id: str | None = FEEDBACK_REVIEW_EVENT_ID_OPTION,
+    advertiser_id: str | None = PERFORMANCE_EVENT_ADVERTISER_ID_OPTION,
+    optimization_draft_id: str | None = FEEDBACK_REVIEW_OPTIMIZATION_DRAFT_ID_OPTION,
+    decision: str | None = FEEDBACK_REVIEW_DECISION_FILTER_OPTION,
+    lineage_stage: str | None = FEEDBACK_REVIEW_LINEAGE_STAGE_OPTION,
+    limit: int = FEEDBACK_REVIEW_LIST_LIMIT_OPTION,
+) -> None:
+    """List derived audit lineage records for persisted feedback optimization reviews."""
+    settings = get_settings()
+    _ensure_feedback_review_persistence_enabled(settings)
+    validated_decision = _feedback_review_decision_or_exit(decision)
+    validated_lineage_stage = _feedback_review_lineage_stage_or_exit(lineage_stage)
+    review_store = build_configured_feedback_review_store(settings)
+    execution_store = build_configured_feedback_execution_store(settings)
+    lineages = build_feedback_optimization_review_lineage_list(
+        review_store,
+        execution_store,
+        event_id=event_id,
+        advertiser_id=advertiser_id,
+        optimization_draft_id=optimization_draft_id,
+        decision=validated_decision,
+        lineage_stage=validated_lineage_stage,
+        limit=limit,
+    )
+    response = CampaignFeedbackOptimizationReviewLineageListResponse(
+        items=lineages.items,
+        count=lineages.count,
+        limit=limit,
+        event_id=event_id,
+        advertiser_id=advertiser_id,
+        optimization_draft_id=optimization_draft_id,
+        decision=validated_decision,
+        lineage_stage=validated_lineage_stage,
     )
     typer.echo(response.model_dump_json(indent=2))
 
@@ -1047,6 +1129,21 @@ def _feedback_execution_dry_run_status_or_exit(
     allowed = ", ".join(sorted(ALLOWED_FEEDBACK_EXECUTION_DRY_RUN_STATUSES))
     typer.echo(
         f"Invalid feedback execution dry-run status: {value}. Expected one of: {allowed}",
+        err=True,
+    )
+    raise typer.Exit(2)
+
+
+def _feedback_review_lineage_stage_or_exit(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if normalized in ALLOWED_FEEDBACK_REVIEW_LINEAGE_STAGES:
+        return normalized
+
+    allowed = ", ".join(sorted(ALLOWED_FEEDBACK_REVIEW_LINEAGE_STAGES))
+    typer.echo(
+        f"Invalid feedback review lineage stage: {value}. Expected one of: {allowed}",
         err=True,
     )
     raise typer.Exit(2)

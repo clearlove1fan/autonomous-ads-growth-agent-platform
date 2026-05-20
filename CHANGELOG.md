@@ -36,6 +36,11 @@
   revision draft, revision review, and execution-readiness audit.
 - Extended feedback review lineage with compact execution-plan and persisted
   dry-run validation summaries.
+- Added filtered feedback review lineage list API and CLI surfaces for audit by
+  event, advertiser, optimization draft, decision, or lineage stage.
+- Added feedback loop summary API and CLI surfaces so operators can inspect
+  current stage, next actions, reviews, lineage, and dry-run audit from one
+  persisted performance event.
 - Added dry-run feedback execution plans through API and CLI for approved
   optimization reviews.
 - Added dry-run feedback execution validation through draft-only typed tool

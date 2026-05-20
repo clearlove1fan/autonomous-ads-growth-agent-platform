@@ -526,6 +526,80 @@ def test_get_campaign_feedback_optimization_draft_api_returns_404_when_missing()
     assert store.requested_event_ids == ["missing_event"]
 
 
+def test_get_campaign_feedback_loop_summary_api_returns_operator_status() -> None:
+    event = api_module.CampaignPerformanceEventRequest.model_validate(
+        _event_payload_with_strategy_context()
+    )
+    detail = _event_detail(event)
+    optimization_draft = build_campaign_feedback_optimization_draft(detail)
+    source_review = build_campaign_feedback_optimization_review(
+        optimization_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.NEEDS_REVISION,
+            reviewer_id="operator_001",
+            selected_change_ids=[optimization_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_summary_api_source",
+    )
+    revision_draft = build_campaign_feedback_revision_reviewable_draft(source_review)
+    revision_review = build_campaign_feedback_optimization_review(
+        revision_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.APPROVED,
+            reviewer_id="operator_002",
+            selected_change_ids=[revision_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_summary_api_revision",
+    )
+    event_store = CapturingPerformanceEventStore(details=[detail])
+    review_store = CapturingFeedbackOptimizationReviewStore(
+        reviews=[source_review, revision_review]
+    )
+    execution_store = CapturingFeedbackExecutionDryRunStore()
+    api_app.dependency_overrides[get_runtime_settings] = lambda: Settings(
+        performance_event_persistence_backend="postgres",
+        feedback_review_persistence_backend="postgres",
+        feedback_execution_persistence_backend="postgres",
+    )
+    api_app.dependency_overrides[get_runtime_performance_event_store] = lambda: event_store
+    api_app.dependency_overrides[get_runtime_feedback_review_store] = lambda: review_store
+    api_app.dependency_overrides[get_runtime_feedback_execution_store] = (
+        lambda: execution_store
+    )
+    try:
+        client = TestClient(api_app)
+        dry_run_response = client.post(
+            f"/feedback-optimization-reviews/{revision_review.review_id}/execution-plan/dry-run",
+            headers={"X-Tenant-ID": "tenant_api"},
+        )
+        summary_response = client.get(
+            f"/campaign-events/performance/{event.event_id}/feedback-loop-summary",
+            params={"limit": "10"},
+            headers={"X-Tenant-ID": "tenant_api"},
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    payload = summary_response.json()
+    assert dry_run_response.status_code == 200
+    assert summary_response.status_code == 200
+    assert summary_response.headers["feedback-loop-stage"] == "dry_run_passed"
+    assert summary_response.headers["feedback-review-count"] == "2"
+    assert summary_response.headers["feedback-dry-run-count"] == "1"
+    assert payload["event_id"] == event.event_id
+    assert payload["current_stage"] == "dry_run_passed"
+    assert payload["review_count"] == 2
+    assert payload["lineage_count"] == 2
+    assert payload["dry_run_count"] == 1
+    assert payload["reviews"]["count"] == 2
+    assert payload["lineages"]["count"] == 2
+    assert payload["dry_runs"]["items"][0]["dry_run_id"] == dry_run_response.json()[
+        "dry_run_id"
+    ]
+    assert payload["execution_ready_review_ids"] == [revision_review.review_id]
+    assert event_store.requested_event_ids == [event.event_id]
+
+
 def test_submit_campaign_feedback_optimization_review_api_records_review() -> None:
     event = api_module.CampaignPerformanceEventRequest.model_validate(
         _event_payload_with_strategy_context()
@@ -904,6 +978,89 @@ def test_get_feedback_optimization_review_lineage_api_returns_revision_chain() -
     assert revision_payload["target_review"]["review_id"] == revision_review.review_id
     assert revision_payload["execution_summaries"][0]["dry_runs"][0]["dry_run_id"] == (
         dry_run_payload["dry_run_id"]
+    )
+
+
+def test_list_feedback_optimization_review_lineages_api_filters_revision_chain() -> None:
+    event = api_module.CampaignPerformanceEventRequest.model_validate(
+        _event_payload_with_strategy_context()
+    )
+    detail = _event_detail(event)
+    optimization_draft = build_campaign_feedback_optimization_draft(detail)
+    source_review = build_campaign_feedback_optimization_review(
+        optimization_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.NEEDS_REVISION,
+            reviewer_id="operator_001",
+            notes="Please reduce the budget movement before approval.",
+            selected_change_ids=[optimization_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_lineage_list_api_source",
+    )
+    revision_draft = build_campaign_feedback_revision_reviewable_draft(source_review)
+    revision_review = build_campaign_feedback_optimization_review(
+        revision_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.APPROVED,
+            reviewer_id="operator_002",
+            selected_change_ids=[revision_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_lineage_list_api_revision",
+    )
+    review_store = CapturingFeedbackOptimizationReviewStore(
+        reviews=[source_review, revision_review]
+    )
+    execution_store = CapturingFeedbackExecutionDryRunStore()
+    api_app.dependency_overrides[get_runtime_settings] = lambda: Settings(
+        feedback_review_persistence_backend="postgres",
+        feedback_execution_persistence_backend="postgres",
+    )
+    api_app.dependency_overrides[get_runtime_feedback_review_store] = lambda: review_store
+    api_app.dependency_overrides[get_runtime_feedback_execution_store] = (
+        lambda: execution_store
+    )
+    try:
+        client = TestClient(api_app)
+        dry_run_response = client.post(
+            f"/feedback-optimization-reviews/{revision_review.review_id}/execution-plan/dry-run",
+            headers={"X-Tenant-ID": "tenant_api"},
+        )
+        list_response = client.get(
+            "/feedback-optimization-review-lineages",
+            params={
+                "event_id": event.event_id,
+                "decision": "approved",
+                "lineage_stage": "revision_review",
+                "limit": "10",
+            },
+            headers={"X-Tenant-ID": "tenant_api"},
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    dry_run_payload = dry_run_response.json()
+    payload = list_response.json()
+    assert dry_run_response.status_code == 200
+    assert list_response.status_code == 200
+    assert list_response.headers["feedback-lineage-count"] == "1"
+    assert payload["count"] == 1
+    assert payload["limit"] == 10
+    assert payload["event_id"] == event.event_id
+    assert payload["decision"] == "approved"
+    assert payload["lineage_stage"] == "revision_review"
+    lineage = payload["items"][0]
+    assert lineage["requested_review_id"] == revision_review.review_id
+    assert lineage["source_review_id"] == source_review.review_id
+    assert lineage["target_review"]["review_id"] == revision_review.review_id
+    assert lineage["execution_summaries"][0]["dry_runs"][0]["dry_run_id"] == (
+        dry_run_payload["dry_run_id"]
+    )
+    assert review_store.list_requests[0] == (
+        event.event_id,
+        None,
+        None,
+        FeedbackOptimizationReviewDecision.APPROVED,
+        100,
     )
 
 
@@ -1314,6 +1471,76 @@ def test_get_feedback_optimization_draft_cli_reports_missing_event(monkeypatch) 
     assert "Performance event not found: missing_event" in result.stderr
 
 
+def test_get_feedback_loop_summary_cli_returns_operator_status(monkeypatch) -> None:
+    event = api_module.CampaignPerformanceEventRequest.model_validate(
+        _event_payload_with_strategy_context()
+    )
+    detail = _event_detail(event)
+    optimization_draft = build_campaign_feedback_optimization_draft(detail)
+    source_review = build_campaign_feedback_optimization_review(
+        optimization_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.NEEDS_REVISION,
+            reviewer_id="operator_001",
+            selected_change_ids=[optimization_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_summary_cli_source",
+    )
+    revision_draft = build_campaign_feedback_revision_reviewable_draft(source_review)
+    revision_review = build_campaign_feedback_optimization_review(
+        revision_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.APPROVED,
+            reviewer_id="operator_002",
+            selected_change_ids=[revision_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_summary_cli_revision",
+    )
+    execution_plan = api_module.build_feedback_execution_plan(revision_review)
+    dry_run = api_module.dry_run_feedback_execution_plan(execution_plan)
+    event_store = CapturingPerformanceEventStore(details=[detail])
+    review_store = CapturingFeedbackOptimizationReviewStore(
+        reviews=[source_review, revision_review]
+    )
+    execution_store = CapturingFeedbackExecutionDryRunStore(dry_runs=[dry_run])
+
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.get_settings",
+        lambda: Settings(
+            performance_event_persistence_backend="postgres",
+            feedback_review_persistence_backend="postgres",
+            feedback_execution_persistence_backend="postgres",
+        ),
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_performance_event_store",
+        lambda settings: event_store,
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_feedback_review_store",
+        lambda settings: review_store,
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_feedback_execution_store",
+        lambda settings: execution_store,
+    )
+
+    result = CliRunner().invoke(
+        cli_app,
+        ["get-feedback-loop-summary", event.event_id, "--limit", "10"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["event_id"] == event.event_id
+    assert payload["current_stage"] == "dry_run_passed"
+    assert payload["review_count"] == 2
+    assert payload["lineage_count"] == 2
+    assert payload["dry_run_count"] == 1
+    assert payload["execution_ready_review_ids"] == [revision_review.review_id]
+    assert payload["dry_runs"]["items"][0]["dry_run_id"] == dry_run.dry_run_id
+
+
 def test_submit_feedback_optimization_review_cli_records_review(monkeypatch) -> None:
     event = api_module.CampaignPerformanceEventRequest.model_validate(
         _event_payload_with_strategy_context()
@@ -1630,6 +1857,77 @@ def test_get_feedback_optimization_review_lineage_cli_returns_revision_chain(
     assert payload["execution_summaries"][0]["dry_run_count"] == 0
 
 
+def test_list_feedback_optimization_review_lineages_cli_filters_revision_chain(
+    monkeypatch,
+) -> None:
+    event = api_module.CampaignPerformanceEventRequest.model_validate(
+        _event_payload_with_strategy_context()
+    )
+    detail = _event_detail(event)
+    optimization_draft = build_campaign_feedback_optimization_draft(detail)
+    source_review = build_campaign_feedback_optimization_review(
+        optimization_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.NEEDS_REVISION,
+            reviewer_id="operator_001",
+            selected_change_ids=[optimization_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_lineage_list_cli_source",
+    )
+    revision_draft = build_campaign_feedback_revision_reviewable_draft(source_review)
+    revision_review = build_campaign_feedback_optimization_review(
+        revision_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.APPROVED,
+            reviewer_id="operator_002",
+            selected_change_ids=[revision_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_lineage_list_cli_revision",
+    )
+    review_store = CapturingFeedbackOptimizationReviewStore(
+        reviews=[source_review, revision_review]
+    )
+    execution_store = CapturingFeedbackExecutionDryRunStore()
+
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.get_settings",
+        lambda: Settings(feedback_review_persistence_backend="postgres"),
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_feedback_review_store",
+        lambda settings: review_store,
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_feedback_execution_store",
+        lambda settings: execution_store,
+    )
+
+    result = CliRunner().invoke(
+        cli_app,
+        [
+            "list-feedback-optimization-review-lineages",
+            "--event-id",
+            event.event_id,
+            "--decision",
+            "approved",
+            "--lineage-stage",
+            "revision_review",
+            "--limit",
+            "10",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["count"] == 1
+    assert payload["event_id"] == event.event_id
+    assert payload["decision"] == "approved"
+    assert payload["lineage_stage"] == "revision_review"
+    assert payload["items"][0]["requested_review_id"] == revision_review.review_id
+    assert payload["items"][0]["source_review_id"] == source_review.review_id
+    assert payload["items"][0]["execution_summaries"][0]["dry_run_count"] == 0
+
+
 def test_submit_feedback_optimization_revision_review_cli_rejects_approved_source(
     monkeypatch,
 ) -> None:
@@ -1900,6 +2198,23 @@ def test_list_feedback_optimization_reviews_cli_rejects_invalid_decision(monkeyp
 
     assert result.exit_code == 2
     assert "Invalid feedback review decision" in result.stderr
+
+
+def test_list_feedback_optimization_review_lineages_cli_rejects_invalid_stage(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.get_settings",
+        lambda: Settings(feedback_review_persistence_backend="postgres"),
+    )
+
+    result = CliRunner().invoke(
+        cli_app,
+        ["list-feedback-optimization-review-lineages", "--lineage-stage", "unknown"],
+    )
+
+    assert result.exit_code == 2
+    assert "Invalid feedback review lineage stage" in result.stderr
 
 
 def test_list_performance_events_cli_filters_recent_events(monkeypatch) -> None:
