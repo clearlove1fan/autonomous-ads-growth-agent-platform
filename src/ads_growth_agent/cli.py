@@ -39,6 +39,7 @@ from ads_growth_agent.feedback import (
     build_campaign_feedback_action_plan,
     build_campaign_feedback_optimization_draft,
     build_campaign_feedback_optimization_revision_draft,
+    build_campaign_feedback_revision_reviewable_draft,
 )
 from ads_growth_agent.feedback_execution_dry_run import dry_run_feedback_execution_plan
 from ads_growth_agent.feedback_execution_plan import (
@@ -405,6 +406,47 @@ def get_feedback_optimization_revision_draft(
         raise typer.Exit(2) from exc
 
     typer.echo(revision_draft.model_dump_json(indent=2))
+
+
+@app.command("submit-feedback-optimization-revision-review")
+def submit_feedback_optimization_revision_review(
+    review_id: str = FEEDBACK_REVIEW_ID_ARGUMENT,
+    decision: str = FEEDBACK_REVIEW_DECISION_OPTION,
+    reviewer_id: str = FEEDBACK_REVIEW_REVIEWER_ID_OPTION,
+    notes: str | None = FEEDBACK_REVIEW_NOTES_OPTION,
+    selected_change_id: list[str] | None = FEEDBACK_REVIEW_SELECTED_CHANGE_ID_OPTION,
+) -> None:
+    """Record a human review decision for one revision draft."""
+    try:
+        settings = get_settings()
+        _ensure_feedback_review_persistence_enabled(settings)
+        store = build_configured_feedback_review_store(settings)
+        source_review = store.get_review(review_id)
+        if source_review is None:
+            typer.echo(f"Feedback optimization review not found: {review_id}", err=True)
+            raise typer.Exit(1)
+        request = CampaignFeedbackOptimizationReviewRequest(
+            decision=_feedback_review_decision_or_exit(decision),
+            reviewer_id=reviewer_id,
+            notes=notes,
+            selected_change_ids=selected_change_id or [],
+        )
+        reviewable_draft = build_campaign_feedback_revision_reviewable_draft(source_review)
+        review = store.record_review(reviewable_draft, request)
+    except FeedbackRevisionDraftNotRequestedError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+    except ValidationError as exc:
+        typer.echo(_validation_errors_json(exc), err=True)
+        raise typer.Exit(2) from exc
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from exc
+    except RuntimeError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from exc
+
+    typer.echo(review.model_dump_json(indent=2))
 
 
 @app.command("get-feedback-execution-plan")

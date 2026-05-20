@@ -30,6 +30,8 @@
   reviewer can approve, reject, or request revision for draft-only changes.
 - Added feedback revision draft API and CLI commands for `needs_revision`
   review records before another approval pass.
+- Added feedback revision review API and CLI commands so revised drafts can be
+  approved and continue into the existing dry-run execution plan path.
 - Added dry-run feedback execution plans through API and CLI for approved
   optimization reviews.
 - Added dry-run feedback execution validation through draft-only typed tool

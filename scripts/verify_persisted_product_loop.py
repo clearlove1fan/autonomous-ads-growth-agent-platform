@@ -426,6 +426,29 @@ def run_persisted_product_loop(
                     cli_submitted_review["review_id"],
                 ],
             )
+            cli_revision_review = _invoke_cli(
+                settings,
+                [
+                    "submit-feedback-optimization-revision-review",
+                    cli_submitted_review["review_id"],
+                    "--decision",
+                    "approved",
+                    "--reviewer-id",
+                    "operator_product_loop_revision",
+                    "--notes",
+                    "Approve the first revised draft change.",
+                    "--selected-change-id",
+                    revision_draft["changes"][0]["change_id"],
+                ],
+            )
+            revision_execution_plan = _api_json(
+                client.get(
+                    "/feedback-optimization-reviews/"
+                    f"{cli_revision_review['review_id']}/execution-plan",
+                    headers=_tenant_headers(tenant_id),
+                ),
+                label="get revision feedback execution plan",
+            )
             cli_event_list = _invoke_cli(
                 settings,
                 [
@@ -510,6 +533,29 @@ def run_persisted_product_loop(
                 == revision_draft["revision_draft_id"],
                 "CLI revision draft should match API revision draft",
             )
+            _expect(
+                cli_revision_review["decision"] == "approved",
+                "CLI revision review should approve the revised draft",
+            )
+            _expect(
+                cli_revision_review["optimization_draft_id"]
+                == revision_draft["revision_draft_id"],
+                "CLI revision review should review the revision draft",
+            )
+            _expect(
+                cli_revision_review["selected_change_ids"]
+                == [revision_draft["changes"][0]["change_id"]],
+                "CLI revision review should select the requested revised change",
+            )
+            _expect(
+                revision_execution_plan["review_id"] == cli_revision_review["review_id"],
+                "approved revision review should produce an execution plan",
+            )
+            _expect(
+                revision_execution_plan["optimization_draft_id"]
+                == revision_draft["revision_draft_id"],
+                "revision execution plan should target the revision draft",
+            )
             _expect(cli_event_list["count"] == 1, "CLI event list should find feedback event")
             _expect(
                 cli_memory["source_id"] == memory_source_id,
@@ -582,6 +628,14 @@ def run_persisted_product_loop(
                 "change_count": len(revision_draft["changes"]),
                 "cli_revision_draft_id": cli_revision_draft["revision_draft_id"],
             },
+            "revision_review": {
+                "review_id": cli_revision_review["review_id"],
+                "decision": cli_revision_review["decision"],
+                "optimization_draft_id": cli_revision_review["optimization_draft_id"],
+                "selected_change_count": len(cli_revision_review["selected_change_ids"]),
+                "execution_plan_id": revision_execution_plan["execution_plan_id"],
+                "execution_plan_step_count": len(revision_execution_plan["steps"]),
+            },
             "execution_plan": {
                 "execution_plan_id": execution_plan["execution_plan_id"],
                 "execution_mode": execution_plan["execution_mode"],
@@ -610,6 +664,7 @@ def run_persisted_product_loop(
                 "review_id": cli_review["review_id"],
                 "review_count": cli_review_list["count"],
                 "revision_draft_id": cli_revision_draft["revision_draft_id"],
+                "revision_review_id": cli_revision_review["review_id"],
                 "execution_plan_id": cli_execution_plan["execution_plan_id"],
                 "execution_dry_run_id": cli_execution_dry_run["dry_run_id"],
                 "execution_dry_run_detail_id": cli_execution_dry_run_detail["dry_run_id"],
@@ -690,6 +745,13 @@ def render_summary(summary: dict[str, Any]) -> str:
                 f"changes={summary['revision_draft']['change_count']}"
             ),
             (
+                "Revision review: "
+                f"{summary['revision_review']['review_id']} "
+                f"decision={summary['revision_review']['decision']} "
+                f"selected_changes={summary['revision_review']['selected_change_count']} "
+                f"execution_plan={summary['revision_review']['execution_plan_id']}"
+            ),
+            (
                 "Execution plan: "
                 f"{summary['execution_plan']['execution_plan_id']} "
                 f"mode={summary['execution_plan']['execution_mode']} "
@@ -728,6 +790,7 @@ def render_summary(summary: dict[str, Any]) -> str:
                 f"first_change={summary['cli_reads']['first_change_type']} "
                 f"reviews={summary['cli_reads']['review_count']} "
                 f"revision_draft={summary['cli_reads']['revision_draft_id']} "
+                f"revision_review={summary['cli_reads']['revision_review_id']} "
                 f"execution_plan={summary['cli_reads']['execution_plan_id']} "
                 f"dry_run={summary['cli_reads']['execution_dry_run_id']} "
                 f"dry_run_reads={summary['cli_reads']['execution_dry_run_count']} "

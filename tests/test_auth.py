@@ -18,6 +18,7 @@ PROTECTED_PATHS = {
     "/feedback-optimization-reviews",
     "/feedback-optimization-reviews/{review_id}",
     "/feedback-optimization-reviews/{review_id}/revision-draft",
+    "/feedback-optimization-reviews/{review_id}/revision-draft/reviews",
     "/feedback-optimization-reviews/{review_id}/execution-plan",
     "/feedback-optimization-reviews/{review_id}/execution-plan/dry-run",
     "/feedback-execution-dry-runs",

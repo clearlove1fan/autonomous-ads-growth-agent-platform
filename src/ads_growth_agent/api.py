@@ -56,6 +56,7 @@ from ads_growth_agent.feedback import (
     build_campaign_feedback_action_plan,
     build_campaign_feedback_optimization_draft,
     build_campaign_feedback_optimization_revision_draft,
+    build_campaign_feedback_revision_reviewable_draft,
 )
 from ads_growth_agent.feedback_execution_dry_run import dry_run_feedback_execution_plan
 from ads_growth_agent.feedback_execution_plan import (
@@ -1138,6 +1139,65 @@ def get_feedback_optimization_revision_draft(
     response.headers["Optimization-Draft-ID"] = review.optimization_draft_id
     response.headers["Feedback-ID"] = review.feedback_id
     return revision_draft
+
+
+@app.post(
+    "/feedback-optimization-reviews/{review_id}/revision-draft/reviews",
+    response_model=CampaignFeedbackOptimizationReviewResponse,
+    status_code=201,
+    dependencies=[Depends(require_api_auth)],
+)
+def submit_feedback_optimization_revision_review(
+    review_id: str,
+    request: CampaignFeedbackOptimizationReviewRequest,
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    review_store: Annotated[
+        FeedbackOptimizationReviewStore,
+        Depends(get_runtime_feedback_review_store),
+    ],
+) -> CampaignFeedbackOptimizationReviewResponse:
+    _require_feedback_review_persistence_enabled(settings)
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    source_review = review_store.get_review(review_id)
+    if source_review is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": "Feedback optimization review was not found for the effective tenant.",
+                "error_code": "FEEDBACK_OPTIMIZATION_REVIEW_NOT_FOUND",
+                "review_id": review_id,
+            },
+        )
+
+    try:
+        reviewable_draft = build_campaign_feedback_revision_reviewable_draft(source_review)
+        review = review_store.record_review(reviewable_draft, request)
+    except FeedbackRevisionDraftNotRequestedError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": str(exc),
+                "error_code": "FEEDBACK_REVISION_DRAFT_NOT_REQUESTED",
+                "review_id": exc.review_id,
+                "decision": exc.decision.value,
+            },
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": str(exc),
+                "error_code": "FEEDBACK_REVISION_REVIEW_INVALID",
+            },
+        ) from exc
+
+    response.headers["Source-Feedback-Review-ID"] = source_review.review_id
+    response.headers["Feedback-Review-ID"] = review.review_id
+    response.headers["Feedback-Revision-Draft-ID"] = review.optimization_draft_id
+    response.headers["Original-Optimization-Draft-ID"] = source_review.optimization_draft_id
+    response.headers["Feedback-ID"] = review.feedback_id
+    return review
 
 
 @app.get(

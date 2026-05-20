@@ -22,6 +22,7 @@ from ads_growth_agent.feedback import (
     build_campaign_feedback_optimization_draft,
     build_campaign_feedback_optimization_review,
     build_campaign_feedback_optimization_revision_draft,
+    build_campaign_feedback_revision_reviewable_draft,
 )
 from ads_growth_agent.feedback_execution_dry_run import dry_run_feedback_execution_plan
 from ads_growth_agent.feedback_execution_plan import (
@@ -537,6 +538,38 @@ def test_feedback_revision_draft_requires_needs_revision_review() -> None:
 
     with pytest.raises(FeedbackRevisionDraftNotRequestedError):
         build_campaign_feedback_optimization_revision_draft(review)
+
+
+def test_feedback_revision_reviewable_draft_can_be_approved_for_execution_plan() -> None:
+    source_review = _feedback_optimization_review(
+        decision=FeedbackOptimizationReviewDecision.NEEDS_REVISION,
+        review_id="feedback_review_revision_reviewable",
+        notes="Make the revised budget change more conservative.",
+    )
+    reviewable_draft = build_campaign_feedback_revision_reviewable_draft(source_review)
+
+    approved_revision_review = build_campaign_feedback_optimization_review(
+        reviewable_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.APPROVED,
+            reviewer_id="operator_002",
+            selected_change_ids=[reviewable_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_revision_approved",
+    )
+    execution_plan = build_feedback_execution_plan(approved_revision_review)
+
+    assert reviewable_draft.optimization_draft_id.startswith("feedback_revision_draft_")
+    assert reviewable_draft.health_status == source_review.optimization_draft.health_status
+    assert reviewable_draft.changes[0].params["revision_source_review_id"] == (
+        source_review.review_id
+    )
+    assert approved_revision_review.optimization_draft_id == (
+        reviewable_draft.optimization_draft_id
+    )
+    assert execution_plan.review_id == approved_revision_review.review_id
+    assert execution_plan.optimization_draft_id == reviewable_draft.optimization_draft_id
+    assert execution_plan.steps[0].change_id == reviewable_draft.changes[0].change_id
 
 
 def test_feedback_execution_plan_maps_approved_review_to_dry_run_tool_intents() -> None:

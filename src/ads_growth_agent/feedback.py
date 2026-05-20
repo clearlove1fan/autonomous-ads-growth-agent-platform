@@ -218,6 +218,34 @@ def build_campaign_feedback_optimization_revision_draft(
     )
 
 
+def build_campaign_feedback_revision_reviewable_draft(
+    review: CampaignFeedbackOptimizationReviewResponse,
+) -> CampaignFeedbackOptimizationDraftResponse:
+    """Convert a revision draft into a reviewable optimization draft snapshot."""
+
+    revision_draft = build_campaign_feedback_optimization_revision_draft(review)
+    return CampaignFeedbackOptimizationDraftResponse(
+        optimization_draft_id=revision_draft.revision_draft_id,
+        event_id=revision_draft.event_id,
+        feedback_id=revision_draft.feedback_id,
+        advertiser_id=revision_draft.advertiser_id,
+        run_id=revision_draft.run_id,
+        campaign_id=revision_draft.campaign_id,
+        base_draft_id=revision_draft.base_draft_id,
+        strategy_id=revision_draft.strategy_id,
+        status=revision_draft.status,
+        health_status=review.optimization_draft.health_status,
+        summary=revision_draft.summary,
+        changes=revision_draft.changes,
+        requires_human_approval=revision_draft.requires_human_approval,
+        guardrails=[
+            *revision_draft.guardrails,
+            f"Revision source review: {revision_draft.source_review_id}.",
+        ],
+        created_at=revision_draft.created_at,
+    )
+
+
 def _metrics_summary(event: CampaignPerformanceEventRequest) -> dict[str, str | int | None]:
     metrics = event.metrics
     ctr = _ratio(metrics.clicks, metrics.impressions)
