@@ -1523,11 +1523,61 @@ def test_feedback_loop_command_center_promotes_outcome_report_after_followup() -
         for command in regressed_center.commands
         if command.command_id == "inspect_followup_action_plan"
     )
+    followup_draft_command = next(
+        command
+        for command in regressed_center.commands
+        if command.command_id == "inspect_followup_optimization_draft"
+    )
+    followup_review_command = next(
+        command
+        for command in regressed_center.commands
+        if command.command_id == "review_followup_optimization_draft"
+    )
     assert regressed_center.current_stage == "outcome_regressed"
     assert regressed_center.outcome_status == "regressed"
     assert followup_action_command.enabled is True
     assert followup_action_command.api_path == (
         f"/campaign-events/performance/{regressed_event.event_id}/action-plan"
+    )
+    assert followup_draft_command.enabled is True
+    assert followup_draft_command.api_path == (
+        f"/campaign-events/performance/{regressed_event.event_id}/optimization-draft"
+    )
+    assert followup_review_command.enabled is True
+    assert followup_review_command.api_path == (
+        f"/campaign-events/performance/{regressed_event.event_id}"
+        "/optimization-draft/reviews"
+    )
+    assert followup_review_command.cli_command == [
+        "ads-growth-agent",
+        "submit-feedback-optimization-review",
+        regressed_event.event_id,
+        "--decision",
+        "approved",
+        "--reviewer-id",
+        "<operator_id>",
+    ]
+
+    review_disabled_center = build_campaign_feedback_loop_command_center(
+        detail,
+        _ReviewLineageStore([review]),
+        execution_store,
+        _HandoffSummaryStore([handoff_record]),
+        review_persistence_enabled=False,
+        execution_persistence_enabled=True,
+        handoff_persistence_enabled=True,
+        outcome_event_store=_OutcomeEventStore([regressed_detail, detail]),
+        limit=20,
+    )
+    review_disabled_command = next(
+        command
+        for command in review_disabled_center.commands
+        if command.command_id == "review_followup_optimization_draft"
+    )
+    assert review_disabled_command.enabled is False
+    assert review_disabled_command.disabled_reason is not None
+    assert "FEEDBACK_REVIEW_PERSISTENCE_BACKEND" in (
+        review_disabled_command.disabled_reason
     )
 
 

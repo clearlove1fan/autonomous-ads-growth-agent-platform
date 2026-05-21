@@ -580,7 +580,9 @@ outcome records, current stage, and next operator actions. The timeline orders
 the same product loop into auditable milestones. The command center turns the
 stage into concrete API and CLI affordances; after an applied handoff has a
 follow-up snapshot, it promotes the outcome report and next follow-up action
-instead of staying on generic post-handoff monitoring:
+instead of staying on generic post-handoff monitoring. If the follow-up outcome
+is regressed or mixed, the command center also links directly to the follow-up
+event's action plan, optimization draft, and review command for the next loop:
 
 ```bash
 curl "http://localhost:8000/campaign-events/performance/evt_perf_001/feedback-loop-summary?limit=20" \

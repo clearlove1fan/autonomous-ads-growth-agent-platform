@@ -49,6 +49,9 @@
   feedback-loop stage.
 - Made the feedback loop command center outcome-aware after applied handoff
   follow-up snapshots, promoting outcome reports and follow-up action plans.
+- Added follow-up optimization re-entry commands for regressed or mixed
+  outcomes, linking operators to the follow-up event action plan, draft, and
+  review command.
 - Added feedback outcome report API and CLI surfaces to compare a baseline
   feedback event with the next performance snapshot and classify
   improved/regressed/mixed outcomes.

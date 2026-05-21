@@ -1426,6 +1426,8 @@ FeedbackLoopCommandActionType = Literal[
     "inspect_feedback_loop_timeline",
     "inspect_feedback_outcome_report",
     "inspect_followup_action_plan",
+    "inspect_followup_optimization_draft",
+    "review_followup_optimization_draft",
     "inspect_optimization_draft",
     "review_optimization_draft",
     "generate_revision_draft",

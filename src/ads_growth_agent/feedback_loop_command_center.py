@@ -459,6 +459,16 @@ def _outcome_report_commands(
         return [
             *commands,
             _followup_action_plan_command(summary, outcome_report, priority=2),
+            _followup_optimization_draft_command(
+                summary,
+                outcome_report,
+                priority=3,
+            ),
+            _review_followup_optimization_draft_command(
+                summary,
+                outcome_report,
+                priority=4,
+            ),
         ]
     return [
         *commands,
@@ -716,6 +726,95 @@ def _followup_action_plan_command(
         ],
         resource_ids=_resource_ids(summary, followup_event_id=followup_event_id),
         requires_persistence=["performance_event"],
+    )
+
+
+def _followup_optimization_draft_command(
+    summary: CampaignFeedbackLoopSummaryResponse,
+    outcome_report: CampaignFeedbackOutcomeReportResponse,
+    *,
+    priority: int,
+) -> FeedbackLoopOperatorCommand:
+    followup_event_id = outcome_report.followup_event_id
+    return _command(
+        command_id="inspect_followup_optimization_draft",
+        action_type="inspect_followup_optimization_draft",
+        priority=priority,
+        enabled=followup_event_id is not None,
+        disabled_reason=_disabled_unless(
+            followup_event_id is not None,
+            "No follow-up performance event is available.",
+        ),
+        label="Inspect follow-up optimization draft",
+        description=(
+            "Open the draft-only optimization proposal generated from the "
+            "follow-up event."
+        ),
+        api_method="GET",
+        api_path=(
+            f"/campaign-events/performance/{followup_event_id or '<event_id>'}"
+            "/optimization-draft"
+        ),
+        cli_command=[
+            "ads-growth-agent",
+            "get-feedback-optimization-draft",
+            followup_event_id or "<event_id>",
+        ],
+        resource_ids=_resource_ids(summary, followup_event_id=followup_event_id),
+        requires_persistence=["performance_event"],
+        guardrails=["Follow-up optimization drafts remain draft-only."],
+    )
+
+
+def _review_followup_optimization_draft_command(
+    summary: CampaignFeedbackLoopSummaryResponse,
+    outcome_report: CampaignFeedbackOutcomeReportResponse,
+    *,
+    priority: int,
+) -> FeedbackLoopOperatorCommand:
+    followup_event_id = outcome_report.followup_event_id
+    enabled = followup_event_id is not None and summary.review_persistence_enabled
+    disabled_reason = _disabled_unless(
+        enabled,
+        (
+            "A follow-up performance event and "
+            "FEEDBACK_REVIEW_PERSISTENCE_BACKEND=postgres are required."
+        ),
+    )
+    return _command(
+        command_id="review_followup_optimization_draft",
+        action_type="review_followup_optimization_draft",
+        priority=priority,
+        enabled=enabled,
+        disabled_reason=disabled_reason,
+        label="Review follow-up optimization draft",
+        description=(
+            "Approve, reject, or request revision for the follow-up event's "
+            "draft-only proposal."
+        ),
+        api_method="POST",
+        api_path=(
+            f"/campaign-events/performance/{followup_event_id or '<event_id>'}"
+            "/optimization-draft/reviews"
+        ),
+        cli_command=[
+            "ads-growth-agent",
+            "submit-feedback-optimization-review",
+            followup_event_id or "<event_id>",
+            "--decision",
+            "approved",
+            "--reviewer-id",
+            "<operator_id>",
+        ],
+        body_template={
+            "decision": "approved",
+            "reviewer_id": "operator_001",
+            "notes": "Approve safe follow-up draft changes.",
+            "selected_change_ids": [],
+        },
+        resource_ids=_resource_ids(summary, followup_event_id=followup_event_id),
+        requires_persistence=["feedback_review"],
+        guardrails=["Review decisions are persisted audit records."],
     )
 
 

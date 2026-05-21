@@ -228,7 +228,9 @@ Exit criteria:
   showing event analysis, draft, review, revision, execution, dry-run, handoff
   package, and handoff outcome milestones in order.
 - A feedback loop command center can be fetched for one persisted performance
-  event, showing the primary next command plus concrete API and CLI affordances.
+  event, showing the primary next command plus concrete API and CLI affordances,
+  including follow-up optimization re-entry commands for regressed or mixed
+  outcomes.
 - A feedback outcome report can compare one baseline feedback event with the
   next persisted performance snapshot and classify improved, regressed, mixed,
   insufficient-data, or no-follow-up outcomes.
@@ -248,7 +250,7 @@ Exit criteria:
   optimization review -> revision draft -> revision review -> dry-run execution
   plan -> persisted execution dry-run validation -> review lineage and filtered
   lineage list with execution audit -> feedback loop summary, timeline, and
-  command center -> manual handoff
+  outcome-aware command center -> manual handoff
   package -> handoff outcome record -> follow-up performance snapshot -> outcome
   report -> performance and handoff outbox memories -> API/CLI reads -> later
   RAG retrieval.
