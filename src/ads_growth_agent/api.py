@@ -1024,6 +1024,10 @@ def get_campaign_feedback_loop_summary(
         FeedbackExecutionDryRunStore,
         Depends(get_runtime_feedback_execution_store),
     ],
+    handoff_store: Annotated[
+        FeedbackHandoffRecordStore,
+        Depends(get_runtime_feedback_handoff_store),
+    ],
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> CampaignFeedbackLoopSummaryResponse:
     response.headers["X-Tenant-ID"] = settings.tenant_id
@@ -1041,8 +1045,12 @@ def get_campaign_feedback_loop_summary(
         event,
         review_store,
         feedback_execution_store,
+        handoff_store,
         review_persistence_enabled=settings.feedback_review_persistence_backend != "none",
         execution_persistence_enabled=(
+            settings.feedback_execution_persistence_backend != "none"
+        ),
+        handoff_persistence_enabled=(
             settings.feedback_execution_persistence_backend != "none"
         ),
         limit=limit,
@@ -1051,6 +1059,9 @@ def get_campaign_feedback_loop_summary(
     response.headers["Feedback-Loop-Stage"] = summary.current_stage
     response.headers["Feedback-Review-Count"] = str(summary.review_count)
     response.headers["Feedback-Dry-Run-Count"] = str(summary.dry_run_count)
+    response.headers["Feedback-Handoff-Record-Count"] = str(summary.handoff_record_count)
+    if summary.latest_handoff_outcome is not None:
+        response.headers["Feedback-Handoff-Outcome"] = summary.latest_handoff_outcome.value
     return summary
 
 

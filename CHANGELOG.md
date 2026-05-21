@@ -39,8 +39,8 @@
 - Added filtered feedback review lineage list API and CLI surfaces for audit by
   event, advertiser, optimization draft, decision, or lineage stage.
 - Added feedback loop summary API and CLI surfaces so operators can inspect
-  current stage, next actions, reviews, lineage, and dry-run audit from one
-  persisted performance event.
+  current stage, next actions, reviews, lineage, dry-run audit, and handoff
+  outcome records from one persisted performance event.
 - Added read-only feedback handoff package API and CLI surfaces for approved
   reviews with latest dry-run validation, manual steps, checklist, and
   guardrails.

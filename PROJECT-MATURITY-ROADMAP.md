@@ -184,8 +184,8 @@ Planned work:
   planning.
 - Feedback review lineage APIs/CLI for individual and filtered audit and
   debugging, including execution-plan and dry-run summaries.
-- Feedback loop summary APIs/CLI for operator-facing current stage and next
-  action review from one persisted event.
+- Feedback loop summary APIs/CLI for operator-facing current stage, next action,
+  dry-run audit, and handoff outcome review from one persisted event.
 - Feedback handoff package APIs/CLI for approved manual handoff packages.
 - Feedback handoff record APIs/CLI for operator outcome audit.
 - Feedback execution plan APIs/CLI for approved feedback optimization reviews,
@@ -219,8 +219,8 @@ Exit criteria:
   advertiser, draft, decision, or lineage stage, including execution readiness
   and persisted dry-run audit.
 - A feedback loop summary can be fetched for one persisted performance event,
-  showing current stage, next operator actions, reviews, lineage, and dry-run
-  audit in one read-only projection.
+  showing current stage, next operator actions, reviews, lineage, dry-run audit,
+  and handoff outcomes in one read-only projection.
 - Approved reviews can produce read-only manual handoff packages that include
   execution plan, latest dry-run validation, manual steps, checklist, and
   guardrails.

@@ -388,12 +388,17 @@ def get_feedback_loop_summary(
         raise typer.Exit(1)
     review_store = build_configured_feedback_review_store(settings)
     execution_store = build_configured_feedback_execution_store(settings)
+    handoff_store = build_configured_feedback_handoff_store(settings)
     summary = build_campaign_feedback_loop_summary(
         event,
         review_store,
         execution_store,
+        handoff_store,
         review_persistence_enabled=settings.feedback_review_persistence_backend != "none",
         execution_persistence_enabled=(
+            settings.feedback_execution_persistence_backend != "none"
+        ),
+        handoff_persistence_enabled=(
             settings.feedback_execution_persistence_backend != "none"
         ),
         limit=limit,

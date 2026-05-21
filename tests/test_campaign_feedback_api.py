@@ -570,6 +570,9 @@ def test_get_campaign_feedback_loop_summary_api_returns_operator_status() -> Non
         reviews=[source_review, revision_review]
     )
     execution_store = CapturingFeedbackExecutionDryRunStore()
+    handoff_store = CapturingFeedbackHandoffRecordStore()
+    execution_plan = api_module.build_feedback_execution_plan(revision_review)
+    completed_step_id = execution_plan.steps[0].step_id
     api_app.dependency_overrides[get_runtime_settings] = lambda: Settings(
         performance_event_persistence_backend="postgres",
         feedback_review_persistence_backend="postgres",
@@ -580,10 +583,22 @@ def test_get_campaign_feedback_loop_summary_api_returns_operator_status() -> Non
     api_app.dependency_overrides[get_runtime_feedback_execution_store] = (
         lambda: execution_store
     )
+    api_app.dependency_overrides[get_runtime_feedback_handoff_store] = (
+        lambda: handoff_store
+    )
     try:
         client = TestClient(api_app)
         dry_run_response = client.post(
             f"/feedback-optimization-reviews/{revision_review.review_id}/execution-plan/dry-run",
+            headers={"X-Tenant-ID": "tenant_api"},
+        )
+        handoff_response = client.post(
+            f"/feedback-optimization-reviews/{revision_review.review_id}/handoff-records",
+            json={
+                "outcome": "applied",
+                "operator_id": "operator_003",
+                "completed_step_ids": [completed_step_id],
+            },
             headers={"X-Tenant-ID": "tenant_api"},
         )
         summary_response = client.get(
@@ -596,20 +611,31 @@ def test_get_campaign_feedback_loop_summary_api_returns_operator_status() -> Non
 
     payload = summary_response.json()
     assert dry_run_response.status_code == 200
+    assert handoff_response.status_code == 200
     assert summary_response.status_code == 200
-    assert summary_response.headers["feedback-loop-stage"] == "dry_run_passed"
+    assert summary_response.headers["feedback-loop-stage"] == "handoff_applied"
     assert summary_response.headers["feedback-review-count"] == "2"
     assert summary_response.headers["feedback-dry-run-count"] == "1"
+    assert summary_response.headers["feedback-handoff-record-count"] == "1"
+    assert summary_response.headers["feedback-handoff-outcome"] == "applied"
     assert payload["event_id"] == event.event_id
-    assert payload["current_stage"] == "dry_run_passed"
+    assert payload["current_stage"] == "handoff_applied"
     assert payload["review_count"] == 2
     assert payload["lineage_count"] == 2
     assert payload["dry_run_count"] == 1
+    assert payload["handoff_record_count"] == 1
+    assert payload["latest_handoff_record_id"] == handoff_response.json()[
+        "handoff_record_id"
+    ]
+    assert payload["latest_handoff_outcome"] == "applied"
     assert payload["reviews"]["count"] == 2
     assert payload["lineages"]["count"] == 2
     assert payload["dry_runs"]["items"][0]["dry_run_id"] == dry_run_response.json()[
         "dry_run_id"
     ]
+    assert payload["handoff_records"]["items"][0]["handoff_record_id"] == (
+        handoff_response.json()["handoff_record_id"]
+    )
     assert payload["execution_ready_review_ids"] == [revision_review.review_id]
     assert event_store.requested_event_ids == [event.event_id]
 
@@ -1649,6 +1675,19 @@ def test_get_feedback_loop_summary_cli_returns_operator_status(monkeypatch) -> N
         reviews=[source_review, revision_review]
     )
     execution_store = CapturingFeedbackExecutionDryRunStore(dry_runs=[dry_run])
+    handoff_store = CapturingFeedbackHandoffRecordStore()
+    handoff_package = api_module.build_feedback_handoff_package(
+        revision_review,
+        execution_store,
+    )
+    handoff_record = handoff_store.record_handoff(
+        handoff_package,
+        CampaignFeedbackHandoffRecordRequest(
+            outcome=FeedbackHandoffOutcome.APPLIED,
+            operator_id="operator_cli_summary",
+            completed_step_ids=[step.step_id for step in handoff_package.manual_steps],
+        ),
+    )
 
     monkeypatch.setattr(
         "ads_growth_agent.cli.get_settings",
@@ -1670,6 +1709,10 @@ def test_get_feedback_loop_summary_cli_returns_operator_status(monkeypatch) -> N
         "ads_growth_agent.cli.build_configured_feedback_execution_store",
         lambda settings: execution_store,
     )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_feedback_handoff_store",
+        lambda settings: handoff_store,
+    )
 
     result = CliRunner().invoke(
         cli_app,
@@ -1679,12 +1722,18 @@ def test_get_feedback_loop_summary_cli_returns_operator_status(monkeypatch) -> N
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["event_id"] == event.event_id
-    assert payload["current_stage"] == "dry_run_passed"
+    assert payload["current_stage"] == "handoff_applied"
     assert payload["review_count"] == 2
     assert payload["lineage_count"] == 2
     assert payload["dry_run_count"] == 1
+    assert payload["handoff_record_count"] == 1
+    assert payload["latest_handoff_record_id"] == handoff_record.handoff_record_id
+    assert payload["latest_handoff_outcome"] == "applied"
     assert payload["execution_ready_review_ids"] == [revision_review.review_id]
     assert payload["dry_runs"]["items"][0]["dry_run_id"] == dry_run.dry_run_id
+    assert payload["handoff_records"]["items"][0]["handoff_record_id"] == (
+        handoff_record.handoff_record_id
+    )
 
 
 def test_submit_feedback_optimization_review_cli_records_review(monkeypatch) -> None:

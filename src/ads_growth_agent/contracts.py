@@ -1248,16 +1248,23 @@ class CampaignFeedbackLoopSummaryResponse(BaseModel):
         "execution_ready",
         "dry_run_passed",
         "dry_run_failed",
+        "handoff_applied",
+        "handoff_blocked",
+        "handoff_skipped",
     ]
     review_persistence_enabled: bool
     execution_persistence_enabled: bool
+    handoff_persistence_enabled: bool = False
     review_count: int = Field(ge=0)
     lineage_count: int = Field(ge=0)
     dry_run_count: int = Field(ge=0)
+    handoff_record_count: int = Field(default=0, ge=0)
     latest_review_id: str | None = Field(default=None, min_length=1, max_length=160)
     latest_review_decision: FeedbackOptimizationReviewDecision | None = None
     latest_dry_run_id: str | None = Field(default=None, min_length=1, max_length=160)
     latest_dry_run_status: Literal["passed", "failed"] | None = None
+    latest_handoff_record_id: str | None = Field(default=None, min_length=1, max_length=160)
+    latest_handoff_outcome: FeedbackHandoffOutcome | None = None
     approved_review_ids: list[str] = Field(default_factory=list)
     execution_ready_review_ids: list[str] = Field(default_factory=list)
     next_operator_actions: list[str] = Field(min_length=1)
@@ -1268,4 +1275,10 @@ class CampaignFeedbackLoopSummaryResponse(BaseModel):
     reviews: CampaignFeedbackOptimizationReviewListResponse
     lineages: CampaignFeedbackOptimizationReviewLineageListResponse
     dry_runs: CampaignFeedbackExecutionDryRunListResponse
+    handoff_records: CampaignFeedbackHandoffRecordListResponse = Field(
+        default_factory=lambda: CampaignFeedbackHandoffRecordListResponse(
+            count=0,
+            limit=50,
+        )
+    )
     guardrails: list[str] = Field(default_factory=list)

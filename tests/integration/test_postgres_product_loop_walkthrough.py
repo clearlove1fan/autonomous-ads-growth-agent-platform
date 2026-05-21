@@ -96,13 +96,19 @@ def test_persisted_product_loop_walkthrough() -> None:
         "dry_run_id"
     ]
     assert summary["review_lineage"]["cli_list_count"] == 1
-    assert summary["feedback_loop_summary"]["current_stage"] == "dry_run_passed"
+    assert summary["feedback_loop_summary"]["current_stage"] == "handoff_applied"
     assert summary["feedback_loop_summary"]["review_count"] == 3
     assert summary["feedback_loop_summary"]["lineage_count"] == 3
     assert summary["feedback_loop_summary"]["dry_run_count"] == 2
+    assert summary["feedback_loop_summary"]["handoff_record_count"] == 1
     assert summary["feedback_loop_summary"]["latest_dry_run_status"] == "passed"
-    assert summary["feedback_loop_summary"]["cli_current_stage"] == "dry_run_passed"
+    assert summary["feedback_loop_summary"]["latest_handoff_record_id"] == summary[
+        "handoff_record"
+    ]["handoff_record_id"]
+    assert summary["feedback_loop_summary"]["latest_handoff_outcome"] == "applied"
+    assert summary["feedback_loop_summary"]["cli_current_stage"] == "handoff_applied"
     assert summary["feedback_loop_summary"]["cli_dry_run_count"] == 2
+    assert summary["feedback_loop_summary"]["cli_handoff_record_count"] == 1
     assert summary["execution_plan"]["execution_mode"] == "dry_run"
     assert summary["execution_plan"]["first_tool_name"] == "draft_budget_reallocation"
     assert summary["execution_dry_run"]["status"] == "passed"
@@ -130,7 +136,7 @@ def test_persisted_product_loop_walkthrough() -> None:
     assert summary["cli_reads"]["handoff_record_count"] == 1
     assert summary["cli_reads"]["review_lineage_stage"] == "revision_review"
     assert summary["cli_reads"]["review_lineage_count"] == 1
-    assert summary["cli_reads"]["feedback_loop_stage"] == "dry_run_passed"
+    assert summary["cli_reads"]["feedback_loop_stage"] == "handoff_applied"
     assert summary["cli_reads"]["execution_plan_id"] == summary["execution_plan"][
         "execution_plan_id"
     ]

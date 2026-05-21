@@ -382,7 +382,7 @@ flowchart TD
 | CampaignFeedbackExecutionPlanResponse | Feedback Loop Layer | API caller, CLI user | Dry-run ordered tool intents, preconditions, rollback notes, and guardrails derived from an approved optimization review |
 | CampaignFeedbackExecutionDryRunResponse | Feedback Loop Layer | API caller, CLI user | Typed registry validation result for approved draft tool intents, including validated and blocked step counts with no live mutation |
 | CampaignFeedbackExecutionDryRunListResponse | Feedback Loop Layer | API caller, CLI user | Filtered list of persisted dry-run validation records by review, execution plan, event, advertiser, or status |
-| CampaignFeedbackLoopSummaryResponse | Feedback Loop Layer | API caller, CLI user | Read-only operator projection for one performance event, including action plan, optimization draft, reviews, lineage, dry-runs, current stage, and next operator actions |
+| CampaignFeedbackLoopSummaryResponse | Feedback Loop Layer | API caller, CLI user | Read-only operator projection for one performance event, including action plan, optimization draft, reviews, lineage, dry-runs, handoff outcomes, current stage, and next operator actions |
 | CampaignFeedbackHandoffPackageResponse | Feedback Loop Layer | API caller, CLI user | Read-only manual handoff package for one approved review, including execution plan, latest dry-run validation, manual steps, checklist, and guardrails |
 | CampaignFeedbackHandoffRecordRequest/Response | Feedback Loop Layer | API caller, CLI user | Operator audit record for applied, blocked, or skipped manual handoff outcomes |
 | AdvertiserMemoryDetailResponse | Memory Store | API caller, CLI user | Public source ID, memory type, content, metadata, importance, usage count, and timestamps |
@@ -876,7 +876,7 @@ The first version should prioritize a complete, traceable, and recoverable end-t
 | 2026-05-20 | Add feedback review lineage | Operators can inspect source review, revision draft, revision reviews, and execution-ready review IDs through API/CLI | Accepted |
 | 2026-05-20 | Add execution audit to feedback review lineage | Lineage now includes compact execution-plan and persisted dry-run validation summaries for approved reviews | Accepted |
 | 2026-05-20 | Add filtered feedback review lineage list | Operators can query lineage audit records by event, advertiser, draft, decision, or lineage stage through API/CLI | Accepted |
-| 2026-05-20 | Add feedback loop summary projection | Operators can inspect current feedback-loop stage, next actions, reviews, lineage, and dry-run audit from one event-rooted API/CLI view | Accepted |
+| 2026-05-20 | Add feedback loop summary projection | Operators can inspect current feedback-loop stage, next actions, reviews, lineage, dry-run audit, and handoff outcomes from one event-rooted API/CLI view | Accepted |
 | 2026-05-20 | Add feedback manual handoff package | Approved reviews can produce read-only manual handoff packages with latest dry-run validation, checklist, and guardrails | Accepted |
 | 2026-05-20 | Add feedback handoff outcome records | Operators can record applied, blocked, or skipped manual handoff results as persisted audit records without live mutation | Accepted |
 | 2026-05-20 | Add feedback execution dry-run validation | Approved dry-run execution plans now validate draft tool intents through the internal typed tool registry and return structured no-mutation step results | Accepted |

@@ -803,8 +803,8 @@ def run_persisted_product_loop(
                 "CLI lineage list should return the approved revision review lineage",
             )
             _expect(
-                feedback_loop_summary["current_stage"] == "dry_run_passed",
-                "feedback loop summary should report the latest loop as dry-run passed",
+                feedback_loop_summary["current_stage"] == "handoff_applied",
+                "feedback loop summary should report the latest loop as handoff applied",
             )
             _expect(
                 feedback_loop_summary["review_count"] == 3,
@@ -820,6 +820,19 @@ def run_persisted_product_loop(
                 "feedback loop summary should include original and revision dry-run audits",
             )
             _expect(
+                feedback_loop_summary["handoff_record_count"] == 1,
+                "feedback loop summary should include the manual handoff record",
+            )
+            _expect(
+                feedback_loop_summary["latest_handoff_record_id"]
+                == handoff_record["handoff_record_id"],
+                "feedback loop summary should expose the latest handoff record",
+            )
+            _expect(
+                feedback_loop_summary["latest_handoff_outcome"] == "applied",
+                "feedback loop summary should expose the latest handoff outcome",
+            )
+            _expect(
                 cli_feedback_loop_summary["current_stage"]
                 == feedback_loop_summary["current_stage"],
                 "CLI feedback loop summary should match API current stage",
@@ -828,6 +841,10 @@ def run_persisted_product_loop(
                 cli_feedback_loop_summary["dry_run_count"]
                 == feedback_loop_summary["dry_run_count"],
                 "CLI feedback loop summary should match API dry-run count",
+            )
+            _expect(
+                cli_feedback_loop_summary["handoff_record_count"] == 1,
+                "CLI feedback loop summary should include handoff record count",
             )
             _expect(cli_event_list["count"] == 1, "CLI event list should find feedback event")
             _expect(
@@ -962,10 +979,18 @@ def run_persisted_product_loop(
                 "review_count": feedback_loop_summary["review_count"],
                 "lineage_count": feedback_loop_summary["lineage_count"],
                 "dry_run_count": feedback_loop_summary["dry_run_count"],
+                "handoff_record_count": feedback_loop_summary["handoff_record_count"],
                 "latest_review_id": feedback_loop_summary["latest_review_id"],
                 "latest_dry_run_status": feedback_loop_summary["latest_dry_run_status"],
+                "latest_handoff_record_id": feedback_loop_summary[
+                    "latest_handoff_record_id"
+                ],
+                "latest_handoff_outcome": feedback_loop_summary["latest_handoff_outcome"],
                 "cli_current_stage": cli_feedback_loop_summary["current_stage"],
                 "cli_dry_run_count": cli_feedback_loop_summary["dry_run_count"],
+                "cli_handoff_record_count": cli_feedback_loop_summary[
+                    "handoff_record_count"
+                ],
             },
             "execution_plan": {
                 "execution_plan_id": execution_plan["execution_plan_id"],
@@ -1120,6 +1145,7 @@ def render_summary(summary: dict[str, Any]) -> str:
                 f"reviews={summary['feedback_loop_summary']['review_count']} "
                 f"lineages={summary['feedback_loop_summary']['lineage_count']} "
                 f"dry_runs={summary['feedback_loop_summary']['dry_run_count']} "
+                f"handoffs={summary['feedback_loop_summary']['handoff_record_count']} "
                 f"cli_stage={summary['feedback_loop_summary']['cli_current_stage']}"
             ),
             (

@@ -574,8 +574,8 @@ FEEDBACK_REVIEW_PERSISTENCE_BACKEND=postgres FEEDBACK_EXECUTION_PERSISTENCE_BACK
 
 For an operator-oriented view of the whole event feedback loop, fetch the
 summary projection. It includes the event, action plan, optimization draft,
-reviews, lineage records, dry-run records, current stage, and next operator
-actions:
+reviews, lineage records, dry-run records, handoff outcome records, current
+stage, and next operator actions:
 
 ```bash
 curl "http://localhost:8000/campaign-events/performance/evt_perf_001/feedback-loop-summary?limit=20" \
@@ -668,7 +668,9 @@ FEEDBACK_REVIEW_PERSISTENCE_BACKEND=postgres FEEDBACK_EXECUTION_PERSISTENCE_BACK
 
 After manual application, operators can record the outcome for audit. Applied
 records require the package to be `ready_for_manual_handoff`; blocked or skipped
-records preserve follow-up context without mutating live campaign state:
+records preserve follow-up context without mutating live campaign state. The
+feedback loop summary then reports terminal-like stages such as
+`handoff_applied`, `handoff_blocked`, or `handoff_skipped`:
 
 ```bash
 curl -X POST http://localhost:8000/feedback-optimization-reviews/feedback_review_example/handoff-records \
