@@ -47,6 +47,8 @@
 - Added feedback loop command-center API and CLI surfaces so operators can see
   the primary next command plus concrete API and CLI affordances for the current
   feedback-loop stage.
+- Made the feedback loop command center outcome-aware after applied handoff
+  follow-up snapshots, promoting outcome reports and follow-up action plans.
 - Added feedback outcome report API and CLI surfaces to compare a baseline
   feedback event with the next performance snapshot and classify
   improved/regressed/mixed outcomes.

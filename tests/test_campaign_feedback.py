@@ -19,6 +19,7 @@ from ads_growth_agent.contracts import (
     FeedbackOptimizationReviewDecision,
     FeedbackStrategyContext,
     OptimizationRule,
+    PerformanceEventType,
     PerformanceMetrics,
 )
 from ads_growth_agent.feedback import (
@@ -265,6 +266,31 @@ class _HandoffSummaryStore:
             advertiser_id=advertiser_id,
             outcome=outcome,
         )
+
+
+class _OutcomeEventStore:
+    def __init__(self, events: list[CampaignPerformanceEventDetailResponse]) -> None:
+        self._events = events
+
+    def list_events(
+        self,
+        *,
+        advertiser_id: str | None = None,
+        run_id: str | None = None,
+        campaign_id: str | None = None,
+        draft_id: str | None = None,
+        event_type: PerformanceEventType | None = None,
+        limit: int = 50,
+    ) -> list[CampaignPerformanceEventDetailResponse]:
+        return [
+            event
+            for event in self._events
+            if (advertiser_id is None or event.advertiser_id == advertiser_id)
+            and (run_id is None or event.run_id == run_id)
+            and (campaign_id is None or event.campaign_id == campaign_id)
+            and (draft_id is None or event.draft_id == draft_id)
+            and (event_type is None or event.event_type == event_type)
+        ][:limit]
 
 
 def test_feedback_analysis_flags_underperforming_cpa() -> None:
@@ -1320,6 +1346,189 @@ def test_feedback_loop_command_center_guides_post_handoff_monitoring() -> None:
         "inspect_feedback_outcome_report",
     }
     assert "operator affordances" in command_center.guardrails[0]
+
+
+def test_feedback_loop_command_center_promotes_outcome_report_after_followup() -> None:
+    event = CampaignPerformanceEventRequest(
+        event_id="evt_feedback_loop_command_outcome",
+        advertiser_id="adv_fitness_001",
+        run_id="run_001",
+        campaign_id="cmp_fittrack",
+        draft_id="draft_fittrack",
+        objective=CampaignObjective.REGISTRATIONS,
+        occurred_at="2026-05-12T12:00:00Z",
+        metrics=PerformanceMetrics(
+            impressions=10_000,
+            clicks=500,
+            spend="1000.00",
+            conversions=20,
+        ),
+        target_cpa="20.00",
+    )
+    followup_event = CampaignPerformanceEventRequest(
+        event_id="evt_feedback_loop_command_outcome_followup",
+        advertiser_id=event.advertiser_id,
+        run_id=event.run_id,
+        campaign_id=event.campaign_id,
+        draft_id=event.draft_id,
+        objective=event.objective,
+        occurred_at="2026-05-13T12:00:00Z",
+        metrics=PerformanceMetrics(
+            impressions=12_000,
+            clicks=720,
+            spend="900.00",
+            conversions=90,
+        ),
+        target_cpa="20.00",
+    )
+    analysis = analyze_campaign_performance_event(event)
+    followup_analysis = analyze_campaign_performance_event(followup_event)
+    detail = CampaignPerformanceEventDetailResponse(
+        event_id=event.event_id,
+        advertiser_id=event.advertiser_id,
+        run_id=event.run_id,
+        campaign_id=event.campaign_id,
+        draft_id=event.draft_id,
+        objective=event.objective,
+        event_type=event.event_type,
+        occurred_at=event.occurred_at,
+        metrics=event.metrics,
+        status="analyzed",
+        metadata={},
+        analysis=analysis,
+        created_at=analysis.created_at,
+        updated_at=analysis.created_at,
+    )
+    followup_detail = CampaignPerformanceEventDetailResponse(
+        event_id=followup_event.event_id,
+        advertiser_id=followup_event.advertiser_id,
+        run_id=followup_event.run_id,
+        campaign_id=followup_event.campaign_id,
+        draft_id=followup_event.draft_id,
+        objective=followup_event.objective,
+        event_type=followup_event.event_type,
+        occurred_at=followup_event.occurred_at,
+        metrics=followup_event.metrics,
+        status="analyzed",
+        metadata={},
+        analysis=followup_analysis,
+        created_at=followup_analysis.created_at,
+        updated_at=followup_analysis.created_at,
+    )
+    optimization_draft = build_campaign_feedback_optimization_draft(detail)
+    review = build_campaign_feedback_optimization_review(
+        optimization_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.APPROVED,
+            reviewer_id="operator_001",
+            selected_change_ids=[optimization_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_command_outcome",
+    )
+    execution_plan = build_feedback_execution_plan(review)
+    dry_run = dry_run_feedback_execution_plan(execution_plan)
+    execution_store = _ExecutionLineageStore([dry_run])
+    handoff_package = build_feedback_handoff_package(review, execution_store)
+    handoff_record = build_feedback_handoff_record(
+        handoff_package,
+        CampaignFeedbackHandoffRecordRequest(
+            outcome=FeedbackHandoffOutcome.APPLIED,
+            operator_id="operator_003",
+            completed_step_ids=[step.step_id for step in handoff_package.manual_steps],
+        ),
+    )
+
+    command_center = build_campaign_feedback_loop_command_center(
+        detail,
+        _ReviewLineageStore([review]),
+        execution_store,
+        _HandoffSummaryStore([handoff_record]),
+        review_persistence_enabled=True,
+        execution_persistence_enabled=True,
+        handoff_persistence_enabled=True,
+        outcome_event_store=_OutcomeEventStore([followup_detail, detail]),
+        limit=20,
+    )
+
+    assert command_center.current_stage == "outcome_improved"
+    assert command_center.outcome_status == "improved"
+    assert command_center.outcome_report is not None
+    assert command_center.outcome_report.followup_event_id == followup_event.event_id
+    assert command_center.primary_command_id == "inspect_feedback_outcome_report"
+    assert command_center.primary_command is not None
+    assert command_center.primary_command.cli_command == [
+        "ads-growth-agent",
+        "get-feedback-outcome-report",
+        event.event_id,
+        "--limit",
+        "20",
+    ]
+    assert command_center.loop_summary.current_stage == "handoff_applied"
+    assert command_center.timeline.latest_entry_stage == "handoff_applied"
+    assert {command.command_id for command in command_center.commands} == {
+        "inspect_feedback_outcome_report",
+        "record_next_performance_event",
+        "inspect_feedback_loop_summary",
+        "inspect_feedback_loop_timeline",
+    }
+
+    regressed_event = CampaignPerformanceEventRequest(
+        event_id="evt_feedback_loop_command_outcome_regressed",
+        advertiser_id=event.advertiser_id,
+        run_id=event.run_id,
+        campaign_id=event.campaign_id,
+        draft_id=event.draft_id,
+        objective=event.objective,
+        occurred_at="2026-05-13T12:00:00Z",
+        metrics=PerformanceMetrics(
+            impressions=8_000,
+            clicks=240,
+            spend="1100.00",
+            conversions=10,
+        ),
+        target_cpa="20.00",
+    )
+    regressed_analysis = analyze_campaign_performance_event(regressed_event)
+    regressed_detail = CampaignPerformanceEventDetailResponse(
+        event_id=regressed_event.event_id,
+        advertiser_id=regressed_event.advertiser_id,
+        run_id=regressed_event.run_id,
+        campaign_id=regressed_event.campaign_id,
+        draft_id=regressed_event.draft_id,
+        objective=regressed_event.objective,
+        event_type=regressed_event.event_type,
+        occurred_at=regressed_event.occurred_at,
+        metrics=regressed_event.metrics,
+        status="analyzed",
+        metadata={},
+        analysis=regressed_analysis,
+        created_at=regressed_analysis.created_at,
+        updated_at=regressed_analysis.created_at,
+    )
+
+    regressed_center = build_campaign_feedback_loop_command_center(
+        detail,
+        _ReviewLineageStore([review]),
+        execution_store,
+        _HandoffSummaryStore([handoff_record]),
+        review_persistence_enabled=True,
+        execution_persistence_enabled=True,
+        handoff_persistence_enabled=True,
+        outcome_event_store=_OutcomeEventStore([regressed_detail, detail]),
+        limit=20,
+    )
+
+    followup_action_command = next(
+        command
+        for command in regressed_center.commands
+        if command.command_id == "inspect_followup_action_plan"
+    )
+    assert regressed_center.current_stage == "outcome_regressed"
+    assert regressed_center.outcome_status == "regressed"
+    assert followup_action_command.enabled is True
+    assert followup_action_command.api_path == (
+        f"/campaign-events/performance/{regressed_event.event_id}/action-plan"
+    )
 
 
 def test_feedback_execution_plan_maps_approved_review_to_dry_run_tool_intents() -> None:

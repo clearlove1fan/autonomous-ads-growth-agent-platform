@@ -115,6 +115,18 @@ def test_persisted_product_loop_walkthrough() -> None:
     assert summary["feedback_loop_summary"]["cli_current_stage"] == "handoff_applied"
     assert summary["feedback_loop_summary"]["cli_dry_run_count"] == 2
     assert summary["feedback_loop_summary"]["cli_handoff_record_count"] == 1
+    assert summary["feedback_loop_command_center"]["current_stage"] == "outcome_improved"
+    assert summary["feedback_loop_command_center"]["outcome_status"] == "improved"
+    assert summary["feedback_loop_command_center"]["followup_event_id"] == summary[
+        "followup_event"
+    ]["event_id"]
+    assert summary["feedback_loop_command_center"]["primary_command_id"] == (
+        "inspect_feedback_outcome_report"
+    )
+    assert summary["feedback_loop_command_center"]["cli_current_stage"] == (
+        "outcome_improved"
+    )
+    assert summary["feedback_loop_command_center"]["cli_outcome_status"] == "improved"
     assert summary["execution_plan"]["execution_mode"] == "dry_run"
     assert summary["execution_plan"]["first_tool_name"] == "draft_budget_reallocation"
     assert summary["execution_dry_run"]["status"] == "passed"

@@ -1184,6 +1184,7 @@ def get_campaign_feedback_loop_command_center(
         handoff_persistence_enabled=(
             settings.feedback_execution_persistence_backend != "none"
         ),
+        outcome_event_store=event_store,
         limit=limit,
     )
     response.headers["Feedback-ID"] = event.analysis.feedback_id
@@ -1192,6 +1193,15 @@ def get_campaign_feedback_loop_command_center(
     if command_center.primary_command_id is not None:
         response.headers["Feedback-Primary-Command-ID"] = (
             command_center.primary_command_id
+        )
+    if command_center.outcome_status is not None:
+        response.headers["Feedback-Outcome-Status"] = command_center.outcome_status
+    if (
+        command_center.outcome_report is not None
+        and command_center.outcome_report.followup_event_id is not None
+    ):
+        response.headers["Feedback-Followup-Event-ID"] = (
+            command_center.outcome_report.followup_event_id
         )
     return command_center
 

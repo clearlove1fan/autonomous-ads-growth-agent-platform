@@ -4,7 +4,9 @@ from ads_growth_agent.contracts import (
     CampaignFeedbackExecutionDryRunResponse,
     CampaignFeedbackLoopCommandCenterResponse,
     CampaignFeedbackLoopSummaryResponse,
+    CampaignFeedbackOutcomeReportResponse,
     CampaignPerformanceEventDetailResponse,
+    FeedbackLoopCurrentStage,
     FeedbackLoopOperatorCommand,
 )
 from ads_growth_agent.feedback_loop_summary import (
@@ -14,6 +16,10 @@ from ads_growth_agent.feedback_loop_summary import (
     build_campaign_feedback_loop_summary,
 )
 from ads_growth_agent.feedback_loop_timeline import build_campaign_feedback_loop_timeline
+from ads_growth_agent.feedback_outcome_report import (
+    FeedbackOutcomePerformanceEventStore,
+    build_campaign_feedback_outcome_report,
+)
 
 
 def build_campaign_feedback_loop_command_center(
@@ -25,6 +31,7 @@ def build_campaign_feedback_loop_command_center(
     review_persistence_enabled: bool = False,
     execution_persistence_enabled: bool = False,
     handoff_persistence_enabled: bool = False,
+    outcome_event_store: FeedbackOutcomePerformanceEventStore | None = None,
     limit: int = 50,
 ) -> CampaignFeedbackLoopCommandCenterResponse:
     """Compose stage-aware operator commands for one persisted feedback event."""
@@ -50,8 +57,25 @@ def build_campaign_feedback_loop_command_center(
         handoff_persistence_enabled=handoff_persistence_enabled,
         limit=effective_limit,
     )
-    commands = _commands_for_stage(loop_summary, limit=effective_limit)
-    commands = [*commands, *_inspection_commands(loop_summary, limit=effective_limit)]
+    outcome_report = (
+        build_campaign_feedback_outcome_report(
+            event,
+            outcome_event_store,
+            limit=effective_limit,
+        )
+        if outcome_event_store is not None
+        else None
+    )
+    current_stage = _command_center_stage(loop_summary, outcome_report)
+    commands = _commands_for_stage(
+        loop_summary,
+        current_stage=current_stage,
+        outcome_report=outcome_report,
+        limit=effective_limit,
+    )
+    commands = _dedupe_commands(
+        [*commands, *_inspection_commands(loop_summary, limit=effective_limit)]
+    )
     primary_command = _primary_command(commands)
 
     return CampaignFeedbackLoopCommandCenterResponse(
@@ -60,16 +84,18 @@ def build_campaign_feedback_loop_command_center(
         run_id=event.run_id,
         campaign_id=event.campaign_id,
         draft_id=event.draft_id,
-        current_stage=loop_summary.current_stage,
+        current_stage=current_stage,
         primary_command_id=primary_command.command_id if primary_command else None,
         primary_command=primary_command,
+        outcome_status=outcome_report.outcome_status if outcome_report else None,
+        outcome_report=outcome_report,
         command_count=len(commands),
         commands=commands,
         loop_summary=loop_summary,
         timeline=timeline,
         summary=(
             f"Feedback command center for event {event.event_id}: "
-            f"stage={loop_summary.current_stage}, commands={len(commands)}."
+            f"stage={current_stage}, commands={len(commands)}."
         ),
         guardrails=[
             "Command center entries are operator affordances, not autonomous execution.",
@@ -81,9 +107,18 @@ def build_campaign_feedback_loop_command_center(
 def _commands_for_stage(
     summary: CampaignFeedbackLoopSummaryResponse,
     *,
+    current_stage: FeedbackLoopCurrentStage,
+    outcome_report: CampaignFeedbackOutcomeReportResponse | None,
     limit: int,
 ) -> list[FeedbackLoopOperatorCommand]:
-    match summary.current_stage:
+    match current_stage:
+        case (
+            "outcome_improved"
+            | "outcome_regressed"
+            | "outcome_mixed"
+            | "outcome_insufficient_data"
+        ):
+            return _outcome_report_commands(summary, outcome_report, limit=limit)
         case "review_pending":
             return _review_pending_commands(summary)
         case "revision_requested":
@@ -397,6 +432,44 @@ def _handoff_applied_commands(
     ]
 
 
+def _outcome_report_commands(
+    summary: CampaignFeedbackLoopSummaryResponse,
+    outcome_report: CampaignFeedbackOutcomeReportResponse | None,
+    *,
+    limit: int,
+) -> list[FeedbackLoopOperatorCommand]:
+    commands = [
+        _inspect_outcome_report_command(summary, priority=1, limit=limit),
+    ]
+    if outcome_report is None:
+        return commands
+    if outcome_report.outcome_status == "improved":
+        return [
+            *commands,
+            _next_performance_event_command(
+                summary,
+                priority=2,
+                description=(
+                    "Continue monitoring improved post-handoff results with the "
+                    "next performance snapshot."
+                ),
+            ),
+        ]
+    if outcome_report.outcome_status in {"regressed", "mixed"}:
+        return [
+            *commands,
+            _followup_action_plan_command(summary, outcome_report, priority=2),
+        ]
+    return [
+        *commands,
+        _next_performance_event_command(
+            summary,
+            priority=2,
+            description="Collect another snapshot before deciding whether to revise the plan.",
+        ),
+    ]
+
+
 def _handoff_blocked_commands(
     summary: CampaignFeedbackLoopSummaryResponse,
 ) -> list[FeedbackLoopOperatorCommand]:
@@ -503,25 +576,10 @@ def _inspection_commands(
             ],
             resource_ids=_resource_ids(summary),
         ),
-        _command(
-            command_id="inspect_feedback_outcome_report",
-            action_type="inspect_feedback_outcome_report",
+        _inspect_outcome_report_command(
+            summary,
             priority=92,
-            label="Inspect outcome report",
-            description=(
-                "Compare this feedback event against the next persisted "
-                "performance snapshot."
-            ),
-            api_method="GET",
-            api_path=f"/campaign-events/performance/{summary.event_id}/feedback-outcome-report",
-            cli_command=[
-                "ads-growth-agent",
-                "get-feedback-outcome-report",
-                summary.event_id,
-                "--limit",
-                str(limit),
-            ],
-            resource_ids=_resource_ids(summary),
+            limit=limit,
         ),
     ]
 
@@ -595,6 +653,103 @@ def _inspect_handoff_record_command(
         ],
         resource_ids=_resource_ids(summary, handoff_record_id=handoff_record_id),
     )
+
+
+def _inspect_outcome_report_command(
+    summary: CampaignFeedbackLoopSummaryResponse,
+    *,
+    priority: int,
+    limit: int,
+) -> FeedbackLoopOperatorCommand:
+    return _command(
+        command_id="inspect_feedback_outcome_report",
+        action_type="inspect_feedback_outcome_report",
+        priority=priority,
+        label="Inspect outcome report",
+        description=(
+            "Compare this feedback event against the next persisted "
+            "performance snapshot."
+        ),
+        api_method="GET",
+        api_path=f"/campaign-events/performance/{summary.event_id}/feedback-outcome-report",
+        cli_command=[
+            "ads-growth-agent",
+            "get-feedback-outcome-report",
+            summary.event_id,
+            "--limit",
+            str(limit),
+        ],
+        resource_ids=_resource_ids(summary),
+    )
+
+
+def _followup_action_plan_command(
+    summary: CampaignFeedbackLoopSummaryResponse,
+    outcome_report: CampaignFeedbackOutcomeReportResponse,
+    *,
+    priority: int,
+) -> FeedbackLoopOperatorCommand:
+    followup_event_id = outcome_report.followup_event_id
+    return _command(
+        command_id="inspect_followup_action_plan",
+        action_type="inspect_followup_action_plan",
+        priority=priority,
+        enabled=followup_event_id is not None,
+        disabled_reason=_disabled_unless(
+            followup_event_id is not None,
+            "No follow-up performance event is available.",
+        ),
+        label="Inspect follow-up action plan",
+        description=(
+            "Review draft-only recommendations generated from the follow-up "
+            "snapshot before opening another optimization loop."
+        ),
+        api_method="GET",
+        api_path=(
+            f"/campaign-events/performance/{followup_event_id or '<event_id>'}"
+            "/action-plan"
+        ),
+        cli_command=[
+            "ads-growth-agent",
+            "get-feedback-action-plan",
+            followup_event_id or "<event_id>",
+        ],
+        resource_ids=_resource_ids(summary, followup_event_id=followup_event_id),
+        requires_persistence=["performance_event"],
+    )
+
+
+def _command_center_stage(
+    summary: CampaignFeedbackLoopSummaryResponse,
+    outcome_report: CampaignFeedbackOutcomeReportResponse | None,
+) -> FeedbackLoopCurrentStage:
+    if outcome_report is None or summary.current_stage != "handoff_applied":
+        return summary.current_stage
+    match outcome_report.outcome_status:
+        case "improved":
+            return "outcome_improved"
+        case "regressed":
+            return "outcome_regressed"
+        case "mixed":
+            return "outcome_mixed"
+        case "insufficient_data":
+            return "outcome_insufficient_data"
+        case "no_followup_event":
+            return summary.current_stage
+    return summary.current_stage
+
+
+def _dedupe_commands(
+    commands: list[FeedbackLoopOperatorCommand],
+) -> list[FeedbackLoopOperatorCommand]:
+    deduped: list[FeedbackLoopOperatorCommand] = []
+    seen: set[str] = set()
+    for command in commands:
+        if command.command_id in seen:
+            continue
+        seen.add(command.command_id)
+        deduped.append(command)
+    return deduped
 
 
 def _command(

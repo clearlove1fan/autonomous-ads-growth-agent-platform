@@ -578,7 +578,9 @@ timeline, or command-center projections. The summary includes the event, action
 plan, optimization draft, reviews, lineage records, dry-run records, handoff
 outcome records, current stage, and next operator actions. The timeline orders
 the same product loop into auditable milestones. The command center turns the
-stage into concrete API and CLI affordances:
+stage into concrete API and CLI affordances; after an applied handoff has a
+follow-up snapshot, it promotes the outcome report and next follow-up action
+instead of staying on generic post-handoff monitoring:
 
 ```bash
 curl "http://localhost:8000/campaign-events/performance/evt_perf_001/feedback-loop-summary?limit=20" \

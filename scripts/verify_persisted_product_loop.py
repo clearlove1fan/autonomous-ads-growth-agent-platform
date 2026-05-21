@@ -991,27 +991,36 @@ def run_persisted_product_loop(
                 "CLI feedback loop timeline should match API latest stage",
             )
             _expect(
-                feedback_loop_command_center["current_stage"] == "handoff_applied",
-                "feedback loop command center should report handoff applied",
+                feedback_loop_command_center["current_stage"] == "outcome_improved",
+                "feedback loop command center should advance to the improved outcome stage",
             )
             _expect(
                 feedback_loop_command_center["primary_command_id"]
-                == "record_next_performance_event",
-                "feedback loop command center should guide post-handoff monitoring",
+                == "inspect_feedback_outcome_report",
+                "feedback loop command center should promote the outcome report",
             )
             _expect(
                 feedback_loop_command_center["primary_command"]["api_path"]
-                == "/campaign-events/performance",
-                "feedback loop command center primary command should ingest next event",
+                == f"/campaign-events/performance/{event_id}/feedback-outcome-report",
+                "feedback loop command center primary command should inspect the outcome",
             )
             _expect(
                 feedback_loop_command_center["command_count"] == 4,
                 "feedback loop command center should include primary and inspection commands",
             )
             _expect(
+                feedback_loop_command_center["outcome_status"] == "improved",
+                "feedback loop command center should surface the improved outcome",
+            )
+            _expect(
                 cli_feedback_loop_command_center["primary_command_id"]
                 == feedback_loop_command_center["primary_command_id"],
                 "CLI feedback loop command center should match API primary command",
+            )
+            _expect(
+                cli_feedback_loop_command_center["current_stage"]
+                == feedback_loop_command_center["current_stage"],
+                "CLI feedback loop command center should match API stage",
             )
             _expect(
                 followup_event_response["advertiser_memory_status"] == "queued",
@@ -1227,6 +1236,10 @@ def run_persisted_product_loop(
                 "primary_command_id": feedback_loop_command_center[
                     "primary_command_id"
                 ],
+                "outcome_status": feedback_loop_command_center["outcome_status"],
+                "followup_event_id": feedback_loop_command_center["outcome_report"][
+                    "followup_event_id"
+                ],
                 "primary_api_path": feedback_loop_command_center["primary_command"][
                     "api_path"
                 ],
@@ -1234,6 +1247,8 @@ def run_persisted_product_loop(
                 "cli_primary_command_id": cli_feedback_loop_command_center[
                     "primary_command_id"
                 ],
+                "cli_current_stage": cli_feedback_loop_command_center["current_stage"],
+                "cli_outcome_status": cli_feedback_loop_command_center["outcome_status"],
             },
             "execution_plan": {
                 "execution_plan_id": execution_plan["execution_plan_id"],
@@ -1430,10 +1445,12 @@ def render_summary(summary: dict[str, Any]) -> str:
             (
                 "Feedback command center: "
                 f"stage={summary['feedback_loop_command_center']['current_stage']} "
+                f"outcome={summary['feedback_loop_command_center']['outcome_status']} "
                 f"primary={summary['feedback_loop_command_center']['primary_command_id']} "
                 f"commands={summary['feedback_loop_command_center']['command_count']} "
                 f"api={summary['feedback_loop_command_center']['primary_api_path']} "
-                f"cli={summary['feedback_loop_command_center']['cli_primary_command_id']}"
+                f"cli={summary['feedback_loop_command_center']['cli_primary_command_id']} "
+                f"cli_stage={summary['feedback_loop_command_center']['cli_current_stage']}"
             ),
             (
                 "Execution plan: "

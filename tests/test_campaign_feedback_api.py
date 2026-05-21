@@ -758,6 +758,112 @@ def test_get_campaign_feedback_outcome_report_api_compares_followup_snapshot() -
     ]
 
 
+def test_get_campaign_feedback_loop_command_center_api_promotes_outcome_report() -> None:
+    baseline_event = api_module.CampaignPerformanceEventRequest.model_validate(
+        _event_payload_with_strategy_context()
+    )
+    followup_payload = _event_payload_with_strategy_context()
+    followup_payload["event_id"] = "evt_command_center_followup_001"
+    followup_payload["occurred_at"] = "2026-05-13T12:00:00Z"
+    followup_payload["metrics"] = {
+        "impressions": 12000,
+        "clicks": 720,
+        "spend": "900.00",
+        "conversions": 90,
+    }
+    followup_event = api_module.CampaignPerformanceEventRequest.model_validate(
+        followup_payload
+    )
+    baseline_detail = _event_detail(baseline_event)
+    followup_detail = _event_detail(followup_event)
+    optimization_draft = build_campaign_feedback_optimization_draft(baseline_detail)
+    review = build_campaign_feedback_optimization_review(
+        optimization_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.APPROVED,
+            reviewer_id="operator_001",
+            selected_change_ids=[optimization_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_command_center_outcome",
+    )
+    event_store = CapturingPerformanceEventStore(
+        details=[followup_detail, baseline_detail]
+    )
+    review_store = CapturingFeedbackOptimizationReviewStore(reviews=[review])
+    execution_store = CapturingFeedbackExecutionDryRunStore()
+    handoff_store = CapturingFeedbackHandoffRecordStore()
+    execution_plan = api_module.build_feedback_execution_plan(review)
+    completed_step_id = execution_plan.steps[0].step_id
+    api_app.dependency_overrides[get_runtime_settings] = lambda: Settings(
+        performance_event_persistence_backend="postgres",
+        feedback_review_persistence_backend="postgres",
+        feedback_execution_persistence_backend="postgres",
+    )
+    api_app.dependency_overrides[get_runtime_performance_event_store] = (
+        lambda: event_store
+    )
+    api_app.dependency_overrides[get_runtime_feedback_review_store] = (
+        lambda: review_store
+    )
+    api_app.dependency_overrides[get_runtime_feedback_execution_store] = (
+        lambda: execution_store
+    )
+    api_app.dependency_overrides[get_runtime_feedback_handoff_store] = (
+        lambda: handoff_store
+    )
+    try:
+        client = TestClient(api_app)
+        dry_run_response = client.post(
+            f"/feedback-optimization-reviews/{review.review_id}/execution-plan/dry-run",
+            headers={"X-Tenant-ID": "tenant_api"},
+        )
+        handoff_response = client.post(
+            f"/feedback-optimization-reviews/{review.review_id}/handoff-records",
+            json={
+                "outcome": "applied",
+                "operator_id": "operator_003",
+                "completed_step_ids": [completed_step_id],
+            },
+            headers={"X-Tenant-ID": "tenant_api"},
+        )
+        response = client.get(
+            (
+                f"/campaign-events/performance/{baseline_event.event_id}"
+                "/feedback-loop-command-center"
+            ),
+            params={"limit": "20"},
+            headers={"X-Tenant-ID": "tenant_api"},
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    payload = response.json()
+    assert dry_run_response.status_code == 200
+    assert handoff_response.status_code == 200
+    assert response.status_code == 200
+    assert response.headers["feedback-loop-stage"] == "outcome_improved"
+    assert response.headers["feedback-outcome-status"] == "improved"
+    assert response.headers["feedback-followup-event-id"] == (
+        followup_event.event_id
+    )
+    assert response.headers["feedback-primary-command-id"] == (
+        "inspect_feedback_outcome_report"
+    )
+    assert payload["current_stage"] == "outcome_improved"
+    assert payload["outcome_status"] == "improved"
+    assert payload["outcome_report"]["followup_event_id"] == followup_event.event_id
+    assert payload["primary_command_id"] == "inspect_feedback_outcome_report"
+    assert payload["primary_command"]["cli_command"] == [
+        "ads-growth-agent",
+        "get-feedback-outcome-report",
+        baseline_event.event_id,
+        "--limit",
+        "20",
+    ]
+    assert payload["loop_summary"]["current_stage"] == "handoff_applied"
+    assert payload["timeline"]["latest_entry_stage"] == "handoff_applied"
+
+
 def test_submit_campaign_feedback_optimization_review_api_records_review() -> None:
     event = api_module.CampaignPerformanceEventRequest.model_validate(
         _event_payload_with_strategy_context()
@@ -1953,6 +2059,97 @@ def test_get_feedback_outcome_report_cli_compares_followup_snapshot(monkeypatch)
     payload = json.loads(result.stdout)
     assert payload["outcome_status"] == "improved"
     assert payload["followup_event_id"] == "evt_perf_followup_cli_001"
+
+
+def test_get_feedback_loop_command_center_cli_promotes_outcome_report(monkeypatch) -> None:
+    baseline_event = api_module.CampaignPerformanceEventRequest.model_validate(
+        _event_payload_with_strategy_context()
+    )
+    followup_payload = _event_payload_with_strategy_context()
+    followup_payload["event_id"] = "evt_command_center_followup_cli_001"
+    followup_payload["occurred_at"] = "2026-05-13T12:00:00Z"
+    followup_payload["metrics"] = {
+        "impressions": 12000,
+        "clicks": 720,
+        "spend": "900.00",
+        "conversions": 90,
+    }
+    followup_event = api_module.CampaignPerformanceEventRequest.model_validate(
+        followup_payload
+    )
+    baseline_detail = _event_detail(baseline_event)
+    followup_detail = _event_detail(followup_event)
+    optimization_draft = build_campaign_feedback_optimization_draft(baseline_detail)
+    review = build_campaign_feedback_optimization_review(
+        optimization_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.APPROVED,
+            reviewer_id="operator_001",
+            selected_change_ids=[optimization_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_command_center_cli_outcome",
+    )
+    execution_plan = api_module.build_feedback_execution_plan(review)
+    dry_run = api_module.dry_run_feedback_execution_plan(execution_plan)
+    event_store = CapturingPerformanceEventStore(
+        details=[followup_detail, baseline_detail]
+    )
+    review_store = CapturingFeedbackOptimizationReviewStore(reviews=[review])
+    execution_store = CapturingFeedbackExecutionDryRunStore(dry_runs=[dry_run])
+    handoff_store = CapturingFeedbackHandoffRecordStore()
+    handoff_package = api_module.build_feedback_handoff_package(review, execution_store)
+    handoff_store.record_handoff(
+        handoff_package,
+        CampaignFeedbackHandoffRecordRequest(
+            outcome=FeedbackHandoffOutcome.APPLIED,
+            operator_id="operator_cli_outcome",
+            completed_step_ids=[step.step_id for step in handoff_package.manual_steps],
+        ),
+    )
+
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.get_settings",
+        lambda: Settings(
+            performance_event_persistence_backend="postgres",
+            feedback_review_persistence_backend="postgres",
+            feedback_execution_persistence_backend="postgres",
+        ),
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_performance_event_store",
+        lambda settings: event_store,
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_feedback_review_store",
+        lambda settings: review_store,
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_feedback_execution_store",
+        lambda settings: execution_store,
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_feedback_handoff_store",
+        lambda settings: handoff_store,
+    )
+
+    result = CliRunner().invoke(
+        cli_app,
+        [
+            "get-feedback-loop-command-center",
+            baseline_event.event_id,
+            "--limit",
+            "20",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["current_stage"] == "outcome_improved"
+    assert payload["outcome_status"] == "improved"
+    assert payload["outcome_report"]["followup_event_id"] == followup_event.event_id
+    assert payload["primary_command_id"] == "inspect_feedback_outcome_report"
+    assert payload["loop_summary"]["current_stage"] == "handoff_applied"
+    assert payload["timeline"]["latest_entry_stage"] == "handoff_applied"
 
 
 def test_submit_feedback_optimization_review_cli_records_review(monkeypatch) -> None:

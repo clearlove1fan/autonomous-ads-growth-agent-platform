@@ -479,6 +479,7 @@ def get_feedback_loop_command_center(
         handoff_persistence_enabled=(
             settings.feedback_execution_persistence_backend != "none"
         ),
+        outcome_event_store=event_store,
         limit=limit,
     )
     response = CampaignFeedbackLoopCommandCenterResponse.model_validate(command_center)

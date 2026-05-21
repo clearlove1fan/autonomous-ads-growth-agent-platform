@@ -1302,6 +1302,10 @@ FeedbackLoopCurrentStage = Literal[
     "handoff_applied",
     "handoff_blocked",
     "handoff_skipped",
+    "outcome_improved",
+    "outcome_regressed",
+    "outcome_mixed",
+    "outcome_insufficient_data",
 ]
 
 
@@ -1421,6 +1425,7 @@ FeedbackLoopCommandActionType = Literal[
     "inspect_feedback_loop_summary",
     "inspect_feedback_loop_timeline",
     "inspect_feedback_outcome_report",
+    "inspect_followup_action_plan",
     "inspect_optimization_draft",
     "review_optimization_draft",
     "generate_revision_draft",
@@ -1480,6 +1485,8 @@ class CampaignFeedbackLoopCommandCenterResponse(BaseModel):
     current_stage: FeedbackLoopCurrentStage
     primary_command_id: str | None = Field(default=None, min_length=1, max_length=180)
     primary_command: FeedbackLoopOperatorCommand | None = None
+    outcome_status: FeedbackOutcomeStatus | None = None
+    outcome_report: CampaignFeedbackOutcomeReportResponse | None = None
     command_count: int = Field(ge=0)
     commands: list[FeedbackLoopOperatorCommand] = Field(default_factory=list)
     loop_summary: CampaignFeedbackLoopSummaryResponse
