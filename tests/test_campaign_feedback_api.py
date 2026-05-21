@@ -1305,9 +1305,18 @@ def test_feedback_handoff_record_api_records_and_reads_operator_outcome() -> Non
     review_store = CapturingFeedbackOptimizationReviewStore(reviews=[review])
     execution_store = CapturingFeedbackExecutionDryRunStore()
     handoff_store = CapturingFeedbackHandoffRecordStore()
+    memory_store = CapturingAdvertiserMemoryStore(
+        AdvertiserMemoryWriteResult(
+            persisted=True,
+            status="recorded",
+            source_id="memory:handoff:test:v1",
+            memory_type="historical_performance",
+        )
+    )
     api_app.dependency_overrides[get_runtime_settings] = lambda: Settings(
         feedback_review_persistence_backend="postgres",
         feedback_execution_persistence_backend="postgres",
+        advertiser_memory_persistence_backend="postgres",
     )
     api_app.dependency_overrides[get_runtime_feedback_review_store] = lambda: review_store
     api_app.dependency_overrides[get_runtime_feedback_execution_store] = (
@@ -1315,6 +1324,9 @@ def test_feedback_handoff_record_api_records_and_reads_operator_outcome() -> Non
     )
     api_app.dependency_overrides[get_runtime_feedback_handoff_store] = (
         lambda: handoff_store
+    )
+    api_app.dependency_overrides[get_runtime_advertiser_memory_store] = (
+        lambda: memory_store
     )
     try:
         client = TestClient(api_app)
@@ -1349,6 +1361,8 @@ def test_feedback_handoff_record_api_records_and_reads_operator_outcome() -> Non
     assert submit_response.status_code == 200
     assert submit_response.headers["feedback-handoff-record-id"] == record_id
     assert submit_response.headers["feedback-handoff-outcome"] == "applied"
+    assert submit_response.headers["advertiser-memory-status"] == "recorded"
+    assert submit_response.headers["advertiser-memory-source-id"] == "memory:handoff:test:v1"
     assert payload["review_id"] == review.review_id
     assert payload["latest_dry_run_id"] == dry_run_response.json()["dry_run_id"]
     assert payload["outcome"] == "applied"
@@ -1360,6 +1374,7 @@ def test_feedback_handoff_record_api_records_and_reads_operator_outcome() -> Non
     assert list_response.json()["count"] == 1
     assert list_response.json()["items"][0]["handoff_record_id"] == record_id
     assert handoff_store.recorded_requests[0].operator_id == "operator_002"
+    assert memory_store.handoff_records == [record_id]
 
 
 def test_dry_run_feedback_execution_plan_api_validates_draft_tools() -> None:
@@ -2372,6 +2387,14 @@ def test_feedback_handoff_record_cli_records_and_reads_operator_outcome(monkeypa
     review_store = CapturingFeedbackOptimizationReviewStore(reviews=[review])
     execution_store = CapturingFeedbackExecutionDryRunStore(dry_runs=[dry_run])
     handoff_store = CapturingFeedbackHandoffRecordStore()
+    memory_store = CapturingAdvertiserMemoryStore(
+        AdvertiserMemoryWriteResult(
+            persisted=True,
+            status="recorded",
+            source_id="memory:handoff:cli-test:v1",
+            memory_type="historical_performance",
+        )
+    )
 
     monkeypatch.setattr(
         "ads_growth_agent.cli.get_settings",
@@ -2379,6 +2402,7 @@ def test_feedback_handoff_record_cli_records_and_reads_operator_outcome(monkeypa
             tenant_id="tenant_cli",
             feedback_review_persistence_backend="postgres",
             feedback_execution_persistence_backend="postgres",
+            advertiser_memory_persistence_backend="postgres",
         ),
     )
     monkeypatch.setattr(
@@ -2392,6 +2416,10 @@ def test_feedback_handoff_record_cli_records_and_reads_operator_outcome(monkeypa
     monkeypatch.setattr(
         "ads_growth_agent.cli.build_configured_feedback_handoff_store",
         lambda settings: handoff_store,
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_advertiser_memory_store",
+        lambda settings: memory_store,
     )
 
     submit_result = CliRunner().invoke(
@@ -2435,6 +2463,7 @@ def test_feedback_handoff_record_cli_records_and_reads_operator_outcome(monkeypa
     assert list_result.exit_code == 0
     assert json.loads(list_result.stdout)["count"] == 1
     assert handoff_store.recorded_requests[0].operator_id == "operator_cli"
+    assert memory_store.handoff_records == [record_id]
 
 
 def test_dry_run_feedback_execution_plan_cli_validates_draft_tools(monkeypatch) -> None:
@@ -2964,9 +2993,14 @@ class CapturingAdvertiserMemoryStore:
     def __init__(self, result: AdvertiserMemoryWriteResult) -> None:
         self.result = result
         self.records: list[tuple[str, str]] = []
+        self.handoff_records: list[str] = []
 
     def record_feedback_memory(self, event, analysis) -> AdvertiserMemoryWriteResult:
         self.records.append((event.event_id, analysis.feedback_id))
+        return self.result
+
+    def record_handoff_memory(self, record) -> AdvertiserMemoryWriteResult:
+        self.handoff_records.append(record.handoff_record_id)
         return self.result
 
 

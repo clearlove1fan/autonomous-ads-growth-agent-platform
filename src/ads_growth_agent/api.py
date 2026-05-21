@@ -95,6 +95,7 @@ from ads_growth_agent.feedback_loop_summary import build_campaign_feedback_loop_
 from ads_growth_agent.feedback_loop_timeline import build_campaign_feedback_loop_timeline
 from ads_growth_agent.feedback_review_store_factory import build_configured_feedback_review_store
 from ads_growth_agent.graph import strategy_id_for_brief
+from ads_growth_agent.handoff_memory import schedule_or_record_handoff_memory
 from ads_growth_agent.health import ReadinessResponse, check_readiness
 from ads_growth_agent.idempotency_store_factory import build_configured_idempotency_store
 from ads_growth_agent.logging_config import configure_logging
@@ -1647,6 +1648,14 @@ def submit_feedback_handoff_record(
         FeedbackHandoffRecordStore,
         Depends(get_runtime_feedback_handoff_store),
     ],
+    memory_store: Annotated[
+        AdvertiserMemoryStore,
+        Depends(get_runtime_advertiser_memory_store),
+    ],
+    outbox_store: Annotated[
+        OutboxStore,
+        Depends(get_runtime_outbox_store),
+    ],
 ) -> CampaignFeedbackHandoffRecordResponse:
     _require_feedback_review_persistence_enabled(settings)
     _require_feedback_execution_persistence_enabled(settings)
@@ -1693,10 +1702,23 @@ def submit_feedback_handoff_record(
             },
         ) from exc
 
+    try:
+        memory_result = schedule_or_record_handoff_memory(
+            settings,
+            record,
+            memory_store=memory_store,
+            outbox_store=outbox_store,
+        )
+    except OutboxConflictError as exc:
+        _raise_handoff_memory_conflict(exc.idempotency_key)
+    except AdvertiserMemoryConflictError as exc:
+        _raise_handoff_memory_conflict(exc.event_id)
+
     response.headers["Feedback-Review-ID"] = review.review_id
     response.headers["Feedback-Handoff-Package-ID"] = record.handoff_package_id
     response.headers["Feedback-Handoff-Record-ID"] = record.handoff_record_id
     response.headers["Feedback-Handoff-Outcome"] = record.outcome.value
+    _set_advertiser_memory_headers(response, memory_result)
     return record
 
 
@@ -1899,6 +1921,17 @@ def _raise_performance_event_conflict(event_id: str) -> None:
             "message": "Performance event ID was already used with a different payload.",
             "error_code": "PERFORMANCE_EVENT_ID_CONFLICT",
             "event_id": event_id,
+        },
+    )
+
+
+def _raise_handoff_memory_conflict(identifier: str) -> None:
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "message": "Feedback handoff memory source was already used with a different payload.",
+            "error_code": "FEEDBACK_HANDOFF_MEMORY_CONFLICT",
+            "identifier": identifier,
         },
     )
 

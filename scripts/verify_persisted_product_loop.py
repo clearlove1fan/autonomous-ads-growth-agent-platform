@@ -35,6 +35,7 @@ from ads_growth_agent.campaign_draft_store_factory import (  # noqa: E402
     dispose_cached_campaign_draft_store_engines,
 )
 from ads_growth_agent.config import Settings  # noqa: E402
+from ads_growth_agent.contracts import CampaignFeedbackHandoffRecordResponse  # noqa: E402
 from ads_growth_agent.feedback_execution_store_factory import (  # noqa: E402
     dispose_cached_feedback_execution_store_engines,
 )
@@ -49,6 +50,9 @@ from ads_growth_agent.outbox_store_factory import (  # noqa: E402
 )
 from ads_growth_agent.performance_event_store_factory import (  # noqa: E402
     dispose_cached_performance_event_store_engines,
+)
+from ads_growth_agent.persistence.advertiser_memory_store import (  # noqa: E402
+    handoff_memory_source_id,
 )
 from ads_growth_agent.persistence.knowledge_seed import seed_default_knowledge  # noqa: E402
 from ads_growth_agent.run_store_factory import dispose_cached_run_store_engines  # noqa: E402
@@ -489,6 +493,9 @@ def run_persisted_product_loop(
                 ),
                 label="submit feedback handoff record",
             )
+            handoff_memory_source_id_value = handoff_memory_source_id(
+                CampaignFeedbackHandoffRecordResponse.model_validate(handoff_record)
+            )
             handoff_record_detail = _api_json(
                 client.get(
                     f"/feedback-handoff-records/{handoff_record['handoff_record_id']}",
@@ -507,6 +514,35 @@ def run_persisted_product_loop(
                     headers=_tenant_headers(tenant_id),
                 ),
                 label="list feedback handoff records",
+            )
+            handoff_outbox_report = _invoke_cli(
+                settings,
+                [
+                    "process-outbox",
+                    "--limit",
+                    "10",
+                    "--worker-id",
+                    "worker_product_loop_handoff",
+                ],
+            )
+            _expect(
+                handoff_outbox_report["claimed"] == 1,
+                "outbox should claim one handoff memory event",
+            )
+            _expect(
+                handoff_outbox_report["completed"] == 1,
+                "outbox should complete handoff memory event",
+            )
+            _expect(
+                handoff_outbox_report["failed"] == 0,
+                "outbox should not fail handoff memory event",
+            )
+            handoff_memory_detail = _api_json(
+                client.get(
+                    f"/advertisers/{advertiser_id}/memories/{handoff_memory_source_id_value}",
+                    headers=_tenant_headers(tenant_id),
+                ),
+                label="get handoff outcome memory",
             )
             cli_handoff_record = _invoke_cli(
                 settings,
@@ -634,6 +670,10 @@ def run_persisted_product_loop(
             cli_memory = _invoke_cli(
                 settings,
                 ["get-advertiser-memory", advertiser_id, memory_source_id],
+            )
+            cli_handoff_memory = _invoke_cli(
+                settings,
+                ["get-advertiser-memory", advertiser_id, handoff_memory_source_id_value],
             )
             cli_memory_list = _invoke_cli(
                 settings,
@@ -954,8 +994,17 @@ def run_persisted_product_loop(
                 "CLI memory read did not match memory source",
             )
             _expect(
-                cli_memory_list["count"] == 1,
-                "CLI memory list should find learned memory",
+                handoff_memory_detail["metadata"]["handoff_record_id"]
+                == handoff_record["handoff_record_id"],
+                "handoff memory should link back to the manual handoff record",
+            )
+            _expect(
+                cli_handoff_memory["source_id"] == handoff_memory_source_id_value,
+                "CLI handoff memory read did not match handoff memory source",
+            )
+            _expect(
+                cli_memory_list["count"] == 2,
+                "CLI memory list should find performance and handoff memories",
             )
 
             later_strategy = _create_strategy(
@@ -1133,10 +1182,15 @@ def run_persisted_product_loop(
                 "list_count": execution_dry_run_list["count"],
             },
             "outbox": outbox_report,
+            "handoff_outbox": handoff_outbox_report,
             "memory": {
                 "source_id": memory_source_id,
                 "memory_type": memory_detail["memory_type"],
                 "metadata_event_id": memory_detail["metadata"]["event_id"],
+                "handoff_source_id": handoff_memory_source_id_value,
+                "handoff_metadata_record_id": handoff_memory_detail["metadata"][
+                    "handoff_record_id"
+                ],
             },
             "cli_reads": {
                 "draft_id": cli_draft["draft_id"],
@@ -1164,6 +1218,7 @@ def run_persisted_product_loop(
                 "execution_dry_run_detail_id": cli_execution_dry_run_detail["dry_run_id"],
                 "execution_dry_run_count": cli_execution_dry_run_list["count"],
                 "memory_source_id": cli_memory["source_id"],
+                "handoff_memory_source_id": cli_handoff_memory["source_id"],
                 "event_count": cli_event_list["count"],
                 "memory_count": cli_memory_list["count"],
             },
@@ -1315,12 +1370,15 @@ def render_summary(summary: dict[str, Any]) -> str:
                 "Outbox: "
                 f"claimed={summary['outbox']['claimed']} "
                 f"completed={summary['outbox']['completed']} "
-                f"failed={summary['outbox']['failed']}"
+                f"failed={summary['outbox']['failed']} "
+                f"handoff_claimed={summary['handoff_outbox']['claimed']} "
+                f"handoff_completed={summary['handoff_outbox']['completed']}"
             ),
             (
                 "Memory: "
                 f"{summary['memory']['source_id']} "
-                f"type={summary['memory']['memory_type']}"
+                f"type={summary['memory']['memory_type']} "
+                f"handoff={summary['memory']['handoff_source_id']}"
             ),
             (
                 "Later RAG: "

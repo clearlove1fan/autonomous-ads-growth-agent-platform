@@ -77,13 +77,17 @@ from ads_growth_agent.feedback_loop_command_center import (
 from ads_growth_agent.feedback_loop_summary import build_campaign_feedback_loop_summary
 from ads_growth_agent.feedback_loop_timeline import build_campaign_feedback_loop_timeline
 from ads_growth_agent.feedback_review_store_factory import build_configured_feedback_review_store
+from ads_growth_agent.handoff_memory import schedule_or_record_handoff_memory
 from ads_growth_agent.logging_config import configure_logging
 from ads_growth_agent.outbox import process_configured_outbox
+from ads_growth_agent.outbox_store_factory import build_configured_outbox_store
 from ads_growth_agent.performance_event_store_factory import (
     build_configured_performance_event_store,
 )
+from ads_growth_agent.persistence.advertiser_memory_store import AdvertiserMemoryConflictError
 from ads_growth_agent.persistence.feedback_execution_store import FeedbackExecutionDryRunStatus
 from ads_growth_agent.persistence.knowledge_seed import seed_default_knowledge
+from ads_growth_agent.persistence.outbox_store import OutboxConflictError
 from ads_growth_agent.strategy import StrategyGenerationError, generate_growth_strategy
 from ads_growth_agent.strategy_job_store_factory import build_configured_strategy_job_store
 from ads_growth_agent.strategy_job_submission import enqueue_strategy_job
@@ -697,11 +701,20 @@ def submit_feedback_handoff_record(
         )
         handoff_store = build_configured_feedback_handoff_store(settings)
         record = handoff_store.record_handoff(handoff_package, request)
+        schedule_or_record_handoff_memory(
+            settings,
+            record,
+            memory_store=build_configured_advertiser_memory_store(settings),
+            outbox_store=build_configured_outbox_store(settings),
+        )
     except FeedbackExecutionPlanNotApprovedError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
     except FeedbackHandoffRecordNotReadyError as exc:
         typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+    except (AdvertiserMemoryConflictError, OutboxConflictError) as exc:
+        typer.echo(f"Failed to record handoff memory: {exc}", err=True)
         raise typer.Exit(1) from exc
     except (FeedbackHandoffRecordStepMismatchError, ValueError) as exc:
         typer.echo(str(exc), err=True)

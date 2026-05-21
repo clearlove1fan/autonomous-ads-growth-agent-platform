@@ -1,3 +1,5 @@
+import hashlib
+import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -14,7 +16,9 @@ from ads_growth_agent.contracts import (
     AdvertiserMemoryDetailResponse,
     AdvertiserMemoryType,
     CampaignFeedbackAnalysis,
+    CampaignFeedbackHandoffRecordResponse,
     CampaignPerformanceEventRequest,
+    FeedbackHandoffOutcome,
     FeedbackHealthStatus,
 )
 from ads_growth_agent.persistence.partitioning import partition_bucket
@@ -59,6 +63,12 @@ class AdvertiserMemoryStore(Protocol):
     ) -> AdvertiserMemoryWriteResult:
         """Persist derived long-term memory from campaign feedback."""
 
+    def record_handoff_memory(
+        self,
+        record: CampaignFeedbackHandoffRecordResponse,
+    ) -> AdvertiserMemoryWriteResult:
+        """Persist derived long-term memory from a manual handoff outcome."""
+
     def record_retrieval_usage(
         self,
         *,
@@ -90,6 +100,12 @@ class NoopAdvertiserMemoryStore:
         self,
         event: CampaignPerformanceEventRequest,
         analysis: CampaignFeedbackAnalysis,
+    ) -> AdvertiserMemoryWriteResult:
+        return AdvertiserMemoryWriteResult(persisted=False, status="disabled")
+
+    def record_handoff_memory(
+        self,
+        record: CampaignFeedbackHandoffRecordResponse,
     ) -> AdvertiserMemoryWriteResult:
         return AdvertiserMemoryWriteResult(persisted=False, status="disabled")
 
@@ -159,6 +175,63 @@ class PostgresAdvertiserMemoryStore:
                 )
                 if existing_hash is not None and existing_hash != event_hash:
                     raise AdvertiserMemoryConflictError(event.event_id)
+                connection.execute(
+                    advertiser_memories.update()
+                    .where(advertiser_memories.c.tenant_id == self._tenant_id)
+                    .where(advertiser_memories.c.memory_id == memory_id)
+                    .values(
+                        memory_type=values["memory_type"],
+                        content=values["content"],
+                        summary=values["summary"],
+                        importance_score=values["importance_score"],
+                        metadata=values["metadata"],
+                        partition_key=values["partition_key"],
+                        partition_bucket=values["partition_bucket"],
+                        updated_at=sa.func.now(),
+                    )
+                )
+
+        return AdvertiserMemoryWriteResult(
+            persisted=True,
+            status="recorded",
+            source_id=source_id,
+            memory_type="historical_performance",
+        )
+
+    def record_handoff_memory(
+        self,
+        record: CampaignFeedbackHandoffRecordResponse,
+    ) -> AdvertiserMemoryWriteResult:
+        source_id = handoff_memory_source_id(record)
+        values = _handoff_memory_values(
+            record,
+            tenant_id=self._tenant_id,
+            source_id=source_id,
+        )
+        record_hash = values["metadata"]["handoff_record_hash"]
+
+        with _transaction(self._bind) as connection:
+            _upsert_tenant_and_advertiser_from_handoff(
+                connection,
+                record,
+                tenant_id=self._tenant_id,
+            )
+            memory_id = _find_memory_id_for_update(
+                connection,
+                source_id,
+                tenant_id=self._tenant_id,
+            )
+            if memory_id is None:
+                connection.execute(advertiser_memories.insert().values(values))
+            else:
+                existing_hash = _memory_metadata_hash(
+                    connection,
+                    memory_id,
+                    tenant_id=self._tenant_id,
+                    metadata_key="handoff_record_hash",
+                )
+                if existing_hash is not None and existing_hash != record_hash:
+                    raise AdvertiserMemoryConflictError(record.handoff_record_id)
                 connection.execute(
                     advertiser_memories.update()
                     .where(advertiser_memories.c.tenant_id == self._tenant_id)
@@ -265,6 +338,23 @@ def feedback_memory_source_id(event: CampaignPerformanceEventRequest) -> str:
     return f"memory:performance:{fingerprint}:v1"
 
 
+def handoff_memory_source_id(record: CampaignFeedbackHandoffRecordResponse) -> str:
+    fingerprint = uuid5(
+        NAMESPACE_URL,
+        f"{record.advertiser_id}:{record.handoff_record_id}",
+    ).hex[:16]
+    return f"memory:handoff:{fingerprint}:v1"
+
+
+def hash_feedback_handoff_record(record: CampaignFeedbackHandoffRecordResponse) -> str:
+    payload = json.dumps(
+        record.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 @contextmanager
 def _transaction(bind: Engine | Connection) -> Iterator[Connection]:
     if isinstance(bind, Engine):
@@ -328,14 +418,29 @@ def _memory_event_hash(
     *,
     tenant_id: str,
 ) -> str | None:
+    return _memory_metadata_hash(
+        connection,
+        memory_id,
+        tenant_id=tenant_id,
+        metadata_key="event_hash",
+    )
+
+
+def _memory_metadata_hash(
+    connection: Connection,
+    memory_id,
+    *,
+    tenant_id: str,
+    metadata_key: str,
+) -> str | None:
     row = connection.execute(
         sa.select(advertiser_memories.c.metadata)
         .where(advertiser_memories.c.tenant_id == tenant_id)
         .where(advertiser_memories.c.memory_id == memory_id)
     ).mappings().one()
     metadata = dict(row["metadata"] or {})
-    event_hash = metadata.get("event_hash")
-    return str(event_hash) if event_hash is not None else None
+    metadata_hash = metadata.get(metadata_key)
+    return str(metadata_hash) if metadata_hash is not None else None
 
 
 def _memory_values(
@@ -409,6 +514,71 @@ def _memory_content(
     return "Campaign performance feedback: " + "; ".join(references) + "."
 
 
+def _handoff_memory_values(
+    record: CampaignFeedbackHandoffRecordResponse,
+    *,
+    tenant_id: str,
+    source_id: str,
+) -> dict[str, object]:
+    title = f"Manual handoff outcome: {record.outcome.value}"
+    metadata = {
+        "source_id": source_id,
+        "title": title,
+        "source_type": "advertiser_memory",
+        "memory_origin": "feedback_handoff_record",
+        "handoff_record_hash": hash_feedback_handoff_record(record),
+        "handoff_record_id": record.handoff_record_id,
+        "handoff_package_id": record.handoff_package_id,
+        "review_id": record.review_id,
+        "execution_plan_id": record.execution_plan_id,
+        "latest_dry_run_id": record.latest_dry_run_id,
+        "optimization_draft_id": record.optimization_draft_id,
+        "event_id": record.event_id,
+        "feedback_id": record.feedback_id,
+        "run_id": record.run_id,
+        "campaign_id": record.campaign_id,
+        "draft_id": record.base_draft_id,
+        "strategy_id": record.strategy_id,
+        "outcome": record.outcome.value,
+        "operator_id": record.operator_id,
+        "package_status": record.package_status,
+        "completed_step_ids": record.completed_step_ids,
+        "blocked_step_ids": record.blocked_step_ids,
+        "requires_follow_up": record.requires_follow_up,
+        "created_at": record.created_at.isoformat(),
+    }
+    return {
+        "tenant_id": tenant_id,
+        "advertiser_id": record.advertiser_id,
+        "memory_type": "historical_performance",
+        "content": _handoff_memory_content(record),
+        "summary": f"{record.outcome.value} manual handoff for event {record.event_id}",
+        "importance_score": _handoff_importance_score(record),
+        "usage_count": 0,
+        "metadata": metadata,
+        "partition_key": record.advertiser_id,
+        "partition_bucket": partition_bucket(record.advertiser_id),
+        "partition_date": record.created_at.date(),
+    }
+
+
+def _handoff_memory_content(record: CampaignFeedbackHandoffRecordResponse) -> str:
+    references = [
+        f"event {record.event_id}",
+        f"review {record.review_id}",
+        f"handoff package {record.handoff_package_id}",
+        f"outcome {record.outcome.value}",
+        f"package status {record.package_status}",
+        f"completed steps {len(record.completed_step_ids)}",
+        f"blocked steps {len(record.blocked_step_ids)}",
+    ]
+    if record.latest_dry_run_id:
+        references.append(f"latest dry run {record.latest_dry_run_id}")
+    if record.notes:
+        references.append(f"operator notes {record.notes}")
+    return "Manual feedback handoff outcome: " + "; ".join(references) + "."
+
+
 def _importance_score(health_status: FeedbackHealthStatus) -> Decimal:
     match health_status:
         case FeedbackHealthStatus.UNDERPERFORMING | FeedbackHealthStatus.CREATIVE_FATIGUE:
@@ -419,6 +589,19 @@ def _importance_score(health_status: FeedbackHealthStatus) -> Decimal:
             return Decimal("0.650")
         case FeedbackHealthStatus.INSUFFICIENT_DATA:
             return Decimal("0.350")
+
+
+def _handoff_importance_score(record: CampaignFeedbackHandoffRecordResponse) -> Decimal:
+    match record.outcome:
+        case FeedbackHandoffOutcome.BLOCKED:
+            base = Decimal("0.900")
+        case FeedbackHandoffOutcome.APPLIED:
+            base = Decimal("0.700")
+        case FeedbackHandoffOutcome.SKIPPED:
+            base = Decimal("0.500")
+    if record.requires_follow_up:
+        return min(base + Decimal("0.050"), Decimal("0.950"))
+    return base
 
 
 def _upsert_tenant_and_advertiser_from_event(
@@ -471,6 +654,62 @@ def _upsert_tenant_and_advertiser_from_event(
                 "metadata": advertiser_metadata,
                 "partition_key": event.advertiser_id,
                 "partition_bucket": partition_bucket(event.advertiser_id),
+                "updated_at": sa.func.now(),
+            },
+        )
+    )
+
+
+def _upsert_tenant_and_advertiser_from_handoff(
+    connection: Connection,
+    record: CampaignFeedbackHandoffRecordResponse,
+    *,
+    tenant_id: str,
+) -> None:
+    tenant_metadata = {"upserted_by": "advertiser_memory_store"}
+    connection.execute(
+        pg_insert(tenants)
+        .values(
+            tenant_id=tenant_id,
+            display_name="Default Ads Growth Tenant",
+            region="us",
+            status="active",
+            metadata=tenant_metadata,
+        )
+        .on_conflict_do_update(
+            index_elements=[tenants.c.tenant_id],
+            set_={
+                "status": "active",
+                "metadata": tenant_metadata,
+                "updated_at": sa.func.now(),
+            },
+        )
+    )
+
+    advertiser_metadata = {
+        "upserted_by": "advertiser_memory_store",
+        "source": "feedback_handoff_record",
+    }
+    connection.execute(
+        pg_insert(advertisers)
+        .values(
+            tenant_id=tenant_id,
+            advertiser_id=record.advertiser_id,
+            name=record.advertiser_id,
+            industry="feedback_handoff",
+            target_markets=[],
+            status="active",
+            metadata=advertiser_metadata,
+            partition_key=record.advertiser_id,
+            partition_bucket=partition_bucket(record.advertiser_id),
+        )
+        .on_conflict_do_update(
+            index_elements=[advertisers.c.tenant_id, advertisers.c.advertiser_id],
+            set_={
+                "status": "active",
+                "metadata": advertiser_metadata,
+                "partition_key": record.advertiser_id,
+                "partition_bucket": partition_bucket(record.advertiser_id),
                 "updated_at": sa.func.now(),
             },
         )

@@ -136,8 +136,8 @@ validates strategy draft -> performance feedback event -> optimization review ->
 revision draft -> revision review -> dry-run execution plan -> persisted
 execution dry-run validation -> review lineage and filtered lineage list with
 execution audit -> feedback loop summary, timeline, and command center -> manual handoff package -> handoff
-outcome record -> outbox memory -> API/CLI reads -> later RAG retrieval of the
-learned memory.
+outcome record -> performance and handoff outbox memories -> API/CLI reads ->
+later RAG retrieval of learned performance memory.
 
 The demo executes the complete deterministic product loop:
 
@@ -168,11 +168,11 @@ This project is designed around the same engineering themes as an AI Agent-power
 | ReAct / Plan-and-Execute | Explicit LangGraph workflow from planner to retriever, tool executor, critic, and finalizer |
 | Tool use / function calling | Internal typed tool registry validates and executes audience, creative, budget, performance, and campaign draft tools |
 | Short-term workflow memory | `GrowthStrategyState` carries brief, retrieved context, tool results, critique, revision notes, and final strategy through the graph |
-| Advertiser memory | In-memory default corpus plus optional PostgreSQL-backed advertiser memory, read APIs/CLI, and usage tracking |
+| Advertiser memory | In-memory default corpus plus optional PostgreSQL-backed performance and handoff outcome memory, read APIs/CLI, and usage tracking |
 | RAG | Strategy playbooks, historical cases, and advertiser memory are retrieved and cited in final outputs |
 | Multi-agent orchestration | Planner, retriever, tool executor, critic, revision, and finalizer nodes model role-based agent responsibilities |
 | Structured output | Pydantic contracts validate briefs, tool intents/results, critique reports, final strategies, feedback analyses, and eval reports |
-| Event-driven feedback | Campaign performance events produce health status, matched optimization rules, draft-only recommendations, action plans, optimization drafts, human review records, revision drafts, second-pass revision reviews, individual and filtered review lineage with execution/dry-run audit, dry-run execution plans, persisted dry-run validation, operator feedback loop summaries, timelines, command centers, manual handoff packages, handoff outcome records, and later memory retrieval |
+| Event-driven feedback | Campaign performance events produce health status, matched optimization rules, draft-only recommendations, action plans, optimization drafts, human review records, revision drafts, second-pass revision reviews, individual and filtered review lineage with execution/dry-run audit, dry-run execution plans, persisted dry-run validation, operator feedback loop summaries, timelines, command centers, manual handoff packages, handoff outcome records, handoff outcome memory, and later memory retrieval |
 | Self-reflection / critique loop | Critic report gates finalization; optional LLM critic can route through a bounded revision loop |
 | LLMOps / observability | LangSmith-compatible run metadata, structured JSON logs, local eval suite, and CI smoke coverage |
 | Ads growth domain | Output covers audience, creative, budget, bidding, measurement, campaign drafts, performance forecasts, and optimization rules |
@@ -458,7 +458,7 @@ to be copied into a performance event so feedback can be tied back to the
 strategy's own optimization rules. Set `PERFORMANCE_EVENT_PERSISTENCE_BACKEND=postgres`
 to persist events and analyses in `campaign_performance_events`.
 
-Set `ADVERTISER_MEMORY_PERSISTENCE_BACKEND=postgres` to also write analyzed feedback into `advertiser_memories` as `historical_performance` memory. For production-style/high-concurrency ingestion, also set `OUTBOX_BACKEND=postgres`; the API will enqueue a durable `campaign_performance_analyzed` event and return `Advertiser-Memory-Status: queued` instead of doing the memory write on the request path. A bounded worker can then process the queue:
+Set `ADVERTISER_MEMORY_PERSISTENCE_BACKEND=postgres` to also write analyzed feedback into `advertiser_memories` as `historical_performance` memory. Manual handoff outcomes are stored as the same memory type so later planning can learn from applied, blocked, or skipped operator decisions. For production-style/high-concurrency ingestion, also set `OUTBOX_BACKEND=postgres`; the API will enqueue durable `campaign_performance_analyzed` and `feedback_handoff_recorded` events and return `Advertiser-Memory-Status: queued` instead of doing the memory write on the request path. A bounded worker can then process the queue:
 
 ```bash
 OUTBOX_BACKEND=postgres ADVERTISER_MEMORY_PERSISTENCE_BACKEND=postgres ads-growth-agent process-outbox --limit 100
@@ -684,7 +684,10 @@ After manual application, operators can record the outcome for audit. Applied
 records require the package to be `ready_for_manual_handoff`; blocked or skipped
 records preserve follow-up context without mutating live campaign state. The
 feedback loop summary then reports terminal-like stages such as
-`handoff_applied`, `handoff_blocked`, or `handoff_skipped`:
+`handoff_applied`, `handoff_blocked`, or `handoff_skipped`. With
+`ADVERTISER_MEMORY_PERSISTENCE_BACKEND=postgres`, the submit path also records
+or queues a learned handoff outcome memory and returns `Advertiser-Memory-Status`
+plus `Advertiser-Memory-Source-ID` headers:
 
 ```bash
 curl -X POST http://localhost:8000/feedback-optimization-reviews/feedback_review_example/handoff-records \

@@ -52,6 +52,9 @@
   guardrails.
 - Added persisted feedback handoff outcome records through API and CLI so
   operators can audit applied, blocked, or skipped manual handoffs.
+- Added handoff outcome memory writes so applied, blocked, or skipped manual
+  handoffs can be persisted directly or queued through the outbox as learned
+  advertiser memory.
 - Added dry-run feedback execution plans through API and CLI for approved
   optimization reviews.
 - Added dry-run feedback execution validation through draft-only typed tool

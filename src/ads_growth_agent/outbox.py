@@ -10,6 +10,7 @@ from ads_growth_agent.advertiser_memory_store_factory import (
 from ads_growth_agent.config import Settings
 from ads_growth_agent.contracts import (
     CampaignFeedbackAnalysis,
+    CampaignFeedbackHandoffRecordResponse,
     CampaignPerformanceEventRequest,
 )
 from ads_growth_agent.outbox_store_factory import build_configured_outbox_store
@@ -17,12 +18,15 @@ from ads_growth_agent.persistence.advertiser_memory_store import (
     AdvertiserMemoryUsageResult,
     AdvertiserMemoryWriteResult,
     feedback_memory_source_id,
+    handoff_memory_source_id,
 )
 from ads_growth_agent.persistence.outbox_store import OutboxEventRecord, OutboxStore
 
 CAMPAIGN_PERFORMANCE_ANALYZED_EVENT = "campaign_performance_analyzed"
+FEEDBACK_HANDOFF_RECORDED_EVENT = "feedback_handoff_recorded"
 ADVERTISER_MEMORY_RETRIEVED_EVENT = "advertiser_memory_retrieved"
 ADVERTISER_MEMORY_HANDLER = "advertiser_memory_write"
+HANDOFF_MEMORY_HANDLER = "feedback_handoff_memory_write"
 ADVERTISER_MEMORY_USAGE_HANDLER = "advertiser_memory_usage"
 
 
@@ -58,6 +62,29 @@ def enqueue_advertiser_memory_write(
         partition_date=event.occurred_at,
     )
     return _write_result_from_outbox_record(record, source_id=source_id)
+
+
+def enqueue_handoff_memory_write(
+    outbox_store: OutboxStore,
+    record: CampaignFeedbackHandoffRecordResponse,
+) -> AdvertiserMemoryWriteResult:
+    source_id = handoff_memory_source_id(record)
+    outbox_record = outbox_store.enqueue(
+        event_type=FEEDBACK_HANDOFF_RECORDED_EVENT,
+        aggregate_type="feedback_handoff_record",
+        aggregate_id=record.handoff_record_id,
+        idempotency_key=_handoff_memory_idempotency_key(record),
+        payload={"handoff_record": record.model_dump(mode="json")},
+        metadata={
+            "handler": HANDOFF_MEMORY_HANDLER,
+            "advertiser_id": record.advertiser_id,
+            "advertiser_memory_source_id": source_id,
+            "handoff_outcome": record.outcome.value,
+        },
+        partition_key=record.handoff_record_id,
+        partition_date=record.created_at,
+    )
+    return _write_result_from_outbox_record(outbox_record, source_id=source_id)
 
 
 def enqueue_advertiser_memory_retrieved(
@@ -124,6 +151,8 @@ def process_outbox_events(
         try:
             if record.event_type == CAMPAIGN_PERFORMANCE_ANALYZED_EVENT:
                 result = _handle_campaign_performance_analyzed(record, advertiser_memory_store)
+            elif record.event_type == FEEDBACK_HANDOFF_RECORDED_EVENT:
+                result = _handle_feedback_handoff_recorded(record, advertiser_memory_store)
             elif record.event_type == ADVERTISER_MEMORY_RETRIEVED_EVENT:
                 result = _handle_advertiser_memory_retrieved(record, advertiser_memory_store)
             else:
@@ -179,6 +208,19 @@ def _handle_campaign_performance_analyzed(
     return advertiser_memory_store.record_feedback_memory(event, analysis)
 
 
+def _handle_feedback_handoff_recorded(
+    record: OutboxEventRecord,
+    advertiser_memory_store,
+) -> AdvertiserMemoryWriteResult:
+    try:
+        handoff_record = CampaignFeedbackHandoffRecordResponse.model_validate(
+            record.payload["handoff_record"]
+        )
+    except (KeyError, TypeError, ValidationError) as exc:
+        raise ValueError("invalid feedback handoff recorded payload") from exc
+    return advertiser_memory_store.record_handoff_memory(handoff_record)
+
+
 def _handle_advertiser_memory_retrieved(
     record: OutboxEventRecord,
     advertiser_memory_store,
@@ -227,6 +269,10 @@ def _write_result_from_outbox_record(
 
 def _memory_idempotency_key(event: CampaignPerformanceEventRequest) -> str:
     return f"advertiser-memory:{event.advertiser_id}:{event.event_id}:v1"
+
+
+def _handoff_memory_idempotency_key(record: CampaignFeedbackHandoffRecordResponse) -> str:
+    return f"advertiser-memory:handoff:{record.advertiser_id}:{record.handoff_record_id}:v1"
 
 
 def _usage_idempotency_key(*, run_id: str | None, source_id: str) -> str:
