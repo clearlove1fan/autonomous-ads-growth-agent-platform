@@ -9,6 +9,7 @@ from ads_growth_agent.persistence.schema import (
     agent_runs,
     campaign_performance_events,
     feedback_execution_dry_runs,
+    feedback_handoff_records,
     feedback_optimization_reviews,
     idempotency_keys,
     knowledge_chunks,
@@ -28,6 +29,7 @@ def test_core_schema_tables_are_defined() -> None:
         "campaign_performance_events",
         "feedback_optimization_reviews",
         "feedback_execution_dry_runs",
+        "feedback_handoff_records",
         "strategy_jobs",
         "outbox_events",
         "knowledge_documents",
@@ -179,6 +181,53 @@ def test_feedback_execution_dry_runs_support_validation_audit_access_patterns() 
     } == {"advertisers", "campaign_performance_events", "feedback_optimization_reviews"}
     assert "passed" in check_constraints["feedback_execution_dry_run_status"]
     assert "dry_run" in check_constraints["feedback_execution_dry_run_mode"]
+
+
+def test_feedback_handoff_records_support_operator_audit_access_patterns() -> None:
+    columns = feedback_handoff_records.c
+    index_names = {index.name for index in feedback_handoff_records.indexes}
+    check_constraints = {
+        constraint.name.removeprefix("ck_feedback_handoff_records_"): str(
+            constraint.sqltext
+        )
+        for constraint in feedback_handoff_records.constraints
+        if isinstance(constraint, sa.CheckConstraint) and constraint.name is not None
+    }
+
+    assert "handoff_record_id" in columns
+    assert "handoff_package_id" in columns
+    assert "review_id" in columns
+    assert "execution_plan_id" in columns
+    assert "latest_dry_run_id" in columns
+    assert "event_id" in columns
+    assert "advertiser_id" in columns
+    assert "outcome" in columns
+    assert "operator_id" in columns
+    assert "completed_step_ids" in columns
+    assert "blocked_step_ids" in columns
+    assert "handoff_package_snapshot" in columns
+    assert "record_snapshot" in columns
+    assert "ix_feedback_handoff_records_review_created" in index_names
+    assert "ix_feedback_handoff_records_package_created" in index_names
+    assert "ix_feedback_handoff_records_event_created" in index_names
+    assert "ix_feedback_handoff_records_advertiser_created" in index_names
+    assert "ix_feedback_handoff_records_outcome_created" in index_names
+    assert "ix_feedback_handoff_records_partition_date" in index_names
+    assert {
+        foreign_key.column.table.name
+        for foreign_key in feedback_handoff_records.foreign_keys
+    } == {
+        "advertisers",
+        "campaign_performance_events",
+        "feedback_execution_dry_runs",
+        "feedback_optimization_reviews",
+    }
+    assert "applied" in check_constraints["feedback_handoff_record_outcome"]
+    assert "blocked" in check_constraints["feedback_handoff_record_outcome"]
+    assert (
+        "ready_for_manual_handoff"
+        in check_constraints["feedback_handoff_record_package_status"]
+    )
 
 
 def test_strategy_jobs_support_async_workflow_access_patterns() -> None:

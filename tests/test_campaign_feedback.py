@@ -5,6 +5,7 @@ from ads_growth_agent.contracts import (
     CampaignFeedbackExecutionDryRunListResponse,
     CampaignFeedbackExecutionDryRunResponse,
     CampaignFeedbackExecutionPlanResponse,
+    CampaignFeedbackHandoffRecordRequest,
     CampaignFeedbackOptimizationReviewListResponse,
     CampaignFeedbackOptimizationReviewRequest,
     CampaignFeedbackOptimizationReviewResponse,
@@ -12,6 +13,7 @@ from ads_growth_agent.contracts import (
     CampaignPerformanceEventDetailResponse,
     CampaignPerformanceEventRequest,
     FeedbackActionType,
+    FeedbackHandoffOutcome,
     FeedbackHealthStatus,
     FeedbackOptimizationReviewDecision,
     FeedbackStrategyContext,
@@ -33,6 +35,11 @@ from ads_growth_agent.feedback_execution_plan import (
     build_feedback_execution_plan,
 )
 from ads_growth_agent.feedback_handoff_package import build_feedback_handoff_package
+from ads_growth_agent.feedback_handoff_record import (
+    FeedbackHandoffRecordNotReadyError,
+    FeedbackHandoffRecordStepMismatchError,
+    build_feedback_handoff_record,
+)
 from ads_growth_agent.feedback_lineage import (
     build_feedback_optimization_review_lineage,
     list_feedback_optimization_review_lineages,
@@ -958,6 +965,76 @@ def test_feedback_handoff_package_marks_missing_validation_when_no_dry_run() -> 
     assert package.blocked_step_count == 0
     assert package.manual_steps[0].dry_run_status == "not_validated"
     assert "Run dry-run execution validation" in package.operator_checklist[-1]
+
+
+def test_feedback_handoff_record_marks_ready_package_applied() -> None:
+    review = _feedback_optimization_review(
+        decision=FeedbackOptimizationReviewDecision.APPROVED,
+        review_id="feedback_review_handoff_record_applied",
+    )
+    execution_plan = build_feedback_execution_plan(review)
+    dry_run = dry_run_feedback_execution_plan(execution_plan)
+    package = build_feedback_handoff_package(review, _ExecutionLineageStore([dry_run]))
+    completed_step_ids = [step.step_id for step in package.manual_steps]
+
+    record = build_feedback_handoff_record(
+        package,
+        CampaignFeedbackHandoffRecordRequest(
+            outcome=FeedbackHandoffOutcome.APPLIED,
+            operator_id="operator_001",
+            notes="Manually applied approved change in ads workspace.",
+            completed_step_ids=completed_step_ids,
+        ),
+        handoff_record_id="feedback_handoff_record_test",
+    )
+
+    assert record.handoff_record_id == "feedback_handoff_record_test"
+    assert record.handoff_package_id == package.handoff_package_id
+    assert record.review_id == review.review_id
+    assert record.latest_dry_run_id == dry_run.dry_run_id
+    assert record.outcome == FeedbackHandoffOutcome.APPLIED
+    assert record.completed_step_ids == completed_step_ids
+    assert record.requires_follow_up is False
+    assert record.handoff_package.status == "ready_for_manual_handoff"
+    assert "does not execute live campaign changes" in record.guardrails[0]
+
+
+def test_feedback_handoff_record_blocks_applied_without_ready_package() -> None:
+    review = _feedback_optimization_review(
+        decision=FeedbackOptimizationReviewDecision.APPROVED,
+        review_id="feedback_review_handoff_record_not_ready",
+    )
+    package = build_feedback_handoff_package(review)
+
+    with pytest.raises(FeedbackHandoffRecordNotReadyError):
+        build_feedback_handoff_record(
+            package,
+            CampaignFeedbackHandoffRecordRequest(
+                outcome=FeedbackHandoffOutcome.APPLIED,
+                operator_id="operator_001",
+                completed_step_ids=[package.manual_steps[0].step_id],
+            ),
+        )
+
+
+def test_feedback_handoff_record_rejects_unknown_completed_step() -> None:
+    review = _feedback_optimization_review(
+        decision=FeedbackOptimizationReviewDecision.APPROVED,
+        review_id="feedback_review_handoff_record_unknown_step",
+    )
+    execution_plan = build_feedback_execution_plan(review)
+    dry_run = dry_run_feedback_execution_plan(execution_plan)
+    package = build_feedback_handoff_package(review, _ExecutionLineageStore([dry_run]))
+
+    with pytest.raises(FeedbackHandoffRecordStepMismatchError):
+        build_feedback_handoff_record(
+            package,
+            CampaignFeedbackHandoffRecordRequest(
+                outcome=FeedbackHandoffOutcome.APPLIED,
+                operator_id="operator_001",
+                completed_step_ids=["unknown_step"],
+            ),
+        )
 
 
 def test_feedback_execution_plan_requires_approved_review() -> None:

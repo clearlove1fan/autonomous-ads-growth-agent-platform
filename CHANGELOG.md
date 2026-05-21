@@ -44,6 +44,8 @@
 - Added read-only feedback handoff package API and CLI surfaces for approved
   reviews with latest dry-run validation, manual steps, checklist, and
   guardrails.
+- Added persisted feedback handoff outcome records through API and CLI so
+  operators can audit applied, blocked, or skipped manual handoffs.
 - Added dry-run feedback execution plans through API and CLI for approved
   optimization reviews.
 - Added dry-run feedback execution validation through draft-only typed tool

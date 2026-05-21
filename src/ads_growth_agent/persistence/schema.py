@@ -271,6 +271,81 @@ feedback_execution_dry_runs = sa.Table(
     ),
 )
 
+feedback_handoff_records = sa.Table(
+    "feedback_handoff_records",
+    metadata,
+    tenant_column(),
+    sa.Column("handoff_record_id", sa.Text(), nullable=False),
+    sa.Column("handoff_package_id", sa.Text(), nullable=False),
+    sa.Column("review_id", sa.Text(), nullable=False),
+    sa.Column("execution_plan_id", sa.Text(), nullable=False),
+    sa.Column("latest_dry_run_id", sa.Text(), nullable=True),
+    sa.Column("optimization_draft_id", sa.Text(), nullable=False),
+    sa.Column("event_id", sa.Text(), nullable=False),
+    sa.Column("feedback_id", sa.Text(), nullable=False),
+    sa.Column("advertiser_id", sa.Text(), nullable=False),
+    sa.Column("run_id", sa.Text(), nullable=True),
+    sa.Column("campaign_id", sa.Text(), nullable=True),
+    sa.Column("base_draft_id", sa.Text(), nullable=True),
+    sa.Column("strategy_id", sa.Text(), nullable=True),
+    sa.Column("package_status", sa.Text(), nullable=False),
+    sa.Column("outcome", sa.Text(), nullable=False),
+    sa.Column("operator_id", sa.Text(), nullable=False),
+    sa.Column("notes", sa.Text(), nullable=True),
+    sa.Column(
+        "completed_step_ids",
+        postgresql.JSONB(),
+        nullable=False,
+        server_default=sa.text("'[]'::jsonb"),
+    ),
+    sa.Column(
+        "blocked_step_ids",
+        postgresql.JSONB(),
+        nullable=False,
+        server_default=sa.text("'[]'::jsonb"),
+    ),
+    sa.Column("handoff_package_snapshot", postgresql.JSONB(), nullable=False),
+    sa.Column("record_snapshot", postgresql.JSONB(), nullable=False),
+    sa.Column(
+        "metadata", postgresql.JSONB(), nullable=False, server_default=sa.text("'{}'::jsonb")
+    ),
+    *partition_columns(),
+    *timestamp_columns(),
+    sa.PrimaryKeyConstraint("tenant_id", "handoff_record_id"),
+    sa.ForeignKeyConstraint(
+        ["tenant_id", "review_id"],
+        ["feedback_optimization_reviews.tenant_id", "feedback_optimization_reviews.review_id"],
+        ondelete="CASCADE",
+    ),
+    sa.ForeignKeyConstraint(
+        ["tenant_id", "latest_dry_run_id"],
+        ["feedback_execution_dry_runs.tenant_id", "feedback_execution_dry_runs.dry_run_id"],
+    ),
+    sa.ForeignKeyConstraint(
+        ["tenant_id", "event_id"],
+        ["campaign_performance_events.tenant_id", "campaign_performance_events.event_id"],
+        ondelete="CASCADE",
+    ),
+    sa.ForeignKeyConstraint(
+        ["tenant_id", "advertiser_id"],
+        ["advertisers.tenant_id", "advertisers.advertiser_id"],
+    ),
+    sa.CheckConstraint(
+        "package_status in ("
+        "'ready_for_manual_handoff', 'validation_missing', 'validation_failed'"
+        ")",
+        name="feedback_handoff_record_package_status",
+    ),
+    sa.CheckConstraint(
+        "outcome in ('applied', 'blocked', 'skipped')",
+        name="feedback_handoff_record_outcome",
+    ),
+    sa.CheckConstraint(
+        f"partition_bucket >= 0 and partition_bucket < {PARTITION_BUCKETS}",
+        name="feedback_handoff_record_partition_bucket_range",
+    ),
+)
+
 strategy_jobs = sa.Table(
     "strategy_jobs",
     metadata,
@@ -724,6 +799,42 @@ sa.Index(
     feedback_execution_dry_runs.c.partition_bucket,
 )
 sa.Index(
+    "ix_feedback_handoff_records_review_created",
+    feedback_handoff_records.c.tenant_id,
+    feedback_handoff_records.c.review_id,
+    feedback_handoff_records.c.created_at,
+)
+sa.Index(
+    "ix_feedback_handoff_records_package_created",
+    feedback_handoff_records.c.tenant_id,
+    feedback_handoff_records.c.handoff_package_id,
+    feedback_handoff_records.c.created_at,
+)
+sa.Index(
+    "ix_feedback_handoff_records_event_created",
+    feedback_handoff_records.c.tenant_id,
+    feedback_handoff_records.c.event_id,
+    feedback_handoff_records.c.created_at,
+)
+sa.Index(
+    "ix_feedback_handoff_records_advertiser_created",
+    feedback_handoff_records.c.tenant_id,
+    feedback_handoff_records.c.advertiser_id,
+    feedback_handoff_records.c.created_at,
+)
+sa.Index(
+    "ix_feedback_handoff_records_outcome_created",
+    feedback_handoff_records.c.tenant_id,
+    feedback_handoff_records.c.outcome,
+    feedback_handoff_records.c.created_at,
+)
+sa.Index(
+    "ix_feedback_handoff_records_partition_date",
+    feedback_handoff_records.c.tenant_id,
+    feedback_handoff_records.c.partition_date,
+    feedback_handoff_records.c.partition_bucket,
+)
+sa.Index(
     "ix_strategy_jobs_status_created",
     strategy_jobs.c.tenant_id,
     strategy_jobs.c.status,
@@ -900,6 +1011,7 @@ CORE_TABLES = (
     campaign_performance_events,
     feedback_optimization_reviews,
     feedback_execution_dry_runs,
+    feedback_handoff_records,
     strategy_jobs,
     outbox_events,
     knowledge_documents,
@@ -916,6 +1028,7 @@ HIGH_VOLUME_TABLES = {
     "campaign_performance_events",
     "feedback_optimization_reviews",
     "feedback_execution_dry_runs",
+    "feedback_handoff_records",
     "strategy_jobs",
     "outbox_events",
     "knowledge_documents",

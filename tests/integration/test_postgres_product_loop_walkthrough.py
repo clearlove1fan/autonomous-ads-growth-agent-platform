@@ -62,6 +62,20 @@ def test_persisted_product_loop_walkthrough() -> None:
         "handoff_package"
     ]["handoff_package_id"]
     assert summary["handoff_package"]["cli_status"] == "ready_for_manual_handoff"
+    assert summary["handoff_record"]["handoff_package_id"] == summary[
+        "handoff_package"
+    ]["handoff_package_id"]
+    assert summary["handoff_record"]["outcome"] == "applied"
+    assert summary["handoff_record"]["completed_step_count"] == 1
+    assert summary["handoff_record"]["requires_follow_up"] is False
+    assert summary["handoff_record"]["detail_id"] == summary["handoff_record"][
+        "handoff_record_id"
+    ]
+    assert summary["handoff_record"]["list_count"] == 1
+    assert summary["handoff_record"]["cli_handoff_record_id"] == summary[
+        "handoff_record"
+    ]["handoff_record_id"]
+    assert summary["handoff_record"]["cli_list_count"] == 1
     assert summary["review_lineage"]["source_review_id"] == summary["review"][
         "cli_submitted_review_id"
     ]
@@ -110,6 +124,10 @@ def test_persisted_product_loop_walkthrough() -> None:
     assert summary["cli_reads"]["handoff_package_id"] == summary["handoff_package"][
         "handoff_package_id"
     ]
+    assert summary["cli_reads"]["handoff_record_id"] == summary["handoff_record"][
+        "handoff_record_id"
+    ]
+    assert summary["cli_reads"]["handoff_record_count"] == 1
     assert summary["cli_reads"]["review_lineage_stage"] == "revision_review"
     assert summary["cli_reads"]["review_lineage_count"] == 1
     assert summary["cli_reads"]["feedback_loop_stage"] == "dry_run_passed"

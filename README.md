@@ -28,7 +28,8 @@ v0.1 Phase 1 MVP is complete as of 2026-05-18. The current milestone is a determ
 18. Persist and inspect execution dry-run validation results when PostgreSQL execution persistence is enabled.
 19. View an operator-facing feedback loop summary for one persisted performance event.
 20. Generate a read-only manual handoff package for approved, dry-run-validated changes.
-21. Retrieve learned advertiser memory in a later PostgreSQL-backed strategy run.
+21. Record and inspect manual handoff outcomes as operator audit records.
+22. Retrieve learned advertiser memory in a later PostgreSQL-backed strategy run.
 
 Phase 1 is intentionally a functional MVP, not a production launch claim. A single advertiser can run the core product loop locally through CLI or FastAPI without external model keys. The system still does not execute live ad spend, enforce real authentication, provide production SLO dashboards, or require GitHub branch protection in repository settings.
 
@@ -134,8 +135,9 @@ This creates a temporary database, applies migrations, seeds knowledge, then
 validates strategy draft -> performance feedback event -> optimization review ->
 revision draft -> revision review -> dry-run execution plan -> persisted
 execution dry-run validation -> review lineage and filtered lineage list with
-execution audit -> feedback loop summary -> manual handoff package -> outbox
-memory -> API/CLI reads -> later RAG retrieval of the learned memory.
+execution audit -> feedback loop summary -> manual handoff package -> handoff
+outcome record -> outbox memory -> API/CLI reads -> later RAG retrieval of the
+learned memory.
 
 The demo executes the complete deterministic product loop:
 
@@ -170,7 +172,7 @@ This project is designed around the same engineering themes as an AI Agent-power
 | RAG | Strategy playbooks, historical cases, and advertiser memory are retrieved and cited in final outputs |
 | Multi-agent orchestration | Planner, retriever, tool executor, critic, revision, and finalizer nodes model role-based agent responsibilities |
 | Structured output | Pydantic contracts validate briefs, tool intents/results, critique reports, final strategies, feedback analyses, and eval reports |
-| Event-driven feedback | Campaign performance events produce health status, matched optimization rules, draft-only recommendations, action plans, optimization drafts, human review records, revision drafts, second-pass revision reviews, individual and filtered review lineage with execution/dry-run audit, dry-run execution plans, persisted dry-run validation, operator feedback loop summaries, manual handoff packages, and later memory retrieval |
+| Event-driven feedback | Campaign performance events produce health status, matched optimization rules, draft-only recommendations, action plans, optimization drafts, human review records, revision drafts, second-pass revision reviews, individual and filtered review lineage with execution/dry-run audit, dry-run execution plans, persisted dry-run validation, operator feedback loop summaries, manual handoff packages, handoff outcome records, and later memory retrieval |
 | Self-reflection / critique loop | Critic report gates finalization; optional LLM critic can route through a bounded revision loop |
 | LLMOps / observability | LangSmith-compatible run metadata, structured JSON logs, local eval suite, and CI smoke coverage |
 | Ads growth domain | Output covers audience, creative, budget, bidding, measurement, campaign drafts, performance forecasts, and optimization rules |
@@ -662,6 +664,34 @@ curl http://localhost:8000/feedback-optimization-reviews/feedback_review_example
 
 FEEDBACK_REVIEW_PERSISTENCE_BACKEND=postgres FEEDBACK_EXECUTION_PERSISTENCE_BACKEND=postgres \
   ads-growth-agent get-feedback-handoff-package feedback_review_example
+```
+
+After manual application, operators can record the outcome for audit. Applied
+records require the package to be `ready_for_manual_handoff`; blocked or skipped
+records preserve follow-up context without mutating live campaign state:
+
+```bash
+curl -X POST http://localhost:8000/feedback-optimization-reviews/feedback_review_example/handoff-records \
+  -H "Content-Type: application/json" \
+  -H "X-Tenant-ID: tenant_demo" \
+  -d '{
+    "outcome": "applied",
+    "operator_id": "operator_001",
+    "notes": "Applied manually in ads workspace.",
+    "completed_step_ids": ["feedback_review_example:step:1"]
+  }'
+
+curl "http://localhost:8000/feedback-handoff-records?review_id=feedback_review_example&outcome=applied" \
+  -H "X-Tenant-ID: tenant_demo"
+
+FEEDBACK_REVIEW_PERSISTENCE_BACKEND=postgres FEEDBACK_EXECUTION_PERSISTENCE_BACKEND=postgres \
+  ads-growth-agent submit-feedback-handoff-record feedback_review_example \
+    --outcome applied \
+    --operator-id operator_001 \
+    --completed-step-id feedback_review_example:step:1
+
+FEEDBACK_EXECUTION_PERSISTENCE_BACKEND=postgres \
+  ads-growth-agent list-feedback-handoff-records --review-id feedback_review_example --outcome applied
 ```
 
 Campaign draft persistence is separately opt-in. Set `CAMPAIGN_DRAFT_PERSISTENCE_BACKEND=postgres` to store the `create_campaign_draft` tool output in `campaign_drafts`:

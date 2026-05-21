@@ -29,6 +29,9 @@ from ads_growth_agent.contracts import (
     CampaignFeedbackExecutionDryRunResponse,
     CampaignFeedbackExecutionPlanResponse,
     CampaignFeedbackHandoffPackageResponse,
+    CampaignFeedbackHandoffRecordListResponse,
+    CampaignFeedbackHandoffRecordRequest,
+    CampaignFeedbackHandoffRecordResponse,
     CampaignFeedbackLoopSummaryResponse,
     CampaignFeedbackOptimizationDraftResponse,
     CampaignFeedbackOptimizationReviewLineageListResponse,
@@ -41,6 +44,7 @@ from ads_growth_agent.contracts import (
     CampaignPerformanceEventListResponse,
     CampaignPerformanceEventRequest,
     CampaignPerformanceEventResponse,
+    FeedbackHandoffOutcome,
     FeedbackOptimizationReviewDecision,
     GrowthStrategyFromTextRequest,
     GrowthStrategyFromTextResponse,
@@ -71,6 +75,13 @@ from ads_growth_agent.feedback_execution_store_factory import (
     build_configured_feedback_execution_store,
 )
 from ads_growth_agent.feedback_handoff_package import build_feedback_handoff_package
+from ads_growth_agent.feedback_handoff_record import (
+    FeedbackHandoffRecordNotReadyError,
+    FeedbackHandoffRecordStepMismatchError,
+)
+from ads_growth_agent.feedback_handoff_store_factory import (
+    build_configured_feedback_handoff_store,
+)
 from ads_growth_agent.feedback_lineage import (
     build_feedback_optimization_review_lineage,
     list_feedback_optimization_review_lineages,
@@ -97,6 +108,7 @@ from ads_growth_agent.persistence.feedback_execution_store import (
     FeedbackExecutionDryRunStatus,
     FeedbackExecutionDryRunStore,
 )
+from ads_growth_agent.persistence.feedback_handoff_store import FeedbackHandoffRecordStore
 from ads_growth_agent.persistence.feedback_review_store import FeedbackOptimizationReviewStore
 from ads_growth_agent.persistence.idempotency_store import (
     IdempotencyConflictError,
@@ -265,6 +277,12 @@ def get_runtime_feedback_execution_store(
     settings: Annotated[Settings, Depends(get_request_settings)],
 ) -> FeedbackExecutionDryRunStore:
     return build_configured_feedback_execution_store(settings)
+
+
+def get_runtime_feedback_handoff_store(
+    settings: Annotated[Settings, Depends(get_request_settings)],
+) -> FeedbackHandoffRecordStore:
+    return build_configured_feedback_handoff_store(settings)
 
 
 def get_runtime_advertiser_memory_store(
@@ -1466,6 +1484,144 @@ def get_feedback_handoff_package(
     response.headers["Feedback-Handoff-Status"] = package.status
     response.headers["Feedback-Execution-Plan-ID"] = package.execution_plan_id
     return package
+
+
+@app.post(
+    "/feedback-optimization-reviews/{review_id}/handoff-records",
+    response_model=CampaignFeedbackHandoffRecordResponse,
+    dependencies=[Depends(require_api_auth)],
+)
+def submit_feedback_handoff_record(
+    review_id: str,
+    request: CampaignFeedbackHandoffRecordRequest,
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    review_store: Annotated[
+        FeedbackOptimizationReviewStore,
+        Depends(get_runtime_feedback_review_store),
+    ],
+    feedback_execution_store: Annotated[
+        FeedbackExecutionDryRunStore,
+        Depends(get_runtime_feedback_execution_store),
+    ],
+    handoff_store: Annotated[
+        FeedbackHandoffRecordStore,
+        Depends(get_runtime_feedback_handoff_store),
+    ],
+) -> CampaignFeedbackHandoffRecordResponse:
+    _require_feedback_review_persistence_enabled(settings)
+    _require_feedback_execution_persistence_enabled(settings)
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    review = review_store.get_review(review_id)
+    if review is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": "Feedback optimization review was not found for the effective tenant.",
+                "error_code": "FEEDBACK_OPTIMIZATION_REVIEW_NOT_FOUND",
+                "review_id": review_id,
+            },
+        )
+    try:
+        handoff_package = build_feedback_handoff_package(review, feedback_execution_store)
+        record = handoff_store.record_handoff(handoff_package, request)
+    except FeedbackExecutionPlanNotApprovedError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": str(exc),
+                "error_code": "FEEDBACK_HANDOFF_RECORD_NOT_APPROVED",
+                "review_id": exc.review_id,
+                "decision": exc.decision.value,
+            },
+        ) from exc
+    except FeedbackHandoffRecordNotReadyError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": str(exc),
+                "error_code": "FEEDBACK_HANDOFF_RECORD_NOT_READY",
+                "handoff_package_id": exc.handoff_package_id,
+                "package_status": exc.package_status,
+            },
+        ) from exc
+    except (FeedbackHandoffRecordStepMismatchError, ValueError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": str(exc),
+                "error_code": "FEEDBACK_HANDOFF_RECORD_INVALID",
+            },
+        ) from exc
+
+    response.headers["Feedback-Review-ID"] = review.review_id
+    response.headers["Feedback-Handoff-Package-ID"] = record.handoff_package_id
+    response.headers["Feedback-Handoff-Record-ID"] = record.handoff_record_id
+    response.headers["Feedback-Handoff-Outcome"] = record.outcome.value
+    return record
+
+
+@app.get(
+    "/feedback-handoff-records",
+    response_model=CampaignFeedbackHandoffRecordListResponse,
+    dependencies=[Depends(require_api_auth)],
+)
+def list_feedback_handoff_records(
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    handoff_store: Annotated[
+        FeedbackHandoffRecordStore,
+        Depends(get_runtime_feedback_handoff_store),
+    ],
+    review_id: Annotated[str | None, Query(min_length=1, max_length=160)] = None,
+    handoff_package_id: Annotated[str | None, Query(min_length=1, max_length=160)] = None,
+    event_id: Annotated[str | None, Query(min_length=1, max_length=128)] = None,
+    advertiser_id: Annotated[str | None, Query(min_length=1, max_length=128)] = None,
+    outcome: Annotated[FeedbackHandoffOutcome | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> CampaignFeedbackHandoffRecordListResponse:
+    _require_feedback_execution_persistence_enabled(settings)
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    return handoff_store.list_handoff_records(
+        review_id=review_id,
+        handoff_package_id=handoff_package_id,
+        event_id=event_id,
+        advertiser_id=advertiser_id,
+        outcome=outcome,
+        limit=limit,
+    )
+
+
+@app.get(
+    "/feedback-handoff-records/{handoff_record_id}",
+    response_model=CampaignFeedbackHandoffRecordResponse,
+    dependencies=[Depends(require_api_auth)],
+)
+def get_feedback_handoff_record(
+    handoff_record_id: str,
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    handoff_store: Annotated[
+        FeedbackHandoffRecordStore,
+        Depends(get_runtime_feedback_handoff_store),
+    ],
+) -> CampaignFeedbackHandoffRecordResponse:
+    _require_feedback_execution_persistence_enabled(settings)
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    record = handoff_store.get_handoff_record(handoff_record_id)
+    if record is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": "Feedback handoff record was not found for the effective tenant.",
+                "error_code": "FEEDBACK_HANDOFF_RECORD_NOT_FOUND",
+                "handoff_record_id": handoff_record_id,
+            },
+        )
+    response.headers["Feedback-Handoff-Record-ID"] = record.handoff_record_id
+    response.headers["Feedback-Handoff-Package-ID"] = record.handoff_package_id
+    response.headers["Feedback-Review-ID"] = record.review_id
+    return record
 
 
 @app.post(

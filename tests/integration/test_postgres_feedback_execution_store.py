@@ -8,9 +8,11 @@ from alembic.config import Config
 from sqlalchemy.engine import URL, make_url
 
 from ads_growth_agent.contracts import (
+    CampaignFeedbackHandoffRecordRequest,
     CampaignFeedbackOptimizationReviewRequest,
     CampaignObjective,
     CampaignPerformanceEventRequest,
+    FeedbackHandoffOutcome,
     FeedbackOptimizationReviewDecision,
     PerformanceMetrics,
 )
@@ -23,6 +25,10 @@ from ads_growth_agent.feedback_execution_plan import build_feedback_execution_pl
 from ads_growth_agent.feedback_execution_store_factory import (
     dispose_cached_feedback_execution_store_engines,
 )
+from ads_growth_agent.feedback_handoff_package import build_feedback_handoff_package
+from ads_growth_agent.feedback_handoff_store_factory import (
+    dispose_cached_feedback_handoff_store_engines,
+)
 from ads_growth_agent.feedback_review_store_factory import (
     dispose_cached_feedback_review_store_engines,
 )
@@ -31,6 +37,9 @@ from ads_growth_agent.performance_event_store_factory import (
 )
 from ads_growth_agent.persistence.feedback_execution_store import (
     PostgresFeedbackExecutionDryRunStore,
+)
+from ads_growth_agent.persistence.feedback_handoff_store import (
+    PostgresFeedbackHandoffRecordStore,
 )
 from ads_growth_agent.persistence.feedback_review_store import (
     PostgresFeedbackOptimizationReviewStore,
@@ -59,6 +68,7 @@ def test_feedback_execution_dry_run_store_persists_and_lists(monkeypatch) -> Non
         event_store = PostgresCampaignPerformanceEventStore(engine, tenant_id=tenant_id)
         review_store = PostgresFeedbackOptimizationReviewStore(engine, tenant_id=tenant_id)
         execution_store = PostgresFeedbackExecutionDryRunStore(engine, tenant_id=tenant_id)
+        handoff_store = PostgresFeedbackHandoffRecordStore(engine, tenant_id=tenant_id)
         event = _event()
         analysis = analyze_campaign_performance_event(event)
         event_store.record_analyzed(event, analysis)
@@ -78,6 +88,16 @@ def test_feedback_execution_dry_run_store_persists_and_lists(monkeypatch) -> Non
 
         execution_store.record_dry_run(execution_plan, dry_run)
         execution_store.record_dry_run(execution_plan, dry_run)
+        handoff_package = build_feedback_handoff_package(review, execution_store)
+        handoff_record = handoff_store.record_handoff(
+            handoff_package,
+            CampaignFeedbackHandoffRecordRequest(
+                outcome=FeedbackHandoffOutcome.APPLIED,
+                operator_id="operator_feedback_execution",
+                notes="Applied in the manual handoff workflow.",
+                completed_step_ids=[step.step_id for step in handoff_package.manual_steps],
+            ),
+        )
 
         detail = execution_store.get_dry_run(dry_run.dry_run_id)
         listing = execution_store.list_dry_runs(
@@ -89,6 +109,18 @@ def test_feedback_execution_dry_run_store_persists_and_lists(monkeypatch) -> Non
             engine,
             tenant_id="tenant_other",
         ).get_dry_run(dry_run.dry_run_id)
+        handoff_detail = handoff_store.get_handoff_record(
+            handoff_record.handoff_record_id
+        )
+        handoff_listing = handoff_store.list_handoff_records(
+            review_id=review.review_id,
+            outcome=FeedbackHandoffOutcome.APPLIED,
+            limit=10,
+        )
+        other_tenant_handoff_detail = PostgresFeedbackHandoffRecordStore(
+            engine,
+            tenant_id="tenant_other",
+        ).get_handoff_record(handoff_record.handoff_record_id)
 
         with engine.connect() as connection:
             row = connection.execute(
@@ -108,6 +140,18 @@ def test_feedback_execution_dry_run_store_persists_and_lists(monkeypatch) -> Non
                 ),
                 {"dry_run_id": dry_run.dry_run_id},
             ).scalar_one()
+            handoff_row = connection.execute(
+                sa.text(
+                    "SELECT tenant_id, handoff_record_id, handoff_package_id, "
+                    "review_id, latest_dry_run_id, event_id, advertiser_id, "
+                    "outcome, operator_id, package_status, completed_step_ids, "
+                    "handoff_package_snapshot, record_snapshot, metadata, "
+                    "partition_key, partition_bucket "
+                    "FROM feedback_handoff_records "
+                    "WHERE handoff_record_id = :handoff_record_id"
+                ),
+                {"handoff_record_id": handoff_record.handoff_record_id},
+            ).mappings().one()
 
         assert row_count == 1
         assert detail is not None
@@ -130,8 +174,36 @@ def test_feedback_execution_dry_run_store_persists_and_lists(monkeypatch) -> Non
         assert row["metadata"]["feedback_execution_persistence"] == "postgres"
         assert row["partition_key"] == event.event_id
         assert 0 <= row["partition_bucket"] < 128
+        assert handoff_detail is not None
+        assert handoff_detail.handoff_record_id == handoff_record.handoff_record_id
+        assert handoff_detail.outcome == FeedbackHandoffOutcome.APPLIED
+        assert handoff_listing.count == 1
+        assert handoff_listing.items[0].handoff_record_id == handoff_record.handoff_record_id
+        assert other_tenant_handoff_detail is None
+        assert handoff_row["tenant_id"] == tenant_id
+        assert handoff_row["handoff_package_id"] == handoff_package.handoff_package_id
+        assert handoff_row["review_id"] == review.review_id
+        assert handoff_row["latest_dry_run_id"] == dry_run.dry_run_id
+        assert handoff_row["event_id"] == event.event_id
+        assert handoff_row["advertiser_id"] == event.advertiser_id
+        assert handoff_row["outcome"] == "applied"
+        assert handoff_row["operator_id"] == "operator_feedback_execution"
+        assert handoff_row["package_status"] == "ready_for_manual_handoff"
+        assert handoff_row["completed_step_ids"] == [execution_plan.steps[0].step_id]
+        assert (
+            handoff_row["handoff_package_snapshot"]["handoff_package_id"]
+            == handoff_package.handoff_package_id
+        )
+        assert (
+            handoff_row["record_snapshot"]["handoff_record_id"]
+            == handoff_record.handoff_record_id
+        )
+        assert handoff_row["metadata"]["feedback_handoff_persistence"] == "postgres"
+        assert handoff_row["partition_key"] == event.event_id
+        assert 0 <= handoff_row["partition_bucket"] < 128
     finally:
         dispose_cached_feedback_execution_store_engines()
+        dispose_cached_feedback_handoff_store_engines()
         dispose_cached_feedback_review_store_engines()
         dispose_cached_performance_event_store_engines()
         engine.dispose()

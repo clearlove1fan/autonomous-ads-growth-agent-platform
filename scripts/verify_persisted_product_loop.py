@@ -472,6 +472,59 @@ def run_persisted_product_loop(
                     cli_revision_review["review_id"],
                 ],
             )
+            completed_handoff_step_ids = [
+                step["step_id"] for step in handoff_package["manual_steps"]
+            ]
+            handoff_record = _api_json(
+                client.post(
+                    "/feedback-optimization-reviews/"
+                    f"{cli_revision_review['review_id']}/handoff-records",
+                    json={
+                        "outcome": "applied",
+                        "operator_id": "operator_product_loop",
+                        "notes": "Recorded manual application in the persisted product loop.",
+                        "completed_step_ids": completed_handoff_step_ids,
+                    },
+                    headers=_tenant_headers(tenant_id),
+                ),
+                label="submit feedback handoff record",
+            )
+            handoff_record_detail = _api_json(
+                client.get(
+                    f"/feedback-handoff-records/{handoff_record['handoff_record_id']}",
+                    headers=_tenant_headers(tenant_id),
+                ),
+                label="get feedback handoff record",
+            )
+            handoff_record_list = _api_json(
+                client.get(
+                    "/feedback-handoff-records",
+                    params={
+                        "review_id": cli_revision_review["review_id"],
+                        "outcome": "applied",
+                        "limit": "10",
+                    },
+                    headers=_tenant_headers(tenant_id),
+                ),
+                label="list feedback handoff records",
+            )
+            cli_handoff_record = _invoke_cli(
+                settings,
+                [
+                    "get-feedback-handoff-record",
+                    handoff_record["handoff_record_id"],
+                ],
+            )
+            cli_handoff_record_list = _invoke_cli(
+                settings,
+                [
+                    "list-feedback-handoff-records",
+                    "--review-id",
+                    cli_revision_review["review_id"],
+                    "--outcome",
+                    "applied",
+                ],
+            )
             review_lineage = _api_json(
                 client.get(
                     f"/feedback-optimization-reviews/{cli_submitted_review['review_id']}/lineage",
@@ -661,6 +714,42 @@ def run_persisted_product_loop(
                 "CLI handoff package should match API package",
             )
             _expect(
+                handoff_record["outcome"] == "applied",
+                "handoff record should persist the manual applied outcome",
+            )
+            _expect(
+                handoff_record["handoff_package_id"]
+                == handoff_package["handoff_package_id"],
+                "handoff record should link to the handoff package",
+            )
+            _expect(
+                handoff_record["latest_dry_run_id"]
+                == revision_execution_dry_run["dry_run_id"],
+                "handoff record should reference the latest dry-run validation",
+            )
+            _expect(
+                handoff_record["completed_step_ids"] == completed_handoff_step_ids,
+                "handoff record should record completed manual steps",
+            )
+            _expect(
+                handoff_record_detail["handoff_record_id"]
+                == handoff_record["handoff_record_id"],
+                "handoff record detail should return the submitted record",
+            )
+            _expect(
+                handoff_record_list["count"] == 1,
+                "handoff record list should return the submitted applied record",
+            )
+            _expect(
+                cli_handoff_record["handoff_record_id"]
+                == handoff_record["handoff_record_id"],
+                "CLI handoff record detail should match API record",
+            )
+            _expect(
+                cli_handoff_record_list["count"] == 1,
+                "CLI handoff record list should return the submitted record",
+            )
+            _expect(
                 review_lineage["revision_draft"]["revision_draft_id"]
                 == revision_draft["revision_draft_id"],
                 "review lineage should include the revision draft",
@@ -833,6 +922,17 @@ def run_persisted_product_loop(
                 "cli_handoff_package_id": cli_handoff_package["handoff_package_id"],
                 "cli_status": cli_handoff_package["status"],
             },
+            "handoff_record": {
+                "handoff_record_id": handoff_record["handoff_record_id"],
+                "handoff_package_id": handoff_record["handoff_package_id"],
+                "outcome": handoff_record["outcome"],
+                "completed_step_count": len(handoff_record["completed_step_ids"]),
+                "requires_follow_up": handoff_record["requires_follow_up"],
+                "detail_id": handoff_record_detail["handoff_record_id"],
+                "list_count": handoff_record_list["count"],
+                "cli_handoff_record_id": cli_handoff_record["handoff_record_id"],
+                "cli_list_count": cli_handoff_record_list["count"],
+            },
             "review_lineage": {
                 "requested_review_id": review_lineage["requested_review_id"],
                 "source_review_id": review_lineage["source_review_id"],
@@ -897,6 +997,8 @@ def run_persisted_product_loop(
                 "revision_draft_id": cli_revision_draft["revision_draft_id"],
                 "revision_review_id": cli_revision_review["review_id"],
                 "handoff_package_id": cli_handoff_package["handoff_package_id"],
+                "handoff_record_id": cli_handoff_record["handoff_record_id"],
+                "handoff_record_count": cli_handoff_record_list["count"],
                 "review_lineage_stage": cli_review_lineage["lineage_stage"],
                 "review_lineage_count": cli_review_lineage_list["count"],
                 "feedback_loop_stage": cli_feedback_loop_summary["current_stage"],
@@ -995,6 +1097,13 @@ def render_summary(summary: dict[str, Any]) -> str:
                 f"first_step={summary['handoff_package']['first_manual_step_status']}"
             ),
             (
+                "Handoff record: "
+                f"{summary['handoff_record']['handoff_record_id']} "
+                f"outcome={summary['handoff_record']['outcome']} "
+                f"completed={summary['handoff_record']['completed_step_count']} "
+                f"follow_up={summary['handoff_record']['requires_follow_up']}"
+            ),
+            (
                 "Review lineage: "
                 f"source={summary['review_lineage']['source_review_id']} "
                 f"stage={summary['review_lineage']['lineage_stage']} "
@@ -1054,6 +1163,7 @@ def render_summary(summary: dict[str, Any]) -> str:
                 f"revision_draft={summary['cli_reads']['revision_draft_id']} "
                 f"revision_review={summary['cli_reads']['revision_review_id']} "
                 f"handoff={summary['cli_reads']['handoff_package_id']} "
+                f"handoff_record={summary['cli_reads']['handoff_record_id']} "
                 f"lineage={summary['cli_reads']['review_lineage_stage']} "
                 f"lineage_reads={summary['cli_reads']['review_lineage_count']} "
                 f"loop={summary['cli_reads']['feedback_loop_stage']} "

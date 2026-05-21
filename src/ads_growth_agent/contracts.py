@@ -74,6 +74,12 @@ class FeedbackOptimizationReviewDecision(StrEnum):
     NEEDS_REVISION = "needs_revision"
 
 
+class FeedbackHandoffOutcome(StrEnum):
+    APPLIED = "applied"
+    BLOCKED = "blocked"
+    SKIPPED = "skipped"
+
+
 AdvertiserMemoryType = Literal[
     "profile",
     "constraint",
@@ -1089,6 +1095,96 @@ class CampaignFeedbackHandoffPackageResponse(BaseModel):
     summary: str = Field(min_length=1, max_length=1_000)
     guardrails: list[str] = Field(default_factory=list)
     created_at: datetime
+
+
+class CampaignFeedbackHandoffRecordRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    outcome: FeedbackHandoffOutcome
+    operator_id: str = Field(min_length=1, max_length=128)
+    notes: str | None = Field(default=None, max_length=1_000)
+    completed_step_ids: list[str] = Field(default_factory=list)
+    blocked_step_ids: list[str] = Field(default_factory=list)
+
+    @field_validator("completed_step_ids", "blocked_step_ids")
+    @classmethod
+    def validate_step_ids(cls, value: list[str]) -> list[str]:
+        normalized_ids: list[str] = []
+        seen: set[str] = set()
+        for step_id in value:
+            normalized = step_id.strip()
+            if not normalized:
+                raise ValueError("step id lists cannot contain blank values")
+            if len(normalized) > 220:
+                raise ValueError("step id values must be 220 characters or fewer")
+            if normalized in seen:
+                raise ValueError("step id lists cannot contain duplicate values")
+            seen.add(normalized)
+            normalized_ids.append(normalized)
+        return normalized_ids
+
+    @model_validator(mode="after")
+    def validate_outcome_details(self) -> "CampaignFeedbackHandoffRecordRequest":
+        if self.outcome == FeedbackHandoffOutcome.APPLIED and not self.completed_step_ids:
+            raise ValueError("applied handoff records require completed_step_ids")
+        if (
+            self.outcome == FeedbackHandoffOutcome.BLOCKED
+            and not self.blocked_step_ids
+            and not self.notes
+        ):
+            raise ValueError("blocked handoff records require blocked_step_ids or notes")
+        if self.outcome == FeedbackHandoffOutcome.SKIPPED and not self.notes:
+            raise ValueError("skipped handoff records require notes")
+        overlap = set(self.completed_step_ids).intersection(self.blocked_step_ids)
+        if overlap:
+            raise ValueError("completed_step_ids and blocked_step_ids cannot overlap")
+        return self
+
+
+class CampaignFeedbackHandoffRecordResponse(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    handoff_record_id: str = Field(min_length=1, max_length=160)
+    handoff_package_id: str = Field(min_length=1, max_length=160)
+    review_id: str = Field(min_length=1, max_length=160)
+    execution_plan_id: str = Field(min_length=1, max_length=160)
+    latest_dry_run_id: str | None = Field(default=None, min_length=1, max_length=160)
+    optimization_draft_id: str = Field(min_length=1, max_length=160)
+    event_id: str = Field(min_length=1, max_length=128)
+    feedback_id: str = Field(min_length=1, max_length=160)
+    advertiser_id: str = Field(min_length=1, max_length=128)
+    run_id: str | None = Field(default=None, min_length=1, max_length=128)
+    campaign_id: str | None = Field(default=None, min_length=1, max_length=128)
+    base_draft_id: str | None = Field(default=None, min_length=1, max_length=160)
+    strategy_id: str | None = Field(default=None, min_length=1, max_length=128)
+    package_status: Literal[
+        "ready_for_manual_handoff",
+        "validation_missing",
+        "validation_failed",
+    ]
+    outcome: FeedbackHandoffOutcome
+    operator_id: str = Field(min_length=1, max_length=128)
+    notes: str | None = Field(default=None, max_length=1_000)
+    completed_step_ids: list[str] = Field(default_factory=list)
+    blocked_step_ids: list[str] = Field(default_factory=list)
+    requires_follow_up: bool
+    handoff_package: CampaignFeedbackHandoffPackageResponse
+    summary: str = Field(min_length=1, max_length=1_000)
+    guardrails: list[str] = Field(default_factory=list)
+    created_at: datetime
+
+
+class CampaignFeedbackHandoffRecordListResponse(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    items: list[CampaignFeedbackHandoffRecordResponse] = Field(default_factory=list)
+    count: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    review_id: str | None = Field(default=None, min_length=1, max_length=160)
+    handoff_package_id: str | None = Field(default=None, min_length=1, max_length=160)
+    event_id: str | None = Field(default=None, min_length=1, max_length=128)
+    advertiser_id: str | None = Field(default=None, min_length=1, max_length=128)
+    outcome: FeedbackHandoffOutcome | None = None
 
 
 class CampaignPerformanceEventResponse(BaseModel):

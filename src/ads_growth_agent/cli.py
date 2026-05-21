@@ -22,12 +22,15 @@ from ads_growth_agent.contracts import (
     CampaignDraftListResponse,
     CampaignFeedbackExecutionDryRunListResponse,
     CampaignFeedbackHandoffPackageResponse,
+    CampaignFeedbackHandoffRecordListResponse,
+    CampaignFeedbackHandoffRecordRequest,
     CampaignFeedbackLoopSummaryResponse,
     CampaignFeedbackOptimizationReviewLineageListResponse,
     CampaignFeedbackOptimizationReviewListResponse,
     CampaignFeedbackOptimizationReviewRequest,
     CampaignPerformanceEventListResponse,
     CampaignPerformanceEventRequest,
+    FeedbackHandoffOutcome,
     FeedbackOptimizationReviewDecision,
     GrowthStrategyRequest,
     PerformanceEventType,
@@ -53,6 +56,13 @@ from ads_growth_agent.feedback_execution_store_factory import (
     build_configured_feedback_execution_store,
 )
 from ads_growth_agent.feedback_handoff_package import build_feedback_handoff_package
+from ads_growth_agent.feedback_handoff_record import (
+    FeedbackHandoffRecordNotReadyError,
+    FeedbackHandoffRecordStepMismatchError,
+)
+from ads_growth_agent.feedback_handoff_store_factory import (
+    build_configured_feedback_handoff_store,
+)
 from ads_growth_agent.feedback_lineage import (
     build_feedback_optimization_review_lineage,
 )
@@ -168,6 +178,15 @@ FEEDBACK_EXECUTION_REVIEW_ID_OPTION = typer.Option(None, "--review-id")
 FEEDBACK_EXECUTION_PLAN_ID_OPTION = typer.Option(None, "--execution-plan-id")
 FEEDBACK_EXECUTION_DRY_RUN_STATUS_OPTION = typer.Option(None, "--status")
 FEEDBACK_EXECUTION_DRY_RUN_LIST_LIMIT_OPTION = typer.Option(50, "--limit", min=1, max=100)
+FEEDBACK_HANDOFF_RECORD_ID_ARGUMENT = typer.Argument(..., help="Feedback handoff record ID.")
+FEEDBACK_HANDOFF_PACKAGE_ID_OPTION = typer.Option(None, "--handoff-package-id")
+FEEDBACK_HANDOFF_OUTCOME_OPTION = typer.Option(..., "--outcome")
+FEEDBACK_HANDOFF_OUTCOME_FILTER_OPTION = typer.Option(None, "--outcome")
+FEEDBACK_HANDOFF_OPERATOR_ID_OPTION = typer.Option(..., "--operator-id")
+FEEDBACK_HANDOFF_NOTES_OPTION = typer.Option(None, "--notes")
+FEEDBACK_HANDOFF_COMPLETED_STEP_ID_OPTION = typer.Option(None, "--completed-step-id")
+FEEDBACK_HANDOFF_BLOCKED_STEP_ID_OPTION = typer.Option(None, "--blocked-step-id")
+FEEDBACK_HANDOFF_LIST_LIMIT_OPTION = typer.Option(50, "--limit", min=1, max=100)
 ALLOWED_PERFORMANCE_EVENT_TYPES = {
     "performance_snapshot",
     "budget_pacing",
@@ -188,6 +207,11 @@ ALLOWED_FEEDBACK_REVIEW_LINEAGE_STAGES = {
     "rejected",
     "revision_requested",
     "revision_review",
+}
+ALLOWED_FEEDBACK_HANDOFF_OUTCOMES = {
+    "applied",
+    "blocked",
+    "skipped",
 }
 
 
@@ -560,6 +584,102 @@ def get_feedback_handoff_package(review_id: str = FEEDBACK_REVIEW_ID_ARGUMENT) -
         raise typer.Exit(2) from exc
 
     response = CampaignFeedbackHandoffPackageResponse.model_validate(package)
+    typer.echo(response.model_dump_json(indent=2))
+
+
+@app.command("submit-feedback-handoff-record")
+def submit_feedback_handoff_record(
+    review_id: str = FEEDBACK_REVIEW_ID_ARGUMENT,
+    outcome: str = FEEDBACK_HANDOFF_OUTCOME_OPTION,
+    operator_id: str = FEEDBACK_HANDOFF_OPERATOR_ID_OPTION,
+    notes: str | None = FEEDBACK_HANDOFF_NOTES_OPTION,
+    completed_step_ids: list[str] | None = FEEDBACK_HANDOFF_COMPLETED_STEP_ID_OPTION,
+    blocked_step_ids: list[str] | None = FEEDBACK_HANDOFF_BLOCKED_STEP_ID_OPTION,
+) -> None:
+    """Record an operator outcome for one manual feedback handoff package."""
+    try:
+        settings = get_settings()
+        _ensure_feedback_review_persistence_enabled(settings)
+        _ensure_feedback_execution_persistence_enabled(settings)
+        review_store = build_configured_feedback_review_store(settings)
+        review = review_store.get_review(review_id)
+        if review is None:
+            typer.echo(f"Feedback optimization review not found: {review_id}", err=True)
+            raise typer.Exit(1)
+        execution_store = build_configured_feedback_execution_store(settings)
+        handoff_package = build_feedback_handoff_package(review, execution_store)
+        validated_outcome = _feedback_handoff_outcome_or_exit(outcome)
+        if validated_outcome is None:
+            raise ValueError("feedback handoff outcome is required")
+        request = CampaignFeedbackHandoffRecordRequest(
+            outcome=validated_outcome,
+            operator_id=operator_id,
+            notes=notes,
+            completed_step_ids=completed_step_ids or [],
+            blocked_step_ids=blocked_step_ids or [],
+        )
+        handoff_store = build_configured_feedback_handoff_store(settings)
+        record = handoff_store.record_handoff(handoff_package, request)
+    except FeedbackExecutionPlanNotApprovedError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+    except FeedbackHandoffRecordNotReadyError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+    except (FeedbackHandoffRecordStepMismatchError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from exc
+
+    typer.echo(record.model_dump_json(indent=2))
+
+
+@app.command("get-feedback-handoff-record")
+def get_feedback_handoff_record(
+    handoff_record_id: str = FEEDBACK_HANDOFF_RECORD_ID_ARGUMENT,
+) -> None:
+    """Fetch one persisted feedback handoff acknowledgement record."""
+    settings = get_settings()
+    _ensure_feedback_execution_persistence_enabled(settings)
+    store = build_configured_feedback_handoff_store(settings)
+    record = store.get_handoff_record(handoff_record_id)
+    if record is None:
+        typer.echo(f"Feedback handoff record not found: {handoff_record_id}", err=True)
+        raise typer.Exit(1)
+    typer.echo(record.model_dump_json(indent=2))
+
+
+@app.command("list-feedback-handoff-records")
+def list_feedback_handoff_records(
+    review_id: str | None = FEEDBACK_EXECUTION_REVIEW_ID_OPTION,
+    handoff_package_id: str | None = FEEDBACK_HANDOFF_PACKAGE_ID_OPTION,
+    event_id: str | None = FEEDBACK_REVIEW_EVENT_ID_OPTION,
+    advertiser_id: str | None = PERFORMANCE_EVENT_ADVERTISER_ID_OPTION,
+    outcome: str | None = FEEDBACK_HANDOFF_OUTCOME_FILTER_OPTION,
+    limit: int = FEEDBACK_HANDOFF_LIST_LIMIT_OPTION,
+) -> None:
+    """List recent persisted feedback handoff acknowledgement records."""
+    settings = get_settings()
+    _ensure_feedback_execution_persistence_enabled(settings)
+    validated_outcome = _feedback_handoff_outcome_or_exit(outcome)
+    store = build_configured_feedback_handoff_store(settings)
+    records = store.list_handoff_records(
+        review_id=review_id,
+        handoff_package_id=handoff_package_id,
+        event_id=event_id,
+        advertiser_id=advertiser_id,
+        outcome=validated_outcome,
+        limit=limit,
+    )
+    response = CampaignFeedbackHandoffRecordListResponse(
+        items=records.items,
+        count=records.count,
+        limit=limit,
+        review_id=review_id,
+        handoff_package_id=handoff_package_id,
+        event_id=event_id,
+        advertiser_id=advertiser_id,
+        outcome=validated_outcome,
+    )
     typer.echo(response.model_dump_json(indent=2))
 
 
@@ -1158,6 +1278,21 @@ def _feedback_execution_dry_run_status_or_exit(
         err=True,
     )
     raise typer.Exit(2)
+
+
+def _feedback_handoff_outcome_or_exit(value: str | None) -> FeedbackHandoffOutcome | None:
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    try:
+        return FeedbackHandoffOutcome(normalized)
+    except ValueError as exc:
+        allowed = ", ".join(sorted(ALLOWED_FEEDBACK_HANDOFF_OUTCOMES))
+        typer.echo(
+            f"Invalid feedback handoff outcome: {value}. Expected one of: {allowed}",
+            err=True,
+        )
+        raise typer.Exit(2) from exc
 
 
 def _feedback_review_lineage_stage_or_exit(value: str | None) -> str | None:
