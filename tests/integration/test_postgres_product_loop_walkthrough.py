@@ -117,6 +117,7 @@ def test_persisted_product_loop_walkthrough() -> None:
     assert summary["execution_dry_run"]["validated_step_count"] == 1
     assert summary["execution_dry_run"]["blocked_step_count"] == 0
     assert summary["outbox"]["completed"] == 1
+    assert summary["handoff_outbox"]["completed"] == 1
     assert summary["cli_reads"]["event_count"] == 1
     assert summary["cli_reads"]["first_action_type"] == "adjust_budget"
     assert summary["cli_reads"]["first_change_type"] == "budget"
@@ -147,7 +148,13 @@ def test_persisted_product_loop_walkthrough() -> None:
         "execution_dry_run"
     ]["dry_run_id"]
     assert summary["cli_reads"]["execution_dry_run_count"] == 1
-    assert summary["cli_reads"]["memory_count"] == 1
+    assert summary["cli_reads"]["memory_count"] == 2
+    assert summary["cli_reads"]["handoff_memory_source_id"] == summary["memory"][
+        "handoff_source_id"
+    ]
+    assert summary["memory"]["handoff_metadata_record_id"] == summary["handoff_record"][
+        "handoff_record_id"
+    ]
     assert summary["memory"]["source_id"] in summary["later_strategy"][
         "retrieved_memory_source_ids"
     ]
