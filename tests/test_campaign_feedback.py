@@ -46,6 +46,7 @@ from ads_growth_agent.feedback_lineage import (
     list_feedback_optimization_review_lineages,
 )
 from ads_growth_agent.feedback_loop_summary import build_campaign_feedback_loop_summary
+from ads_growth_agent.feedback_loop_timeline import build_campaign_feedback_loop_timeline
 
 
 def _approved_feedback_execution_plan(
@@ -975,6 +976,113 @@ def test_feedback_loop_summary_reports_latest_handoff_outcome_stage() -> None:
     )
     assert "Monitor the manually applied changes" in summary.next_operator_actions[0]
     assert "handoffs=1" in summary.summary
+
+
+def test_feedback_loop_timeline_orders_full_operator_audit_path() -> None:
+    event = CampaignPerformanceEventRequest(
+        event_id="evt_feedback_loop_timeline",
+        advertiser_id="adv_fitness_001",
+        run_id="run_001",
+        campaign_id="cmp_fittrack",
+        draft_id="draft_fittrack",
+        objective=CampaignObjective.REGISTRATIONS,
+        occurred_at="2026-05-12T12:00:00Z",
+        metrics=PerformanceMetrics(
+            impressions=10_000,
+            clicks=500,
+            spend="1000.00",
+            conversions=20,
+        ),
+        target_cpa="20.00",
+    )
+    analysis = analyze_campaign_performance_event(event)
+    detail = CampaignPerformanceEventDetailResponse(
+        event_id=event.event_id,
+        advertiser_id=event.advertiser_id,
+        run_id=event.run_id,
+        campaign_id=event.campaign_id,
+        draft_id=event.draft_id,
+        objective=event.objective,
+        event_type=event.event_type,
+        occurred_at=event.occurred_at,
+        metrics=event.metrics,
+        status="analyzed",
+        metadata={},
+        analysis=analysis,
+        created_at=analysis.created_at,
+        updated_at=analysis.created_at,
+    )
+    optimization_draft = build_campaign_feedback_optimization_draft(detail)
+    source_review = build_campaign_feedback_optimization_review(
+        optimization_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.NEEDS_REVISION,
+            reviewer_id="operator_001",
+            selected_change_ids=[optimization_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_timeline_source",
+    )
+    revision_draft = build_campaign_feedback_revision_reviewable_draft(source_review)
+    revision_review = build_campaign_feedback_optimization_review(
+        revision_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.APPROVED,
+            reviewer_id="operator_002",
+            selected_change_ids=[revision_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_timeline_revision",
+    )
+    execution_plan = build_feedback_execution_plan(revision_review)
+    dry_run = dry_run_feedback_execution_plan(execution_plan)
+    execution_store = _ExecutionLineageStore([dry_run])
+    handoff_package = build_feedback_handoff_package(revision_review, execution_store)
+    handoff_record = build_feedback_handoff_record(
+        handoff_package,
+        CampaignFeedbackHandoffRecordRequest(
+            outcome=FeedbackHandoffOutcome.APPLIED,
+            operator_id="operator_003",
+            completed_step_ids=[step.step_id for step in handoff_package.manual_steps],
+        ),
+    )
+
+    timeline = build_campaign_feedback_loop_timeline(
+        detail,
+        _ReviewLineageStore([source_review, revision_review]),
+        execution_store,
+        _HandoffSummaryStore([handoff_record]),
+        review_persistence_enabled=True,
+        execution_persistence_enabled=True,
+        handoff_persistence_enabled=True,
+        limit=20,
+    )
+
+    assert timeline.current_stage == "handoff_applied"
+    assert timeline.entry_count == 10
+    assert timeline.total_entry_count == 10
+    assert timeline.latest_entry_stage == "handoff_applied"
+    assert [entry.sequence for entry in timeline.entries] == list(range(1, 11))
+    assert [entry.stage for entry in timeline.entries] == [
+        "performance_event_analyzed",
+        "feedback_action_plan_created",
+        "optimization_draft_created",
+        "revision_requested",
+        "revision_draft_created",
+        "revision_review_approved",
+        "execution_plan_ready",
+        "execution_dry_run_passed",
+        "handoff_ready",
+        "handoff_applied",
+    ]
+    assert timeline.entries[3].actor_id == "operator_001"
+    assert timeline.entries[5].actor_id == "operator_002"
+    assert timeline.entries[-1].actor_id == "operator_003"
+    assert timeline.entries[-1].related_ids["handoff_record_id"] == (
+        handoff_record.handoff_record_id
+    )
+    assert timeline.entries[6].related_ids["execution_plan_id"] == (
+        execution_plan.execution_plan_id
+    )
+    assert "read-only operator audit projection" in timeline.guardrails[0]
 
 
 def test_feedback_execution_plan_maps_approved_review_to_dry_run_tool_intents() -> None:

@@ -25,6 +25,7 @@ from ads_growth_agent.contracts import (
     CampaignFeedbackHandoffRecordListResponse,
     CampaignFeedbackHandoffRecordRequest,
     CampaignFeedbackLoopSummaryResponse,
+    CampaignFeedbackLoopTimelineResponse,
     CampaignFeedbackOptimizationReviewLineageListResponse,
     CampaignFeedbackOptimizationReviewListResponse,
     CampaignFeedbackOptimizationReviewRequest,
@@ -70,6 +71,7 @@ from ads_growth_agent.feedback_lineage import (
     list_feedback_optimization_review_lineages as build_feedback_optimization_review_lineage_list,
 )
 from ads_growth_agent.feedback_loop_summary import build_campaign_feedback_loop_summary
+from ads_growth_agent.feedback_loop_timeline import build_campaign_feedback_loop_timeline
 from ads_growth_agent.feedback_review_store_factory import build_configured_feedback_review_store
 from ads_growth_agent.logging_config import configure_logging
 from ads_growth_agent.outbox import process_configured_outbox
@@ -404,6 +406,39 @@ def get_feedback_loop_summary(
         limit=limit,
     )
     response = CampaignFeedbackLoopSummaryResponse.model_validate(summary)
+    typer.echo(response.model_dump_json(indent=2))
+
+
+@app.command("get-feedback-loop-timeline")
+def get_feedback_loop_timeline(
+    event_id: str = PERFORMANCE_EVENT_ID_ARGUMENT,
+    limit: int = FEEDBACK_REVIEW_LIST_LIMIT_OPTION,
+) -> None:
+    """Fetch an ordered operator timeline for one persisted feedback event."""
+    settings = get_settings()
+    event_store = build_configured_performance_event_store(settings)
+    event = event_store.get_event(event_id)
+    if event is None:
+        typer.echo(f"Performance event not found: {event_id}", err=True)
+        raise typer.Exit(1)
+    review_store = build_configured_feedback_review_store(settings)
+    execution_store = build_configured_feedback_execution_store(settings)
+    handoff_store = build_configured_feedback_handoff_store(settings)
+    timeline = build_campaign_feedback_loop_timeline(
+        event,
+        review_store,
+        execution_store,
+        handoff_store,
+        review_persistence_enabled=settings.feedback_review_persistence_backend != "none",
+        execution_persistence_enabled=(
+            settings.feedback_execution_persistence_backend != "none"
+        ),
+        handoff_persistence_enabled=(
+            settings.feedback_execution_persistence_backend != "none"
+        ),
+        limit=limit,
+    )
+    response = CampaignFeedbackLoopTimelineResponse.model_validate(timeline)
     typer.echo(response.model_dump_json(indent=2))
 
 

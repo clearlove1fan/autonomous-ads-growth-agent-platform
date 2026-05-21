@@ -13,6 +13,7 @@ PROTECTED_PATHS = {
     "/campaign-events/performance",
     "/campaign-events/performance/{event_id}/action-plan",
     "/campaign-events/performance/{event_id}/feedback-loop-summary",
+    "/campaign-events/performance/{event_id}/feedback-loop-timeline",
     "/campaign-events/performance/{event_id}/optimization-draft",
     "/campaign-events/performance/{event_id}/optimization-draft/reviews",
     "/campaign-events/performance/{event_id}",

@@ -11,7 +11,7 @@ This roadmap defines the order in which the Autonomous Ads Growth Agent Platform
 | Production architecture skeleton | 68-72% | 75-80% | In progress |
 | True production-ready system | 15-20% | 60%+ for this repo | Early |
 
-These numbers are intentionally conservative. The project now has a credible agent-runtime and production-skeleton foundation, including persistence, tenant scoping, retry/resume, checkpointing, async strategy jobs, event feedback, feedback action plans, feedback optimization drafts, persisted feedback review decisions, revision drafts and second-pass reviews for `needs_revision` reviews, individual and filtered review lineage with execution/dry-run audit, feedback loop summaries, manual handoff packages, handoff outcome records, persisted dry-run execution validation, performance event discovery, advertiser memory write/read surfaces, dependency locking, explicit CI quality gates, a deterministic one-command MVP demo, local agent evals, curated positive/negative demo verifiers, a persisted product loop verifier, and an optional local API key boundary. Phase 1 is complete for the v0.1 MVP, while branch protection remains a GitHub repository setting tracked in Phase 1.5 and is currently blocked for the private repo by GitHub plan limits. The project should still not claim production-grade availability, full security, or distributed-system readiness yet.
+These numbers are intentionally conservative. The project now has a credible agent-runtime and production-skeleton foundation, including persistence, tenant scoping, retry/resume, checkpointing, async strategy jobs, event feedback, feedback action plans, feedback optimization drafts, persisted feedback review decisions, revision drafts and second-pass reviews for `needs_revision` reviews, individual and filtered review lineage with execution/dry-run audit, feedback loop summaries and timelines, manual handoff packages, handoff outcome records, persisted dry-run execution validation, performance event discovery, advertiser memory write/read surfaces, dependency locking, explicit CI quality gates, a deterministic one-command MVP demo, local agent evals, curated positive/negative demo verifiers, a persisted product loop verifier, and an optional local API key boundary. Phase 1 is complete for the v0.1 MVP, while branch protection remains a GitHub repository setting tracked in Phase 1.5 and is currently blocked for the private repo by GitHub plan limits. The project should still not claim production-grade availability, full security, or distributed-system readiness yet.
 
 ## Phase 1: Interview-Quality Technical Project
 
@@ -186,6 +186,7 @@ Planned work:
   debugging, including execution-plan and dry-run summaries.
 - Feedback loop summary APIs/CLI for operator-facing current stage, next action,
   dry-run audit, and handoff outcome review from one persisted event.
+- Feedback loop timeline APIs/CLI for ordered event-rooted audit milestones.
 - Feedback handoff package APIs/CLI for approved manual handoff packages.
 - Feedback handoff record APIs/CLI for operator outcome audit.
 - Feedback execution plan APIs/CLI for approved feedback optimization reviews,
@@ -221,6 +222,9 @@ Exit criteria:
 - A feedback loop summary can be fetched for one persisted performance event,
   showing current stage, next operator actions, reviews, lineage, dry-run audit,
   and handoff outcomes in one read-only projection.
+- A feedback loop timeline can be fetched for one persisted performance event,
+  showing event analysis, draft, review, revision, execution, dry-run, handoff
+  package, and handoff outcome milestones in order.
 - Approved reviews can produce read-only manual handoff packages that include
   execution plan, latest dry-run validation, manual steps, checklist, and
   guardrails.
@@ -234,7 +238,7 @@ Exit criteria:
 - A live PostgreSQL walkthrough proves strategy draft -> feedback event ->
   optimization review -> revision draft -> revision review -> dry-run execution
   plan -> persisted execution dry-run validation -> review lineage and filtered
-  lineage list with execution audit -> feedback loop summary -> manual handoff
+  lineage list with execution audit -> feedback loop summary and timeline -> manual handoff
   package -> handoff outcome record -> outbox memory -> API/CLI reads -> later
   RAG retrieval.
 - Failed runs can be retried and failed/running runs can be resumed with clear semantics.

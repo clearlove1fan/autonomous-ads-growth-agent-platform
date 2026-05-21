@@ -583,6 +583,23 @@ def run_persisted_product_loop(
                     "10",
                 ],
             )
+            feedback_loop_timeline = _api_json(
+                client.get(
+                    f"/campaign-events/performance/{event_id}/feedback-loop-timeline",
+                    params={"limit": "20"},
+                    headers=_tenant_headers(tenant_id),
+                ),
+                label="get feedback loop timeline",
+            )
+            cli_feedback_loop_timeline = _invoke_cli(
+                settings,
+                [
+                    "get-feedback-loop-timeline",
+                    event_id,
+                    "--limit",
+                    "20",
+                ],
+            )
             cli_event_list = _invoke_cli(
                 settings,
                 [
@@ -846,6 +863,51 @@ def run_persisted_product_loop(
                 cli_feedback_loop_summary["handoff_record_count"] == 1,
                 "CLI feedback loop summary should include handoff record count",
             )
+            expected_timeline_stages = [
+                "performance_event_analyzed",
+                "feedback_action_plan_created",
+                "optimization_draft_created",
+                "optimization_review_approved",
+                "execution_plan_ready",
+                "revision_requested",
+                "revision_draft_created",
+                "revision_review_approved",
+                "execution_plan_ready",
+                "execution_dry_run_passed",
+                "execution_dry_run_passed",
+                "handoff_ready",
+                "handoff_ready",
+                "handoff_applied",
+            ]
+            _expect(
+                feedback_loop_timeline["current_stage"] == "handoff_applied",
+                "feedback loop timeline should report the latest loop as handoff applied",
+            )
+            _expect(
+                feedback_loop_timeline["entry_count"] == len(expected_timeline_stages),
+                "feedback loop timeline should include all product-loop milestones",
+            )
+            _expect(
+                [
+                    entry["stage"]
+                    for entry in feedback_loop_timeline["entries"]
+                ] == expected_timeline_stages,
+                "feedback loop timeline stages should follow the product-loop order",
+            )
+            _expect(
+                feedback_loop_timeline["latest_entry_stage"] == "handoff_applied",
+                "feedback loop timeline should end at the handoff outcome",
+            )
+            _expect(
+                cli_feedback_loop_timeline["entry_count"]
+                == feedback_loop_timeline["entry_count"],
+                "CLI feedback loop timeline should match API entry count",
+            )
+            _expect(
+                cli_feedback_loop_timeline["latest_entry_stage"]
+                == feedback_loop_timeline["latest_entry_stage"],
+                "CLI feedback loop timeline should match API latest stage",
+            )
             _expect(cli_event_list["count"] == 1, "CLI event list should find feedback event")
             _expect(
                 cli_memory["source_id"] == memory_source_id,
@@ -992,6 +1054,17 @@ def run_persisted_product_loop(
                     "handoff_record_count"
                 ],
             },
+            "feedback_loop_timeline": {
+                "current_stage": feedback_loop_timeline["current_stage"],
+                "entry_count": feedback_loop_timeline["entry_count"],
+                "latest_entry_stage": feedback_loop_timeline["latest_entry_stage"],
+                "first_stage": feedback_loop_timeline["entries"][0]["stage"],
+                "last_stage": feedback_loop_timeline["entries"][-1]["stage"],
+                "cli_entry_count": cli_feedback_loop_timeline["entry_count"],
+                "cli_latest_entry_stage": cli_feedback_loop_timeline[
+                    "latest_entry_stage"
+                ],
+            },
             "execution_plan": {
                 "execution_plan_id": execution_plan["execution_plan_id"],
                 "execution_mode": execution_plan["execution_mode"],
@@ -1027,6 +1100,9 @@ def run_persisted_product_loop(
                 "review_lineage_stage": cli_review_lineage["lineage_stage"],
                 "review_lineage_count": cli_review_lineage_list["count"],
                 "feedback_loop_stage": cli_feedback_loop_summary["current_stage"],
+                "feedback_timeline_stage": cli_feedback_loop_timeline[
+                    "latest_entry_stage"
+                ],
                 "execution_plan_id": cli_execution_plan["execution_plan_id"],
                 "execution_dry_run_id": cli_execution_dry_run["dry_run_id"],
                 "execution_dry_run_detail_id": cli_execution_dry_run_detail["dry_run_id"],
@@ -1149,6 +1225,14 @@ def render_summary(summary: dict[str, Any]) -> str:
                 f"cli_stage={summary['feedback_loop_summary']['cli_current_stage']}"
             ),
             (
+                "Feedback loop timeline: "
+                f"stage={summary['feedback_loop_timeline']['current_stage']} "
+                f"entries={summary['feedback_loop_timeline']['entry_count']} "
+                f"first={summary['feedback_loop_timeline']['first_stage']} "
+                f"last={summary['feedback_loop_timeline']['last_stage']} "
+                f"cli_latest={summary['feedback_loop_timeline']['cli_latest_entry_stage']}"
+            ),
+            (
                 "Execution plan: "
                 f"{summary['execution_plan']['execution_plan_id']} "
                 f"mode={summary['execution_plan']['execution_mode']} "
@@ -1193,6 +1277,7 @@ def render_summary(summary: dict[str, Any]) -> str:
                 f"lineage={summary['cli_reads']['review_lineage_stage']} "
                 f"lineage_reads={summary['cli_reads']['review_lineage_count']} "
                 f"loop={summary['cli_reads']['feedback_loop_stage']} "
+                f"timeline={summary['cli_reads']['feedback_timeline_stage']} "
                 f"execution_plan={summary['cli_reads']['execution_plan_id']} "
                 f"dry_run={summary['cli_reads']['execution_dry_run_id']} "
                 f"dry_run_reads={summary['cli_reads']['execution_dry_run_count']} "

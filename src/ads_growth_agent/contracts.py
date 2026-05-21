@@ -1232,6 +1232,20 @@ class CampaignPerformanceEventListResponse(BaseModel):
     event_type: PerformanceEventType | None = None
 
 
+FeedbackLoopCurrentStage = Literal[
+    "event_analyzed",
+    "review_pending",
+    "revision_requested",
+    "rejected",
+    "execution_ready",
+    "dry_run_passed",
+    "dry_run_failed",
+    "handoff_applied",
+    "handoff_blocked",
+    "handoff_skipped",
+]
+
+
 class CampaignFeedbackLoopSummaryResponse(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -1240,18 +1254,7 @@ class CampaignFeedbackLoopSummaryResponse(BaseModel):
     run_id: str | None = Field(default=None, min_length=1, max_length=128)
     campaign_id: str | None = Field(default=None, min_length=1, max_length=128)
     draft_id: str | None = Field(default=None, min_length=1, max_length=160)
-    current_stage: Literal[
-        "event_analyzed",
-        "review_pending",
-        "revision_requested",
-        "rejected",
-        "execution_ready",
-        "dry_run_passed",
-        "dry_run_failed",
-        "handoff_applied",
-        "handoff_blocked",
-        "handoff_skipped",
-    ]
+    current_stage: FeedbackLoopCurrentStage
     review_persistence_enabled: bool
     execution_persistence_enabled: bool
     handoff_persistence_enabled: bool = False
@@ -1281,4 +1284,75 @@ class CampaignFeedbackLoopSummaryResponse(BaseModel):
             limit=50,
         )
     )
+    guardrails: list[str] = Field(default_factory=list)
+
+
+FeedbackLoopTimelineStage = Literal[
+    "performance_event_analyzed",
+    "feedback_action_plan_created",
+    "optimization_draft_created",
+    "optimization_review_approved",
+    "optimization_review_rejected",
+    "revision_requested",
+    "revision_draft_created",
+    "revision_review_approved",
+    "revision_review_rejected",
+    "execution_plan_ready",
+    "execution_dry_run_passed",
+    "execution_dry_run_failed",
+    "handoff_ready",
+    "handoff_validation_missing",
+    "handoff_validation_failed",
+    "handoff_applied",
+    "handoff_blocked",
+    "handoff_skipped",
+]
+
+FeedbackLoopTimelineResourceType = Literal[
+    "performance_event",
+    "feedback_action_plan",
+    "optimization_draft",
+    "optimization_review",
+    "revision_draft",
+    "execution_plan",
+    "execution_dry_run",
+    "handoff_package",
+    "handoff_record",
+]
+
+
+class FeedbackLoopTimelineEntry(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    sequence: int = Field(ge=1)
+    entry_id: str = Field(min_length=1, max_length=420)
+    occurred_at: datetime
+    stage: FeedbackLoopTimelineStage
+    resource_type: FeedbackLoopTimelineResourceType
+    resource_id: str = Field(min_length=1, max_length=220)
+    status: str = Field(min_length=1, max_length=80)
+    title: str = Field(min_length=1, max_length=180)
+    summary: str = Field(min_length=1, max_length=1_000)
+    actor_id: str | None = Field(default=None, min_length=1, max_length=128)
+    related_ids: dict[str, str] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class CampaignFeedbackLoopTimelineResponse(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    event_id: str = Field(min_length=1, max_length=128)
+    advertiser_id: str = Field(min_length=1, max_length=128)
+    run_id: str | None = Field(default=None, min_length=1, max_length=128)
+    campaign_id: str | None = Field(default=None, min_length=1, max_length=128)
+    draft_id: str | None = Field(default=None, min_length=1, max_length=160)
+    current_stage: FeedbackLoopCurrentStage
+    latest_entry_id: str | None = Field(default=None, min_length=1, max_length=420)
+    latest_entry_stage: FeedbackLoopTimelineStage | None = None
+    entry_count: int = Field(ge=0)
+    total_entry_count: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    truncated: bool = False
+    entries: list[FeedbackLoopTimelineEntry] = Field(default_factory=list)
+    summary: str = Field(min_length=1, max_length=1_000)
     guardrails: list[str] = Field(default_factory=list)

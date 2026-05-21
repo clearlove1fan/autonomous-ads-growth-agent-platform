@@ -41,6 +41,9 @@
 - Added feedback loop summary API and CLI surfaces so operators can inspect
   current stage, next actions, reviews, lineage, dry-run audit, and handoff
   outcome records from one persisted performance event.
+- Added feedback loop timeline API and CLI surfaces so operators can inspect
+  ordered event-rooted milestones from performance analysis through handoff
+  outcomes.
 - Added read-only feedback handoff package API and CLI surfaces for approved
   reviews with latest dry-run validation, manual steps, checklist, and
   guardrails.
