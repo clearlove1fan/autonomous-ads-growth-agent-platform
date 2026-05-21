@@ -32,6 +32,7 @@ from ads_growth_agent.contracts import (
     CampaignFeedbackHandoffRecordListResponse,
     CampaignFeedbackHandoffRecordRequest,
     CampaignFeedbackHandoffRecordResponse,
+    CampaignFeedbackLoopCommandCenterResponse,
     CampaignFeedbackLoopSummaryResponse,
     CampaignFeedbackLoopTimelineResponse,
     CampaignFeedbackOptimizationDraftResponse,
@@ -86,6 +87,9 @@ from ads_growth_agent.feedback_handoff_store_factory import (
 from ads_growth_agent.feedback_lineage import (
     build_feedback_optimization_review_lineage,
     list_feedback_optimization_review_lineages,
+)
+from ads_growth_agent.feedback_loop_command_center import (
+    build_campaign_feedback_loop_command_center,
 )
 from ads_growth_agent.feedback_loop_summary import build_campaign_feedback_loop_summary
 from ads_growth_agent.feedback_loop_timeline import build_campaign_feedback_loop_timeline
@@ -1125,6 +1129,68 @@ def get_campaign_feedback_loop_timeline(
     if timeline.latest_entry_stage is not None:
         response.headers["Feedback-Timeline-Latest-Stage"] = timeline.latest_entry_stage
     return timeline
+
+
+@app.get(
+    "/campaign-events/performance/{event_id}/feedback-loop-command-center",
+    response_model=CampaignFeedbackLoopCommandCenterResponse,
+    dependencies=[Depends(require_api_auth)],
+)
+def get_campaign_feedback_loop_command_center(
+    event_id: str,
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    event_store: Annotated[
+        CampaignPerformanceEventStore,
+        Depends(get_runtime_performance_event_store),
+    ],
+    review_store: Annotated[
+        FeedbackOptimizationReviewStore,
+        Depends(get_runtime_feedback_review_store),
+    ],
+    feedback_execution_store: Annotated[
+        FeedbackExecutionDryRunStore,
+        Depends(get_runtime_feedback_execution_store),
+    ],
+    handoff_store: Annotated[
+        FeedbackHandoffRecordStore,
+        Depends(get_runtime_feedback_handoff_store),
+    ],
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> CampaignFeedbackLoopCommandCenterResponse:
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    event = event_store.get_event(event_id)
+    if event is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": "Campaign performance event was not found for the effective tenant.",
+                "error_code": "PERFORMANCE_EVENT_NOT_FOUND",
+                "event_id": event_id,
+            },
+        )
+    command_center = build_campaign_feedback_loop_command_center(
+        event,
+        review_store,
+        feedback_execution_store,
+        handoff_store,
+        review_persistence_enabled=settings.feedback_review_persistence_backend != "none",
+        execution_persistence_enabled=(
+            settings.feedback_execution_persistence_backend != "none"
+        ),
+        handoff_persistence_enabled=(
+            settings.feedback_execution_persistence_backend != "none"
+        ),
+        limit=limit,
+    )
+    response.headers["Feedback-ID"] = event.analysis.feedback_id
+    response.headers["Feedback-Loop-Stage"] = command_center.current_stage
+    response.headers["Feedback-Command-Count"] = str(command_center.command_count)
+    if command_center.primary_command_id is not None:
+        response.headers["Feedback-Primary-Command-ID"] = (
+            command_center.primary_command_id
+        )
+    return command_center
 
 
 @app.post(

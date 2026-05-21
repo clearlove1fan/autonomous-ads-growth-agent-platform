@@ -611,15 +611,22 @@ def test_get_campaign_feedback_loop_summary_api_returns_operator_status() -> Non
             params={"limit": "20"},
             headers={"X-Tenant-ID": "tenant_api"},
         )
+        command_center_response = client.get(
+            f"/campaign-events/performance/{event.event_id}/feedback-loop-command-center",
+            params={"limit": "20"},
+            headers={"X-Tenant-ID": "tenant_api"},
+        )
     finally:
         api_app.dependency_overrides.clear()
 
     payload = summary_response.json()
     timeline_payload = timeline_response.json()
+    command_center_payload = command_center_response.json()
     assert dry_run_response.status_code == 200
     assert handoff_response.status_code == 200
     assert summary_response.status_code == 200
     assert timeline_response.status_code == 200
+    assert command_center_response.status_code == 200
     assert summary_response.headers["feedback-loop-stage"] == "handoff_applied"
     assert summary_response.headers["feedback-review-count"] == "2"
     assert summary_response.headers["feedback-dry-run-count"] == "1"
@@ -628,6 +635,11 @@ def test_get_campaign_feedback_loop_summary_api_returns_operator_status() -> Non
     assert timeline_response.headers["feedback-loop-stage"] == "handoff_applied"
     assert timeline_response.headers["feedback-timeline-entry-count"] == "10"
     assert timeline_response.headers["feedback-timeline-latest-stage"] == "handoff_applied"
+    assert command_center_response.headers["feedback-loop-stage"] == "handoff_applied"
+    assert command_center_response.headers["feedback-command-count"] == "3"
+    assert command_center_response.headers["feedback-primary-command-id"] == (
+        "record_next_performance_event"
+    )
     assert payload["event_id"] == event.event_id
     assert payload["current_stage"] == "handoff_applied"
     assert payload["review_count"] == 2
@@ -664,7 +676,21 @@ def test_get_campaign_feedback_loop_summary_api_returns_operator_status() -> Non
         "handoff_applied",
     ]
     assert timeline_payload["entries"][-1]["actor_id"] == "operator_003"
-    assert event_store.requested_event_ids == [event.event_id, event.event_id]
+    assert command_center_payload["event_id"] == event.event_id
+    assert command_center_payload["current_stage"] == "handoff_applied"
+    assert command_center_payload["primary_command_id"] == (
+        "record_next_performance_event"
+    )
+    assert command_center_payload["primary_command"]["api_path"] == (
+        "/campaign-events/performance"
+    )
+    assert command_center_payload["loop_summary"]["current_stage"] == "handoff_applied"
+    assert command_center_payload["timeline"]["latest_entry_stage"] == "handoff_applied"
+    assert event_store.requested_event_ids == [
+        event.event_id,
+        event.event_id,
+        event.event_id,
+    ]
 
 
 def test_submit_campaign_feedback_optimization_review_api_records_review() -> None:
@@ -1749,11 +1775,17 @@ def test_get_feedback_loop_summary_cli_returns_operator_status(monkeypatch) -> N
         cli_app,
         ["get-feedback-loop-timeline", event.event_id, "--limit", "20"],
     )
+    command_center_result = CliRunner().invoke(
+        cli_app,
+        ["get-feedback-loop-command-center", event.event_id, "--limit", "20"],
+    )
 
     assert result.exit_code == 0
     assert timeline_result.exit_code == 0
+    assert command_center_result.exit_code == 0
     payload = json.loads(result.stdout)
     timeline_payload = json.loads(timeline_result.stdout)
+    command_center_payload = json.loads(command_center_result.stdout)
     assert payload["event_id"] == event.event_id
     assert payload["current_stage"] == "handoff_applied"
     assert payload["review_count"] == 2
@@ -1784,6 +1816,16 @@ def test_get_feedback_loop_summary_cli_returns_operator_status(monkeypatch) -> N
         "handoff_applied",
     ]
     assert timeline_payload["entries"][-1]["actor_id"] == "operator_cli_summary"
+    assert command_center_payload["event_id"] == event.event_id
+    assert command_center_payload["current_stage"] == "handoff_applied"
+    assert command_center_payload["primary_command_id"] == (
+        "record_next_performance_event"
+    )
+    assert command_center_payload["primary_command"]["api_path"] == (
+        "/campaign-events/performance"
+    )
+    assert command_center_payload["loop_summary"]["current_stage"] == "handoff_applied"
+    assert command_center_payload["timeline"]["latest_entry_stage"] == "handoff_applied"
 
 
 def test_submit_feedback_optimization_review_cli_records_review(monkeypatch) -> None:

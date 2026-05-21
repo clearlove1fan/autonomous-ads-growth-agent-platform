@@ -1356,3 +1356,73 @@ class CampaignFeedbackLoopTimelineResponse(BaseModel):
     entries: list[FeedbackLoopTimelineEntry] = Field(default_factory=list)
     summary: str = Field(min_length=1, max_length=1_000)
     guardrails: list[str] = Field(default_factory=list)
+
+
+FeedbackLoopCommandActionType = Literal[
+    "inspect_feedback_loop_summary",
+    "inspect_feedback_loop_timeline",
+    "inspect_optimization_draft",
+    "review_optimization_draft",
+    "generate_revision_draft",
+    "submit_revision_review",
+    "inspect_execution_plan",
+    "run_execution_dry_run",
+    "inspect_failed_dry_run",
+    "get_handoff_package",
+    "submit_handoff_record",
+    "inspect_handoff_record",
+    "record_next_performance_event",
+]
+
+FeedbackLoopCommandPersistenceRequirement = Literal[
+    "performance_event",
+    "feedback_review",
+    "feedback_execution",
+    "feedback_handoff",
+]
+
+
+class FeedbackLoopOperatorCommand(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    command_id: str = Field(min_length=1, max_length=180)
+    action_type: FeedbackLoopCommandActionType
+    priority: int = Field(ge=1, le=100)
+    enabled: bool
+    disabled_reason: str | None = Field(default=None, min_length=1, max_length=500)
+    label: str = Field(min_length=1, max_length=160)
+    description: str = Field(min_length=1, max_length=800)
+    api_method: Literal["GET", "POST"]
+    api_path: str = Field(min_length=1, max_length=320)
+    cli_command: list[str] = Field(min_length=1)
+    body_template: dict[str, Any] = Field(default_factory=dict)
+    resource_ids: dict[str, str] = Field(default_factory=dict)
+    requires_persistence: list[FeedbackLoopCommandPersistenceRequirement] = Field(
+        default_factory=list
+    )
+    guardrails: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_disabled_reason(self) -> "FeedbackLoopOperatorCommand":
+        if not self.enabled and self.disabled_reason is None:
+            raise ValueError("disabled commands require disabled_reason")
+        return self
+
+
+class CampaignFeedbackLoopCommandCenterResponse(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    event_id: str = Field(min_length=1, max_length=128)
+    advertiser_id: str = Field(min_length=1, max_length=128)
+    run_id: str | None = Field(default=None, min_length=1, max_length=128)
+    campaign_id: str | None = Field(default=None, min_length=1, max_length=128)
+    draft_id: str | None = Field(default=None, min_length=1, max_length=160)
+    current_stage: FeedbackLoopCurrentStage
+    primary_command_id: str | None = Field(default=None, min_length=1, max_length=180)
+    primary_command: FeedbackLoopOperatorCommand | None = None
+    command_count: int = Field(ge=0)
+    commands: list[FeedbackLoopOperatorCommand] = Field(default_factory=list)
+    loop_summary: CampaignFeedbackLoopSummaryResponse
+    timeline: CampaignFeedbackLoopTimelineResponse
+    summary: str = Field(min_length=1, max_length=1_000)
+    guardrails: list[str] = Field(default_factory=list)

@@ -45,6 +45,9 @@ from ads_growth_agent.feedback_lineage import (
     build_feedback_optimization_review_lineage,
     list_feedback_optimization_review_lineages,
 )
+from ads_growth_agent.feedback_loop_command_center import (
+    build_campaign_feedback_loop_command_center,
+)
 from ads_growth_agent.feedback_loop_summary import build_campaign_feedback_loop_summary
 from ads_growth_agent.feedback_loop_timeline import build_campaign_feedback_loop_timeline
 
@@ -1083,6 +1086,239 @@ def test_feedback_loop_timeline_orders_full_operator_audit_path() -> None:
         execution_plan.execution_plan_id
     )
     assert "read-only operator audit projection" in timeline.guardrails[0]
+
+
+def test_feedback_loop_command_center_guides_review_pending_stage() -> None:
+    event = CampaignPerformanceEventRequest(
+        event_id="evt_feedback_loop_command_pending",
+        advertiser_id="adv_fitness_001",
+        run_id="run_001",
+        campaign_id="cmp_fittrack",
+        draft_id="draft_fittrack",
+        objective=CampaignObjective.REGISTRATIONS,
+        occurred_at="2026-05-12T12:00:00Z",
+        metrics=PerformanceMetrics(
+            impressions=10_000,
+            clicks=500,
+            spend="1000.00",
+            conversions=20,
+        ),
+        target_cpa="20.00",
+    )
+    analysis = analyze_campaign_performance_event(event)
+    detail = CampaignPerformanceEventDetailResponse(
+        event_id=event.event_id,
+        advertiser_id=event.advertiser_id,
+        run_id=event.run_id,
+        campaign_id=event.campaign_id,
+        draft_id=event.draft_id,
+        objective=event.objective,
+        event_type=event.event_type,
+        occurred_at=event.occurred_at,
+        metrics=event.metrics,
+        status="analyzed",
+        metadata={},
+        analysis=analysis,
+        created_at=analysis.created_at,
+        updated_at=analysis.created_at,
+    )
+
+    command_center = build_campaign_feedback_loop_command_center(detail)
+
+    assert command_center.current_stage == "review_pending"
+    assert command_center.primary_command_id == "inspect_optimization_draft"
+    assert command_center.primary_command is not None
+    assert command_center.primary_command.api_method == "GET"
+    assert command_center.primary_command.cli_command == [
+        "ads-growth-agent",
+        "get-feedback-optimization-draft",
+        event.event_id,
+    ]
+    review_command = next(
+        command
+        for command in command_center.commands
+        if command.command_id == "review_optimization_draft"
+    )
+    assert review_command.enabled is False
+    assert review_command.disabled_reason is not None
+    assert "FEEDBACK_REVIEW_PERSISTENCE_BACKEND" in review_command.disabled_reason
+
+
+def test_feedback_loop_command_center_guides_revision_execution_and_handoff() -> None:
+    event = CampaignPerformanceEventRequest(
+        event_id="evt_feedback_loop_command_progression",
+        advertiser_id="adv_fitness_001",
+        run_id="run_001",
+        campaign_id="cmp_fittrack",
+        draft_id="draft_fittrack",
+        objective=CampaignObjective.REGISTRATIONS,
+        occurred_at="2026-05-12T12:00:00Z",
+        metrics=PerformanceMetrics(
+            impressions=10_000,
+            clicks=500,
+            spend="1000.00",
+            conversions=20,
+        ),
+        target_cpa="20.00",
+    )
+    analysis = analyze_campaign_performance_event(event)
+    detail = CampaignPerformanceEventDetailResponse(
+        event_id=event.event_id,
+        advertiser_id=event.advertiser_id,
+        run_id=event.run_id,
+        campaign_id=event.campaign_id,
+        draft_id=event.draft_id,
+        objective=event.objective,
+        event_type=event.event_type,
+        occurred_at=event.occurred_at,
+        metrics=event.metrics,
+        status="analyzed",
+        metadata={},
+        analysis=analysis,
+        created_at=analysis.created_at,
+        updated_at=analysis.created_at,
+    )
+    optimization_draft = build_campaign_feedback_optimization_draft(detail)
+    source_review = build_campaign_feedback_optimization_review(
+        optimization_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.NEEDS_REVISION,
+            reviewer_id="operator_001",
+            selected_change_ids=[optimization_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_command_progression_source",
+    )
+    revision_draft = build_campaign_feedback_revision_reviewable_draft(source_review)
+    revision_review = build_campaign_feedback_optimization_review(
+        revision_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.APPROVED,
+            reviewer_id="operator_002",
+            selected_change_ids=[revision_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_command_progression_revision",
+    )
+    execution_plan = build_feedback_execution_plan(revision_review)
+    dry_run = dry_run_feedback_execution_plan(execution_plan)
+
+    revision_center = build_campaign_feedback_loop_command_center(
+        detail,
+        _ReviewLineageStore([source_review]),
+        review_persistence_enabled=True,
+    )
+    execution_center = build_campaign_feedback_loop_command_center(
+        detail,
+        _ReviewLineageStore([source_review, revision_review]),
+        _ExecutionLineageStore([]),
+        review_persistence_enabled=True,
+        execution_persistence_enabled=True,
+    )
+    dry_run_center = build_campaign_feedback_loop_command_center(
+        detail,
+        _ReviewLineageStore([source_review, revision_review]),
+        _ExecutionLineageStore([dry_run]),
+        review_persistence_enabled=True,
+        execution_persistence_enabled=True,
+        handoff_persistence_enabled=True,
+    )
+
+    assert revision_center.current_stage == "revision_requested"
+    assert revision_center.primary_command_id == "generate_revision_draft"
+    assert execution_center.current_stage == "execution_ready"
+    assert execution_center.primary_command_id == "inspect_execution_plan"
+    run_command = next(
+        command
+        for command in execution_center.commands
+        if command.command_id == "run_execution_dry_run"
+    )
+    assert run_command.enabled is True
+    assert dry_run_center.current_stage == "dry_run_passed"
+    assert dry_run_center.primary_command_id == "get_handoff_package"
+
+
+def test_feedback_loop_command_center_guides_post_handoff_monitoring() -> None:
+    event = CampaignPerformanceEventRequest(
+        event_id="evt_feedback_loop_command_handoff",
+        advertiser_id="adv_fitness_001",
+        run_id="run_001",
+        campaign_id="cmp_fittrack",
+        draft_id="draft_fittrack",
+        objective=CampaignObjective.REGISTRATIONS,
+        occurred_at="2026-05-12T12:00:00Z",
+        metrics=PerformanceMetrics(
+            impressions=10_000,
+            clicks=500,
+            spend="1000.00",
+            conversions=20,
+        ),
+        target_cpa="20.00",
+    )
+    analysis = analyze_campaign_performance_event(event)
+    detail = CampaignPerformanceEventDetailResponse(
+        event_id=event.event_id,
+        advertiser_id=event.advertiser_id,
+        run_id=event.run_id,
+        campaign_id=event.campaign_id,
+        draft_id=event.draft_id,
+        objective=event.objective,
+        event_type=event.event_type,
+        occurred_at=event.occurred_at,
+        metrics=event.metrics,
+        status="analyzed",
+        metadata={},
+        analysis=analysis,
+        created_at=analysis.created_at,
+        updated_at=analysis.created_at,
+    )
+    optimization_draft = build_campaign_feedback_optimization_draft(detail)
+    review = build_campaign_feedback_optimization_review(
+        optimization_draft,
+        CampaignFeedbackOptimizationReviewRequest(
+            decision=FeedbackOptimizationReviewDecision.APPROVED,
+            reviewer_id="operator_001",
+            selected_change_ids=[optimization_draft.changes[0].change_id],
+        ),
+        review_id="feedback_review_command_handoff",
+    )
+    execution_plan = build_feedback_execution_plan(review)
+    dry_run = dry_run_feedback_execution_plan(execution_plan)
+    execution_store = _ExecutionLineageStore([dry_run])
+    handoff_package = build_feedback_handoff_package(review, execution_store)
+    handoff_record = build_feedback_handoff_record(
+        handoff_package,
+        CampaignFeedbackHandoffRecordRequest(
+            outcome=FeedbackHandoffOutcome.APPLIED,
+            operator_id="operator_003",
+            completed_step_ids=[step.step_id for step in handoff_package.manual_steps],
+        ),
+    )
+
+    command_center = build_campaign_feedback_loop_command_center(
+        detail,
+        _ReviewLineageStore([review]),
+        execution_store,
+        _HandoffSummaryStore([handoff_record]),
+        review_persistence_enabled=True,
+        execution_persistence_enabled=True,
+        handoff_persistence_enabled=True,
+    )
+
+    assert command_center.current_stage == "handoff_applied"
+    assert command_center.primary_command_id == "record_next_performance_event"
+    assert command_center.primary_command is not None
+    assert command_center.primary_command.api_method == "POST"
+    assert command_center.primary_command.api_path == "/campaign-events/performance"
+    assert command_center.primary_command.body_template["advertiser_id"] == (
+        event.advertiser_id
+    )
+    assert command_center.loop_summary.current_stage == "handoff_applied"
+    assert command_center.timeline.latest_entry_stage == "handoff_applied"
+    assert {command.command_id for command in command_center.commands} == {
+        "record_next_performance_event",
+        "inspect_feedback_loop_summary",
+        "inspect_feedback_loop_timeline",
+    }
+    assert "operator affordances" in command_center.guardrails[0]
 
 
 def test_feedback_execution_plan_maps_approved_review_to_dry_run_tool_intents() -> None:

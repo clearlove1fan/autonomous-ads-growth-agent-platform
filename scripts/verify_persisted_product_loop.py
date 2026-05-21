@@ -600,6 +600,23 @@ def run_persisted_product_loop(
                     "20",
                 ],
             )
+            feedback_loop_command_center = _api_json(
+                client.get(
+                    f"/campaign-events/performance/{event_id}/feedback-loop-command-center",
+                    params={"limit": "20"},
+                    headers=_tenant_headers(tenant_id),
+                ),
+                label="get feedback loop command center",
+            )
+            cli_feedback_loop_command_center = _invoke_cli(
+                settings,
+                [
+                    "get-feedback-loop-command-center",
+                    event_id,
+                    "--limit",
+                    "20",
+                ],
+            )
             cli_event_list = _invoke_cli(
                 settings,
                 [
@@ -908,6 +925,29 @@ def run_persisted_product_loop(
                 == feedback_loop_timeline["latest_entry_stage"],
                 "CLI feedback loop timeline should match API latest stage",
             )
+            _expect(
+                feedback_loop_command_center["current_stage"] == "handoff_applied",
+                "feedback loop command center should report handoff applied",
+            )
+            _expect(
+                feedback_loop_command_center["primary_command_id"]
+                == "record_next_performance_event",
+                "feedback loop command center should guide post-handoff monitoring",
+            )
+            _expect(
+                feedback_loop_command_center["primary_command"]["api_path"]
+                == "/campaign-events/performance",
+                "feedback loop command center primary command should ingest next event",
+            )
+            _expect(
+                feedback_loop_command_center["command_count"] == 3,
+                "feedback loop command center should include primary and inspection commands",
+            )
+            _expect(
+                cli_feedback_loop_command_center["primary_command_id"]
+                == feedback_loop_command_center["primary_command_id"],
+                "CLI feedback loop command center should match API primary command",
+            )
             _expect(cli_event_list["count"] == 1, "CLI event list should find feedback event")
             _expect(
                 cli_memory["source_id"] == memory_source_id,
@@ -1065,6 +1105,19 @@ def run_persisted_product_loop(
                     "latest_entry_stage"
                 ],
             },
+            "feedback_loop_command_center": {
+                "current_stage": feedback_loop_command_center["current_stage"],
+                "primary_command_id": feedback_loop_command_center[
+                    "primary_command_id"
+                ],
+                "primary_api_path": feedback_loop_command_center["primary_command"][
+                    "api_path"
+                ],
+                "command_count": feedback_loop_command_center["command_count"],
+                "cli_primary_command_id": cli_feedback_loop_command_center[
+                    "primary_command_id"
+                ],
+            },
             "execution_plan": {
                 "execution_plan_id": execution_plan["execution_plan_id"],
                 "execution_mode": execution_plan["execution_mode"],
@@ -1102,6 +1155,9 @@ def run_persisted_product_loop(
                 "feedback_loop_stage": cli_feedback_loop_summary["current_stage"],
                 "feedback_timeline_stage": cli_feedback_loop_timeline[
                     "latest_entry_stage"
+                ],
+                "feedback_command_center": cli_feedback_loop_command_center[
+                    "primary_command_id"
                 ],
                 "execution_plan_id": cli_execution_plan["execution_plan_id"],
                 "execution_dry_run_id": cli_execution_dry_run["dry_run_id"],
@@ -1233,6 +1289,14 @@ def render_summary(summary: dict[str, Any]) -> str:
                 f"cli_latest={summary['feedback_loop_timeline']['cli_latest_entry_stage']}"
             ),
             (
+                "Feedback command center: "
+                f"stage={summary['feedback_loop_command_center']['current_stage']} "
+                f"primary={summary['feedback_loop_command_center']['primary_command_id']} "
+                f"commands={summary['feedback_loop_command_center']['command_count']} "
+                f"api={summary['feedback_loop_command_center']['primary_api_path']} "
+                f"cli={summary['feedback_loop_command_center']['cli_primary_command_id']}"
+            ),
+            (
                 "Execution plan: "
                 f"{summary['execution_plan']['execution_plan_id']} "
                 f"mode={summary['execution_plan']['execution_mode']} "
@@ -1278,6 +1342,7 @@ def render_summary(summary: dict[str, Any]) -> str:
                 f"lineage_reads={summary['cli_reads']['review_lineage_count']} "
                 f"loop={summary['cli_reads']['feedback_loop_stage']} "
                 f"timeline={summary['cli_reads']['feedback_timeline_stage']} "
+                f"command_center={summary['cli_reads']['feedback_command_center']} "
                 f"execution_plan={summary['cli_reads']['execution_plan_id']} "
                 f"dry_run={summary['cli_reads']['execution_dry_run_id']} "
                 f"dry_run_reads={summary['cli_reads']['execution_dry_run_count']} "

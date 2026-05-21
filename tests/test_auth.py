@@ -11,6 +11,7 @@ PROTECTED_PATHS = {
     "/campaign-drafts",
     "/campaign-drafts/{draft_id}",
     "/campaign-events/performance",
+    "/campaign-events/performance/{event_id}/feedback-loop-command-center",
     "/campaign-events/performance/{event_id}/action-plan",
     "/campaign-events/performance/{event_id}/feedback-loop-summary",
     "/campaign-events/performance/{event_id}/feedback-loop-timeline",
