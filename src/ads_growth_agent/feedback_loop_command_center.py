@@ -503,6 +503,26 @@ def _inspection_commands(
             ],
             resource_ids=_resource_ids(summary),
         ),
+        _command(
+            command_id="inspect_feedback_outcome_report",
+            action_type="inspect_feedback_outcome_report",
+            priority=92,
+            label="Inspect outcome report",
+            description=(
+                "Compare this feedback event against the next persisted "
+                "performance snapshot."
+            ),
+            api_method="GET",
+            api_path=f"/campaign-events/performance/{summary.event_id}/feedback-outcome-report",
+            cli_command=[
+                "ads-growth-agent",
+                "get-feedback-outcome-report",
+                summary.event_id,
+                "--limit",
+                str(limit),
+            ],
+            resource_ids=_resource_ids(summary),
+        ),
     ]
 
 

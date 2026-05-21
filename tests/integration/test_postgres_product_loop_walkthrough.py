@@ -32,6 +32,12 @@ def test_persisted_product_loop_walkthrough() -> None:
 
     assert summary["status"] == "passed"
     assert summary["feedback_event"]["advertiser_memory_status"] == "queued"
+    assert summary["followup_event"]["advertiser_memory_status"] == "queued"
+    assert summary["feedback_outcome_report"]["outcome_status"] == "improved"
+    assert summary["feedback_outcome_report"]["followup_event_id"] == summary[
+        "followup_event"
+    ]["event_id"]
+    assert summary["feedback_outcome_report"]["cli_outcome_status"] == "improved"
     assert summary["action_plan"]["first_action_type"] == "adjust_budget"
     assert summary["action_plan"]["first_action_status"] == "draft_recommendation"
     assert summary["optimization_draft"]["status"] == "draft"
@@ -118,7 +124,7 @@ def test_persisted_product_loop_walkthrough() -> None:
     assert summary["execution_dry_run"]["blocked_step_count"] == 0
     assert summary["outbox"]["completed"] == 1
     assert summary["handoff_outbox"]["completed"] == 1
-    assert summary["cli_reads"]["event_count"] == 1
+    assert summary["cli_reads"]["event_count"] == 2
     assert summary["cli_reads"]["first_action_type"] == "adjust_budget"
     assert summary["cli_reads"]["first_change_type"] == "budget"
     assert summary["cli_reads"]["review_count"] == 1
@@ -138,6 +144,7 @@ def test_persisted_product_loop_walkthrough() -> None:
     assert summary["cli_reads"]["review_lineage_stage"] == "revision_review"
     assert summary["cli_reads"]["review_lineage_count"] == 1
     assert summary["cli_reads"]["feedback_loop_stage"] == "handoff_applied"
+    assert summary["cli_reads"]["feedback_outcome_status"] == "improved"
     assert summary["cli_reads"]["execution_plan_id"] == summary["execution_plan"][
         "execution_plan_id"
     ]

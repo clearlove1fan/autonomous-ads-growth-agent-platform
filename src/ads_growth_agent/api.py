@@ -42,6 +42,7 @@ from ads_growth_agent.contracts import (
     CampaignFeedbackOptimizationReviewRequest,
     CampaignFeedbackOptimizationReviewResponse,
     CampaignFeedbackOptimizationRevisionDraftResponse,
+    CampaignFeedbackOutcomeReportResponse,
     CampaignPerformanceEventDetailResponse,
     CampaignPerformanceEventListResponse,
     CampaignPerformanceEventRequest,
@@ -93,6 +94,7 @@ from ads_growth_agent.feedback_loop_command_center import (
 )
 from ads_growth_agent.feedback_loop_summary import build_campaign_feedback_loop_summary
 from ads_growth_agent.feedback_loop_timeline import build_campaign_feedback_loop_timeline
+from ads_growth_agent.feedback_outcome_report import build_campaign_feedback_outcome_report
 from ads_growth_agent.feedback_review_store_factory import build_configured_feedback_review_store
 from ads_growth_agent.graph import strategy_id_for_brief
 from ads_growth_agent.handoff_memory import schedule_or_record_handoff_memory
@@ -1192,6 +1194,47 @@ def get_campaign_feedback_loop_command_center(
             command_center.primary_command_id
         )
     return command_center
+
+
+@app.get(
+    "/campaign-events/performance/{event_id}/feedback-outcome-report",
+    response_model=CampaignFeedbackOutcomeReportResponse,
+    dependencies=[Depends(require_api_auth)],
+)
+def get_campaign_feedback_outcome_report(
+    event_id: str,
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    event_store: Annotated[
+        CampaignPerformanceEventStore,
+        Depends(get_runtime_performance_event_store),
+    ],
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> CampaignFeedbackOutcomeReportResponse:
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    event = event_store.get_event(event_id)
+    if event is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": "Campaign performance event was not found for the effective tenant.",
+                "error_code": "PERFORMANCE_EVENT_NOT_FOUND",
+                "event_id": event_id,
+            },
+        )
+    report = build_campaign_feedback_outcome_report(
+        event,
+        event_store,
+        limit=limit,
+    )
+    response.headers["Feedback-ID"] = event.analysis.feedback_id
+    response.headers["Feedback-Outcome-Status"] = report.outcome_status
+    response.headers["Feedback-Outcome-Comparison-Event-Count"] = str(
+        report.comparison_event_count
+    )
+    if report.followup_event_id is not None:
+        response.headers["Feedback-Followup-Event-ID"] = report.followup_event_id
+    return report
 
 
 @app.post(

@@ -636,7 +636,7 @@ def test_get_campaign_feedback_loop_summary_api_returns_operator_status() -> Non
     assert timeline_response.headers["feedback-timeline-entry-count"] == "10"
     assert timeline_response.headers["feedback-timeline-latest-stage"] == "handoff_applied"
     assert command_center_response.headers["feedback-loop-stage"] == "handoff_applied"
-    assert command_center_response.headers["feedback-command-count"] == "3"
+    assert command_center_response.headers["feedback-command-count"] == "4"
     assert command_center_response.headers["feedback-primary-command-id"] == (
         "record_next_performance_event"
     )
@@ -684,12 +684,77 @@ def test_get_campaign_feedback_loop_summary_api_returns_operator_status() -> Non
     assert command_center_payload["primary_command"]["api_path"] == (
         "/campaign-events/performance"
     )
+    assert command_center_payload["command_count"] == 4
+    assert any(
+        command["command_id"] == "inspect_feedback_outcome_report"
+        for command in command_center_payload["commands"]
+    )
     assert command_center_payload["loop_summary"]["current_stage"] == "handoff_applied"
     assert command_center_payload["timeline"]["latest_entry_stage"] == "handoff_applied"
     assert event_store.requested_event_ids == [
         event.event_id,
         event.event_id,
         event.event_id,
+    ]
+
+
+def test_get_campaign_feedback_outcome_report_api_compares_followup_snapshot() -> None:
+    baseline_event = api_module.CampaignPerformanceEventRequest.model_validate(
+        _event_payload_with_strategy_context()
+    )
+    followup_payload = _event_payload_with_strategy_context()
+    followup_payload["event_id"] = "evt_perf_followup_001"
+    followup_payload["occurred_at"] = "2026-05-13T12:00:00Z"
+    followup_payload["metrics"] = {
+        "impressions": 12000,
+        "clicks": 720,
+        "spend": "900.00",
+        "conversions": 90,
+    }
+    followup_event = api_module.CampaignPerformanceEventRequest.model_validate(
+        followup_payload
+    )
+    baseline_detail = _event_detail(baseline_event)
+    followup_detail = _event_detail(followup_event)
+    event_store = CapturingPerformanceEventStore(
+        details=[followup_detail, baseline_detail]
+    )
+    api_app.dependency_overrides[get_runtime_settings] = lambda: Settings(
+        performance_event_persistence_backend="postgres"
+    )
+    api_app.dependency_overrides[get_runtime_performance_event_store] = (
+        lambda: event_store
+    )
+    try:
+        response = TestClient(api_app).get(
+            f"/campaign-events/performance/{baseline_event.event_id}/feedback-outcome-report",
+            params={"limit": "10"},
+            headers={"X-Tenant-ID": "tenant_api"},
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert response.headers["feedback-outcome-status"] == "improved"
+    assert response.headers["feedback-followup-event-id"] == "evt_perf_followup_001"
+    assert payload["outcome_status"] == "improved"
+    assert payload["baseline_event_id"] == baseline_event.event_id
+    assert payload["followup_event_id"] == "evt_perf_followup_001"
+    assert payload["comparison_event_count"] == 1
+    delta_by_name = {delta["metric_name"]: delta for delta in payload["metric_deltas"]}
+    assert delta_by_name["cpa"]["delta_direction"] == "improved"
+    assert delta_by_name["conversions"]["delta_direction"] == "improved"
+    assert delta_by_name["spend"]["delta_direction"] == "informational"
+    assert event_store.list_requests == [
+        (
+            baseline_event.advertiser_id,
+            baseline_event.run_id,
+            baseline_event.campaign_id,
+            baseline_event.draft_id,
+            PerformanceEventType.PERFORMANCE_SNAPSHOT,
+            10,
+        )
     ]
 
 
@@ -1839,8 +1904,55 @@ def test_get_feedback_loop_summary_cli_returns_operator_status(monkeypatch) -> N
     assert command_center_payload["primary_command"]["api_path"] == (
         "/campaign-events/performance"
     )
+    assert command_center_payload["command_count"] == 4
+    assert any(
+        command["command_id"] == "inspect_feedback_outcome_report"
+        for command in command_center_payload["commands"]
+    )
     assert command_center_payload["loop_summary"]["current_stage"] == "handoff_applied"
     assert command_center_payload["timeline"]["latest_entry_stage"] == "handoff_applied"
+
+
+def test_get_feedback_outcome_report_cli_compares_followup_snapshot(monkeypatch) -> None:
+    baseline_event = api_module.CampaignPerformanceEventRequest.model_validate(
+        _event_payload_with_strategy_context()
+    )
+    followup_payload = _event_payload_with_strategy_context()
+    followup_payload["event_id"] = "evt_perf_followup_cli_001"
+    followup_payload["occurred_at"] = "2026-05-13T12:00:00Z"
+    followup_payload["metrics"] = {
+        "impressions": 12000,
+        "clicks": 720,
+        "spend": "900.00",
+        "conversions": 90,
+    }
+    followup_event = api_module.CampaignPerformanceEventRequest.model_validate(
+        followup_payload
+    )
+    baseline_detail = _event_detail(baseline_event)
+    followup_detail = _event_detail(followup_event)
+    event_store = CapturingPerformanceEventStore(
+        details=[followup_detail, baseline_detail]
+    )
+
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.get_settings",
+        lambda: Settings(tenant_id="tenant_cli"),
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_performance_event_store",
+        lambda settings: event_store,
+    )
+
+    result = CliRunner().invoke(
+        cli_app,
+        ["get-feedback-outcome-report", baseline_event.event_id, "--limit", "10"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["outcome_status"] == "improved"
+    assert payload["followup_event_id"] == "evt_perf_followup_cli_001"
 
 
 def test_submit_feedback_optimization_review_cli_records_review(monkeypatch) -> None:

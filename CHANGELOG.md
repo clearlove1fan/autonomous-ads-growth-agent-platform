@@ -47,6 +47,9 @@
 - Added feedback loop command-center API and CLI surfaces so operators can see
   the primary next command plus concrete API and CLI affordances for the current
   feedback-loop stage.
+- Added feedback outcome report API and CLI surfaces to compare a baseline
+  feedback event with the next performance snapshot and classify
+  improved/regressed/mixed outcomes.
 - Added read-only feedback handoff package API and CLI surfaces for approved
   reviews with latest dry-run validation, manual steps, checklist, and
   guardrails.

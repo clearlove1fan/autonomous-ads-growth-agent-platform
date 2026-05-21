@@ -228,6 +228,9 @@ Exit criteria:
   package, and handoff outcome milestones in order.
 - A feedback loop command center can be fetched for one persisted performance
   event, showing the primary next command plus concrete API and CLI affordances.
+- A feedback outcome report can compare one baseline feedback event with the
+  next persisted performance snapshot and classify improved, regressed, mixed,
+  insufficient-data, or no-follow-up outcomes.
 - Approved reviews can produce read-only manual handoff packages that include
   execution plan, latest dry-run validation, manual steps, checklist, and
   guardrails.
@@ -245,8 +248,9 @@ Exit criteria:
   plan -> persisted execution dry-run validation -> review lineage and filtered
   lineage list with execution audit -> feedback loop summary, timeline, and
   command center -> manual handoff
-  package -> handoff outcome record -> performance and handoff outbox memories
-  -> API/CLI reads -> later RAG retrieval.
+  package -> handoff outcome record -> follow-up performance snapshot -> outcome
+  report -> performance and handoff outbox memories -> API/CLI reads -> later
+  RAG retrieval.
 - Failed runs can be retried and failed/running runs can be resumed with clear semantics.
 - Strategy generation can be submitted as a pollable job with persisted status.
 - Alembic migrations create the local database from scratch.

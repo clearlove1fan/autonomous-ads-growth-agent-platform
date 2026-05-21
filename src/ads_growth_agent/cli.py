@@ -30,6 +30,7 @@ from ads_growth_agent.contracts import (
     CampaignFeedbackOptimizationReviewLineageListResponse,
     CampaignFeedbackOptimizationReviewListResponse,
     CampaignFeedbackOptimizationReviewRequest,
+    CampaignFeedbackOutcomeReportResponse,
     CampaignPerformanceEventListResponse,
     CampaignPerformanceEventRequest,
     FeedbackHandoffOutcome,
@@ -76,6 +77,7 @@ from ads_growth_agent.feedback_loop_command_center import (
 )
 from ads_growth_agent.feedback_loop_summary import build_campaign_feedback_loop_summary
 from ads_growth_agent.feedback_loop_timeline import build_campaign_feedback_loop_timeline
+from ads_growth_agent.feedback_outcome_report import build_campaign_feedback_outcome_report
 from ads_growth_agent.feedback_review_store_factory import build_configured_feedback_review_store
 from ads_growth_agent.handoff_memory import schedule_or_record_handoff_memory
 from ads_growth_agent.logging_config import configure_logging
@@ -480,6 +482,23 @@ def get_feedback_loop_command_center(
         limit=limit,
     )
     response = CampaignFeedbackLoopCommandCenterResponse.model_validate(command_center)
+    typer.echo(response.model_dump_json(indent=2))
+
+
+@app.command("get-feedback-outcome-report")
+def get_feedback_outcome_report(
+    event_id: str = PERFORMANCE_EVENT_ID_ARGUMENT,
+    limit: int = FEEDBACK_REVIEW_LIST_LIMIT_OPTION,
+) -> None:
+    """Compare one persisted feedback event with the next performance snapshot."""
+    settings = get_settings()
+    event_store = build_configured_performance_event_store(settings)
+    event = event_store.get_event(event_id)
+    if event is None:
+        typer.echo(f"Performance event not found: {event_id}", err=True)
+        raise typer.Exit(1)
+    report = build_campaign_feedback_outcome_report(event, event_store, limit=limit)
+    response = CampaignFeedbackOutcomeReportResponse.model_validate(report)
     typer.echo(response.model_dump_json(indent=2))
 
 

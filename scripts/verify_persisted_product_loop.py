@@ -544,6 +544,31 @@ def run_persisted_product_loop(
                 ),
                 label="get handoff outcome memory",
             )
+            followup_event_response = _api_json(
+                client.post(
+                    "/campaign-events/performance",
+                    json=_followup_performance_event_payload(event_payload),
+                    headers=_tenant_headers(tenant_id),
+                ),
+                label="ingest follow-up performance event",
+            )
+            feedback_outcome_report = _api_json(
+                client.get(
+                    f"/campaign-events/performance/{event_id}/feedback-outcome-report",
+                    params={"limit": "10"},
+                    headers=_tenant_headers(tenant_id),
+                ),
+                label="get feedback outcome report",
+            )
+            cli_feedback_outcome_report = _invoke_cli(
+                settings,
+                [
+                    "get-feedback-outcome-report",
+                    event_id,
+                    "--limit",
+                    "10",
+                ],
+            )
             cli_handoff_record = _invoke_cli(
                 settings,
                 [
@@ -980,7 +1005,7 @@ def run_persisted_product_loop(
                 "feedback loop command center primary command should ingest next event",
             )
             _expect(
-                feedback_loop_command_center["command_count"] == 3,
+                feedback_loop_command_center["command_count"] == 4,
                 "feedback loop command center should include primary and inspection commands",
             )
             _expect(
@@ -988,7 +1013,25 @@ def run_persisted_product_loop(
                 == feedback_loop_command_center["primary_command_id"],
                 "CLI feedback loop command center should match API primary command",
             )
-            _expect(cli_event_list["count"] == 1, "CLI event list should find feedback event")
+            _expect(
+                followup_event_response["advertiser_memory_status"] == "queued",
+                "follow-up performance feedback should queue advertiser memory",
+            )
+            _expect(
+                feedback_outcome_report["outcome_status"] == "improved",
+                "feedback outcome report should classify improved follow-up metrics",
+            )
+            _expect(
+                feedback_outcome_report["followup_event_id"]
+                == followup_event_response["event_id"],
+                "feedback outcome report should select the follow-up event",
+            )
+            _expect(
+                cli_feedback_outcome_report["outcome_status"]
+                == feedback_outcome_report["outcome_status"],
+                "CLI feedback outcome report should match API outcome",
+            )
+            _expect(cli_event_list["count"] == 2, "CLI event list should find feedback events")
             _expect(
                 cli_memory["source_id"] == memory_source_id,
                 "CLI memory read did not match memory source",
@@ -1041,6 +1084,31 @@ def run_persisted_product_loop(
                 "feedback_id": event_response["analysis"]["feedback_id"],
                 "health_status": event_response["analysis"]["health_status"],
                 "advertiser_memory_status": event_response["advertiser_memory_status"],
+            },
+            "followup_event": {
+                "event_id": followup_event_response["event_id"],
+                "feedback_id": followup_event_response["analysis"]["feedback_id"],
+                "health_status": followup_event_response["analysis"]["health_status"],
+                "advertiser_memory_status": followup_event_response[
+                    "advertiser_memory_status"
+                ],
+            },
+            "feedback_outcome_report": {
+                "outcome_status": feedback_outcome_report["outcome_status"],
+                "followup_event_id": feedback_outcome_report["followup_event_id"],
+                "comparison_event_count": feedback_outcome_report[
+                    "comparison_event_count"
+                ],
+                "improved_metric_count": feedback_outcome_report[
+                    "improved_metric_count"
+                ],
+                "regressed_metric_count": feedback_outcome_report[
+                    "regressed_metric_count"
+                ],
+                "cli_outcome_status": cli_feedback_outcome_report["outcome_status"],
+                "cli_followup_event_id": cli_feedback_outcome_report[
+                    "followup_event_id"
+                ],
             },
             "action_plan": {
                 "step_count": len(action_plan["steps"]),
@@ -1213,6 +1281,9 @@ def run_persisted_product_loop(
                 "feedback_command_center": cli_feedback_loop_command_center[
                     "primary_command_id"
                 ],
+                "feedback_outcome_status": cli_feedback_outcome_report[
+                    "outcome_status"
+                ],
                 "execution_plan_id": cli_execution_plan["execution_plan_id"],
                 "execution_dry_run_id": cli_execution_dry_run["dry_run_id"],
                 "execution_dry_run_detail_id": cli_execution_dry_run_detail["dry_run_id"],
@@ -1266,6 +1337,19 @@ def render_summary(summary: dict[str, Any]) -> str:
                 f"{summary['feedback_event']['event_id']} "
                 f"status={summary['feedback_event']['health_status']} "
                 f"memory={summary['feedback_event']['advertiser_memory_status']}"
+            ),
+            (
+                "Follow-up event: "
+                f"{summary['followup_event']['event_id']} "
+                f"status={summary['followup_event']['health_status']} "
+                f"memory={summary['followup_event']['advertiser_memory_status']}"
+            ),
+            (
+                "Outcome report: "
+                f"status={summary['feedback_outcome_report']['outcome_status']} "
+                f"followup={summary['feedback_outcome_report']['followup_event_id']} "
+                f"improved={summary['feedback_outcome_report']['improved_metric_count']} "
+                f"regressed={summary['feedback_outcome_report']['regressed_metric_count']}"
             ),
             (
                 "Action plan: "
@@ -1401,6 +1485,7 @@ def render_summary(summary: dict[str, Any]) -> str:
                 f"loop={summary['cli_reads']['feedback_loop_stage']} "
                 f"timeline={summary['cli_reads']['feedback_timeline_stage']} "
                 f"command_center={summary['cli_reads']['feedback_command_center']} "
+                f"outcome={summary['cli_reads']['feedback_outcome_status']} "
                 f"execution_plan={summary['cli_reads']['execution_plan_id']} "
                 f"dry_run={summary['cli_reads']['execution_dry_run_id']} "
                 f"dry_run_reads={summary['cli_reads']['execution_dry_run_count']} "
@@ -1461,6 +1546,24 @@ def _performance_event_payload(
         "strategy_context": strategy_context,
         "notes": "Persisted product loop walkthrough feedback event.",
     }
+
+
+def _followup_performance_event_payload(
+    baseline_payload: dict[str, Any],
+) -> dict[str, Any]:
+    followup_payload = dict(baseline_payload)
+    followup_payload["event_id"] = "evt_product_loop_followup_improved"
+    followup_payload["occurred_at"] = "2026-05-13T12:00:00Z"
+    followup_payload["metrics"] = {
+        "impressions": 12000,
+        "clicks": 720,
+        "spend": "900.00",
+        "conversions": 90,
+    }
+    followup_payload["notes"] = (
+        "Persisted product loop walkthrough follow-up event after manual handoff."
+    )
+    return followup_payload
 
 
 def _walkthrough_settings(database_url: str, *, tenant_id: str) -> Settings:

@@ -1232,6 +1232,65 @@ class CampaignPerformanceEventListResponse(BaseModel):
     event_type: PerformanceEventType | None = None
 
 
+FeedbackOutcomeStatus = Literal[
+    "no_followup_event",
+    "insufficient_data",
+    "improved",
+    "regressed",
+    "mixed",
+]
+
+FeedbackOutcomeMetricDirection = Literal[
+    "higher_is_better",
+    "lower_is_better",
+    "neutral",
+]
+
+FeedbackOutcomeDeltaDirection = Literal[
+    "improved",
+    "regressed",
+    "unchanged",
+    "informational",
+    "not_available",
+]
+
+
+class FeedbackOutcomeMetricDelta(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    metric_name: str = Field(min_length=1, max_length=80)
+    display_name: str = Field(min_length=1, max_length=120)
+    baseline_value: Decimal | None = None
+    followup_value: Decimal | None = None
+    absolute_delta: Decimal | None = None
+    percent_change: Decimal | None = None
+    desired_direction: FeedbackOutcomeMetricDirection
+    delta_direction: FeedbackOutcomeDeltaDirection
+    summary: str = Field(min_length=1, max_length=500)
+
+
+class CampaignFeedbackOutcomeReportResponse(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    event_id: str = Field(min_length=1, max_length=128)
+    advertiser_id: str = Field(min_length=1, max_length=128)
+    run_id: str | None = Field(default=None, min_length=1, max_length=128)
+    campaign_id: str | None = Field(default=None, min_length=1, max_length=128)
+    draft_id: str | None = Field(default=None, min_length=1, max_length=160)
+    outcome_status: FeedbackOutcomeStatus
+    baseline_event_id: str = Field(min_length=1, max_length=128)
+    followup_event_id: str | None = Field(default=None, min_length=1, max_length=128)
+    comparison_event_count: int = Field(ge=0)
+    improved_metric_count: int = Field(ge=0)
+    regressed_metric_count: int = Field(ge=0)
+    metric_deltas: list[FeedbackOutcomeMetricDelta] = Field(default_factory=list)
+    recommendation: str = Field(min_length=1, max_length=800)
+    summary: str = Field(min_length=1, max_length=1_000)
+    baseline_event: CampaignPerformanceEventDetailResponse
+    followup_event: CampaignPerformanceEventDetailResponse | None = None
+    guardrails: list[str] = Field(default_factory=list)
+
+
 FeedbackLoopCurrentStage = Literal[
     "event_analyzed",
     "review_pending",
@@ -1361,6 +1420,7 @@ class CampaignFeedbackLoopTimelineResponse(BaseModel):
 FeedbackLoopCommandActionType = Literal[
     "inspect_feedback_loop_summary",
     "inspect_feedback_loop_timeline",
+    "inspect_feedback_outcome_report",
     "inspect_optimization_draft",
     "review_optimization_draft",
     "generate_revision_draft",

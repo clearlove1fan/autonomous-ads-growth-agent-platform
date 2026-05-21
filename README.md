@@ -136,8 +136,9 @@ validates strategy draft -> performance feedback event -> optimization review ->
 revision draft -> revision review -> dry-run execution plan -> persisted
 execution dry-run validation -> review lineage and filtered lineage list with
 execution audit -> feedback loop summary, timeline, and command center -> manual handoff package -> handoff
-outcome record -> performance and handoff outbox memories -> API/CLI reads ->
-later RAG retrieval of learned performance memory.
+outcome record -> follow-up performance snapshot -> outcome report -> performance
+and handoff outbox memories -> API/CLI reads -> later RAG retrieval of learned
+performance memory.
 
 The demo executes the complete deterministic product loop:
 
@@ -172,7 +173,7 @@ This project is designed around the same engineering themes as an AI Agent-power
 | RAG | Strategy playbooks, historical cases, and advertiser memory are retrieved and cited in final outputs |
 | Multi-agent orchestration | Planner, retriever, tool executor, critic, revision, and finalizer nodes model role-based agent responsibilities |
 | Structured output | Pydantic contracts validate briefs, tool intents/results, critique reports, final strategies, feedback analyses, and eval reports |
-| Event-driven feedback | Campaign performance events produce health status, matched optimization rules, draft-only recommendations, action plans, optimization drafts, human review records, revision drafts, second-pass revision reviews, individual and filtered review lineage with execution/dry-run audit, dry-run execution plans, persisted dry-run validation, operator feedback loop summaries, timelines, command centers, manual handoff packages, handoff outcome records, handoff outcome memory, and later memory retrieval |
+| Event-driven feedback | Campaign performance events produce health status, matched optimization rules, draft-only recommendations, action plans, optimization drafts, human review records, revision drafts, second-pass revision reviews, individual and filtered review lineage with execution/dry-run audit, dry-run execution plans, persisted dry-run validation, operator feedback loop summaries, timelines, command centers, manual handoff packages, handoff outcome records, handoff outcome memory, follow-up outcome reports, and later memory retrieval |
 | Self-reflection / critique loop | Critic report gates finalization; optional LLM critic can route through a bounded revision loop |
 | LLMOps / observability | LangSmith-compatible run metadata, structured JSON logs, local eval suite, and CI smoke coverage |
 | Ads growth domain | Output covers audience, creative, budget, bidding, measurement, campaign drafts, performance forecasts, and optimization rules |
@@ -711,6 +712,20 @@ FEEDBACK_REVIEW_PERSISTENCE_BACKEND=postgres FEEDBACK_EXECUTION_PERSISTENCE_BACK
 
 FEEDBACK_EXECUTION_PERSISTENCE_BACKEND=postgres \
   ads-growth-agent list-feedback-handoff-records --review-id feedback_review_example --outcome applied
+```
+
+After a later performance snapshot is ingested for the same advertiser,
+campaign, draft, and run context, operators can compare the baseline feedback
+event against that follow-up snapshot. The outcome report classifies the result
+as `improved`, `regressed`, `mixed`, `insufficient_data`, or
+`no_followup_event` and includes metric-level deltas for CPA, CVR, CTR,
+conversions, ROAS, and spend:
+
+```bash
+curl "http://localhost:8000/campaign-events/performance/evt_perf_001/feedback-outcome-report?limit=10" \
+  -H "X-Tenant-ID: tenant_demo"
+
+ads-growth-agent get-feedback-outcome-report evt_perf_001 --limit 10
 ```
 
 Campaign draft persistence is separately opt-in. Set `CAMPAIGN_DRAFT_PERSISTENCE_BACKEND=postgres` to store the `create_campaign_draft` tool output in `campaign_drafts`:

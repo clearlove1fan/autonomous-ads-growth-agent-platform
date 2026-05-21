@@ -1317,6 +1317,7 @@ def test_feedback_loop_command_center_guides_post_handoff_monitoring() -> None:
         "record_next_performance_event",
         "inspect_feedback_loop_summary",
         "inspect_feedback_loop_timeline",
+        "inspect_feedback_outcome_report",
     }
     assert "operator affordances" in command_center.guardrails[0]
 
