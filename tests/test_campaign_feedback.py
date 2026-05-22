@@ -1664,12 +1664,20 @@ def test_feedback_loop_chain_links_baseline_outcome_to_followup_loop() -> None:
     assert no_followup_chain.outcome_status == "no_followup_event"
     assert no_followup_chain.followup_summary is None
     assert no_followup_chain.recommended_focus == "record_followup_snapshot"
+    assert no_followup_chain.recommended_command_id == "inspect_optimization_draft"
     assert chain.outcome_status == "regressed"
     assert chain.followup_event_id == followup_event.event_id
     assert chain.followup_current_stage == "review_pending"
     assert chain.followup_summary is not None
     assert chain.followup_summary.event_id == followup_event.event_id
     assert chain.recommended_focus == "review_followup_optimization_draft"
+    assert chain.recommended_command_id == "review_optimization_draft"
+    assert chain.recommended_command_source == "followup_command_center"
+    assert chain.recommended_command is not None
+    assert chain.recommended_command.api_path == (
+        f"/campaign-events/performance/{followup_event.event_id}"
+        "/optimization-draft/reviews"
+    )
     assert "read-only operator projection" in chain.guardrails[0]
 
 

@@ -54,6 +54,8 @@
   review command.
 - Added feedback loop chain API and CLI reads that link baseline loop status,
   outcome status, follow-up loop status, and recommended operator focus.
+- Added concrete recommended commands to feedback loop chain responses so the
+  recommended focus maps directly to an API/CLI affordance.
 - Added feedback outcome report API and CLI surfaces to compare a baseline
   feedback event with the next performance snapshot and classify
   improved/regressed/mixed outcomes.

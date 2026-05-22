@@ -1264,6 +1264,14 @@ def get_campaign_feedback_loop_chain(
     response.headers["Feedback-ID"] = event.analysis.feedback_id
     response.headers["Feedback-Loop-Stage"] = chain.baseline_current_stage
     response.headers["Feedback-Chain-Focus"] = chain.recommended_focus
+    if chain.recommended_command_id is not None:
+        response.headers["Feedback-Chain-Recommended-Command-ID"] = (
+            chain.recommended_command_id
+        )
+    if chain.recommended_command_source is not None:
+        response.headers["Feedback-Chain-Recommended-Command-Source"] = (
+            chain.recommended_command_source
+        )
     if chain.outcome_status is not None:
         response.headers["Feedback-Outcome-Status"] = chain.outcome_status
     if chain.followup_event_id is not None:

@@ -1508,6 +1508,11 @@ FeedbackLoopChainRecommendedFocus = Literal[
     "monitor_followup_handoff",
 ]
 
+FeedbackLoopChainRecommendedCommandSource = Literal[
+    "baseline_command_center",
+    "followup_command_center",
+]
+
 
 class CampaignFeedbackLoopChainResponse(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
@@ -1522,6 +1527,9 @@ class CampaignFeedbackLoopChainResponse(BaseModel):
     followup_event_id: str | None = Field(default=None, min_length=1, max_length=128)
     followup_current_stage: FeedbackLoopCurrentStage | None = None
     recommended_focus: FeedbackLoopChainRecommendedFocus
+    recommended_command_id: str | None = Field(default=None, min_length=1, max_length=180)
+    recommended_command_source: FeedbackLoopChainRecommendedCommandSource | None = None
+    recommended_command: FeedbackLoopOperatorCommand | None = None
     baseline_summary: CampaignFeedbackLoopSummaryResponse
     outcome_report: CampaignFeedbackOutcomeReportResponse | None = None
     followup_summary: CampaignFeedbackLoopSummaryResponse | None = None

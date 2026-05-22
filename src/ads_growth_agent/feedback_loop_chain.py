@@ -1,9 +1,15 @@
 from ads_growth_agent.contracts import (
     CampaignFeedbackLoopChainResponse,
+    CampaignFeedbackLoopCommandCenterResponse,
     CampaignFeedbackLoopSummaryResponse,
     CampaignFeedbackOutcomeReportResponse,
     CampaignPerformanceEventDetailResponse,
+    FeedbackLoopChainRecommendedCommandSource,
     FeedbackLoopChainRecommendedFocus,
+    FeedbackLoopOperatorCommand,
+)
+from ads_growth_agent.feedback_loop_command_center import (
+    build_campaign_feedback_loop_command_center,
 )
 from ads_growth_agent.feedback_loop_summary import (
     FeedbackExecutionLineageStore,
@@ -58,6 +64,33 @@ def build_campaign_feedback_loop_chain(
         limit=effective_limit,
     )
     recommended_focus = _recommended_focus(outcome_report, followup_summary)
+    baseline_command_center = build_campaign_feedback_loop_command_center(
+        event,
+        review_store,
+        execution_store,
+        handoff_store,
+        review_persistence_enabled=review_persistence_enabled,
+        execution_persistence_enabled=execution_persistence_enabled,
+        handoff_persistence_enabled=handoff_persistence_enabled,
+        outcome_event_store=event_store,
+        limit=effective_limit,
+    )
+    followup_command_center = _followup_command_center(
+        outcome_report,
+        event_store,
+        review_store,
+        execution_store,
+        handoff_store,
+        review_persistence_enabled=review_persistence_enabled,
+        execution_persistence_enabled=execution_persistence_enabled,
+        handoff_persistence_enabled=handoff_persistence_enabled,
+        limit=effective_limit,
+    )
+    recommended_command_source, recommended_command = _recommended_command(
+        recommended_focus,
+        baseline_command_center,
+        followup_command_center,
+    )
 
     return CampaignFeedbackLoopChainResponse(
         event_id=event.event_id,
@@ -72,6 +105,11 @@ def build_campaign_feedback_loop_chain(
             followup_summary.current_stage if followup_summary else None
         ),
         recommended_focus=recommended_focus,
+        recommended_command_id=(
+            recommended_command.command_id if recommended_command else None
+        ),
+        recommended_command_source=recommended_command_source,
+        recommended_command=recommended_command,
         baseline_summary=baseline_summary,
         outcome_report=outcome_report,
         followup_summary=followup_summary,
@@ -85,6 +123,33 @@ def build_campaign_feedback_loop_chain(
             "Feedback loop chain is a read-only operator projection.",
             "Follow-up optimization still requires draft review and dry-run validation.",
         ],
+    )
+
+
+def _followup_command_center(
+    outcome_report: CampaignFeedbackOutcomeReportResponse,
+    event_store: FeedbackOutcomePerformanceEventStore,
+    review_store: FeedbackReviewLineageStore | None,
+    execution_store: FeedbackExecutionLineageStore | None,
+    handoff_store: FeedbackHandoffSummaryStore | None,
+    *,
+    review_persistence_enabled: bool,
+    execution_persistence_enabled: bool,
+    handoff_persistence_enabled: bool,
+    limit: int,
+) -> CampaignFeedbackLoopCommandCenterResponse | None:
+    if outcome_report.followup_event is None:
+        return None
+    return build_campaign_feedback_loop_command_center(
+        outcome_report.followup_event,
+        review_store,
+        execution_store,
+        handoff_store,
+        review_persistence_enabled=review_persistence_enabled,
+        execution_persistence_enabled=execution_persistence_enabled,
+        handoff_persistence_enabled=handoff_persistence_enabled,
+        outcome_event_store=event_store,
+        limit=limit,
     )
 
 
@@ -137,6 +202,76 @@ def _recommended_focus(
         case "handoff_applied" | "handoff_blocked" | "handoff_skipped":
             return "monitor_followup_handoff"
     return "review_followup_optimization_draft"
+
+
+def _recommended_command(
+    recommended_focus: FeedbackLoopChainRecommendedFocus,
+    baseline_command_center: CampaignFeedbackLoopCommandCenterResponse,
+    followup_command_center: CampaignFeedbackLoopCommandCenterResponse | None,
+) -> tuple[
+    FeedbackLoopChainRecommendedCommandSource | None,
+    FeedbackLoopOperatorCommand | None,
+]:
+    baseline_command_ids = _baseline_command_ids(recommended_focus)
+    command = _first_matching_command(baseline_command_center, baseline_command_ids)
+    if command is not None:
+        return "baseline_command_center", command
+
+    followup_command_ids = _followup_command_ids(recommended_focus)
+    if followup_command_center is not None:
+        command = _first_matching_command(followup_command_center, followup_command_ids)
+        if command is not None:
+            return "followup_command_center", command
+        if followup_command_center.primary_command is not None:
+            return "followup_command_center", followup_command_center.primary_command
+
+    if baseline_command_center.primary_command is not None:
+        return "baseline_command_center", baseline_command_center.primary_command
+    return None, None
+
+
+def _baseline_command_ids(
+    recommended_focus: FeedbackLoopChainRecommendedFocus,
+) -> tuple[str, ...]:
+    match recommended_focus:
+        case "record_followup_snapshot" | "monitor_followup_outcome":
+            return ("record_next_performance_event",)
+        case "review_followup_optimization_draft":
+            return ("review_followup_optimization_draft",)
+    return ()
+
+
+def _followup_command_ids(
+    recommended_focus: FeedbackLoopChainRecommendedFocus,
+) -> tuple[str, ...]:
+    match recommended_focus:
+        case "review_followup_optimization_draft":
+            return ("review_optimization_draft", "inspect_optimization_draft")
+        case "generate_followup_revision":
+            return ("generate_revision_draft",)
+        case "run_followup_execution_dry_run":
+            return ("run_execution_dry_run",)
+        case "inspect_followup_dry_run":
+            return ("inspect_failed_dry_run",)
+        case "prepare_followup_handoff":
+            return ("get_handoff_package",)
+        case "monitor_followup_handoff":
+            return ("record_next_performance_event", "inspect_handoff_record")
+    return ()
+
+
+def _first_matching_command(
+    command_center: CampaignFeedbackLoopCommandCenterResponse,
+    command_ids: tuple[str, ...],
+) -> FeedbackLoopOperatorCommand | None:
+    if not command_ids:
+        return None
+    commands_by_id = {command.command_id: command for command in command_center.commands}
+    for command_id in command_ids:
+        command = commands_by_id.get(command_id)
+        if command is not None:
+            return command
+    return None
 
 
 def _summary_text(

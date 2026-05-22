@@ -135,8 +135,17 @@ def test_persisted_product_loop_walkthrough() -> None:
     assert summary["feedback_loop_chain"]["recommended_focus"] == (
         "monitor_followup_outcome"
     )
+    assert summary["feedback_loop_chain"]["recommended_command_id"] == (
+        "record_next_performance_event"
+    )
+    assert summary["feedback_loop_chain"]["recommended_command_source"] == (
+        "baseline_command_center"
+    )
     assert summary["feedback_loop_chain"]["cli_recommended_focus"] == (
         "monitor_followup_outcome"
+    )
+    assert summary["feedback_loop_chain"]["cli_recommended_command_id"] == (
+        "record_next_performance_event"
     )
     assert summary["execution_plan"]["execution_mode"] == "dry_run"
     assert summary["execution_plan"]["first_tool_name"] == "draft_budget_reallocation"

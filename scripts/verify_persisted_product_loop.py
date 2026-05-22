@@ -1057,9 +1057,24 @@ def run_persisted_product_loop(
                 "feedback loop chain should recommend monitoring improved outcomes",
             )
             _expect(
+                feedback_loop_chain["recommended_command_id"]
+                == "record_next_performance_event",
+                "feedback loop chain should include the concrete monitoring command",
+            )
+            _expect(
+                feedback_loop_chain["recommended_command"]["api_path"]
+                == "/campaign-events/performance",
+                "feedback loop chain recommended command should ingest the next event",
+            )
+            _expect(
                 cli_feedback_loop_chain["recommended_focus"]
                 == feedback_loop_chain["recommended_focus"],
                 "CLI feedback loop chain should match API focus",
+            )
+            _expect(
+                cli_feedback_loop_chain["recommended_command_id"]
+                == feedback_loop_chain["recommended_command_id"],
+                "CLI feedback loop chain should match API recommended command",
             )
             _expect(
                 followup_event_response["advertiser_memory_status"] == "queued",
@@ -1296,8 +1311,17 @@ def run_persisted_product_loop(
                     "followup_current_stage"
                 ],
                 "recommended_focus": feedback_loop_chain["recommended_focus"],
+                "recommended_command_id": feedback_loop_chain[
+                    "recommended_command_id"
+                ],
+                "recommended_command_source": feedback_loop_chain[
+                    "recommended_command_source"
+                ],
                 "cli_recommended_focus": cli_feedback_loop_chain[
                     "recommended_focus"
+                ],
+                "cli_recommended_command_id": cli_feedback_loop_chain[
+                    "recommended_command_id"
                 ],
             },
             "execution_plan": {
@@ -1508,7 +1532,9 @@ def render_summary(summary: dict[str, Any]) -> str:
                 f"followup={summary['feedback_loop_chain']['followup_event_id']} "
                 f"stage={summary['feedback_loop_chain']['followup_current_stage']} "
                 f"focus={summary['feedback_loop_chain']['recommended_focus']} "
-                f"cli_focus={summary['feedback_loop_chain']['cli_recommended_focus']}"
+                f"command={summary['feedback_loop_chain']['recommended_command_id']} "
+                f"cli_focus={summary['feedback_loop_chain']['cli_recommended_focus']} "
+                f"cli_command={summary['feedback_loop_chain']['cli_recommended_command_id']}"
             ),
             (
                 "Execution plan: "

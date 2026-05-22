@@ -235,7 +235,7 @@ Exit criteria:
   outcomes.
 - A feedback loop chain can be fetched for one persisted performance event,
   linking baseline status, outcome report, follow-up status, and recommended
-  operator focus.
+  operator focus plus the concrete recommended command.
 - A feedback outcome report can compare one baseline feedback event with the
   next persisted performance snapshot and classify improved, regressed, mixed,
   insufficient-data, or no-follow-up outcomes.

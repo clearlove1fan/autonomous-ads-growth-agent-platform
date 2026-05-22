@@ -1019,6 +1019,12 @@ def test_get_campaign_feedback_loop_chain_api_links_followup_status() -> None:
     assert response.headers["feedback-chain-focus"] == (
         "review_followup_optimization_draft"
     )
+    assert response.headers["feedback-chain-recommended-command-id"] == (
+        "review_optimization_draft"
+    )
+    assert response.headers["feedback-chain-recommended-command-source"] == (
+        "followup_command_center"
+    )
     assert response.headers["feedback-outcome-status"] == "regressed"
     assert response.headers["feedback-followup-event-id"] == followup_event.event_id
     assert response.headers["feedback-followup-loop-stage"] == "review_pending"
@@ -1028,6 +1034,12 @@ def test_get_campaign_feedback_loop_chain_api_links_followup_status() -> None:
     assert payload["followup_event_id"] == followup_event.event_id
     assert payload["followup_current_stage"] == "review_pending"
     assert payload["recommended_focus"] == "review_followup_optimization_draft"
+    assert payload["recommended_command_id"] == "review_optimization_draft"
+    assert payload["recommended_command_source"] == "followup_command_center"
+    assert payload["recommended_command"]["api_path"] == (
+        f"/campaign-events/performance/{followup_event.event_id}"
+        "/optimization-draft/reviews"
+    )
     assert payload["followup_summary"]["event_id"] == followup_event.event_id
 
 
@@ -2485,6 +2497,17 @@ def test_get_feedback_loop_chain_cli_links_followup_status(monkeypatch) -> None:
     assert payload["followup_event_id"] == followup_event.event_id
     assert payload["followup_current_stage"] == "review_pending"
     assert payload["recommended_focus"] == "review_followup_optimization_draft"
+    assert payload["recommended_command_id"] == "review_optimization_draft"
+    assert payload["recommended_command_source"] == "followup_command_center"
+    assert payload["recommended_command"]["cli_command"] == [
+        "ads-growth-agent",
+        "submit-feedback-optimization-review",
+        followup_event.event_id,
+        "--decision",
+        "approved",
+        "--reviewer-id",
+        "<operator_id>",
+    ]
     assert payload["followup_summary"]["event_id"] == followup_event.event_id
 
 

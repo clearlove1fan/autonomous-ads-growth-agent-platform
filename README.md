@@ -584,7 +584,8 @@ instead of staying on generic post-handoff monitoring. If the follow-up outcome
 is regressed or mixed, the command center also links directly to the follow-up
 event's action plan, optimization draft, and review command for the next loop.
 The chain projection shows baseline loop status, outcome status, follow-up loop
-status, and the recommended operator focus in one read:
+status, recommended operator focus, and the concrete recommended API/CLI command
+in one read:
 
 ```bash
 curl "http://localhost:8000/campaign-events/performance/evt_perf_001/feedback-loop-summary?limit=20" \
