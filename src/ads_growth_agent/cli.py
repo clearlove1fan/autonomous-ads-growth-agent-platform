@@ -37,6 +37,9 @@ from ads_growth_agent.contracts import (
     FeedbackHandoffOutcome,
     FeedbackOptimizationReviewDecision,
     GrowthStrategyRequest,
+    OutboxEventDetailResponse,
+    OutboxEventListResponse,
+    OutboxEventStatus,
     PerformanceEventType,
     StrategyJobFromTextResponse,
     StrategyJobListResponse,
@@ -137,12 +140,24 @@ ADVERTISER_MEMORY_ADVERTISER_ID_ARGUMENT = typer.Argument(..., help="Advertiser 
 ADVERTISER_MEMORY_SOURCE_ID_ARGUMENT = typer.Argument(..., help="Advertiser memory source ID.")
 ADVERTISER_MEMORY_TYPE_OPTION = typer.Option(None, "--memory-type")
 ADVERTISER_MEMORY_LIST_LIMIT_OPTION = typer.Option(50, "--limit", min=1, max=100)
+OUTBOX_EVENT_ID_ARGUMENT = typer.Argument(..., help="Outbox event ID.")
+OUTBOX_EVENT_STATUS_OPTION = typer.Option(None, "--status")
+OUTBOX_EVENT_TYPE_OPTION = typer.Option(None, "--event-type")
+OUTBOX_AGGREGATE_TYPE_OPTION = typer.Option(None, "--aggregate-type")
+OUTBOX_AGGREGATE_ID_OPTION = typer.Option(None, "--aggregate-id")
+OUTBOX_LIST_LIMIT_OPTION = typer.Option(50, "--limit", min=1, max=100)
+OUTBOX_REQUESTED_BY_OPTION = typer.Option(
+    "cli",
+    "--requested-by",
+    help="Operator or automation identifier recorded in manual retry metadata.",
+)
 ALLOWED_ADVERTISER_MEMORY_TYPES = {
     "profile",
     "constraint",
     "preference",
     "historical_performance",
 }
+ALLOWED_OUTBOX_EVENT_STATUSES = {"pending", "processing", "completed", "failed"}
 BRIEF_TEXT_ARGUMENT = typer.Argument(
     ...,
     help="Plain-language advertiser goal or campaign brief.",
@@ -1097,6 +1112,81 @@ def process_outbox(
     typer.echo(report.model_dump_json(indent=2))
 
 
+@app.command("list-outbox-events")
+def list_outbox_events(
+    status: str | None = OUTBOX_EVENT_STATUS_OPTION,
+    event_type: str | None = OUTBOX_EVENT_TYPE_OPTION,
+    aggregate_type: str | None = OUTBOX_AGGREGATE_TYPE_OPTION,
+    aggregate_id: str | None = OUTBOX_AGGREGATE_ID_OPTION,
+    limit: int = OUTBOX_LIST_LIMIT_OPTION,
+) -> None:
+    """List durable outbox events for operator inspection."""
+    settings = get_settings()
+    store = build_configured_outbox_store(settings)
+    validated_status = _outbox_event_status_or_exit(status)
+    events = store.list_events(
+        status=validated_status.value if validated_status is not None else None,
+        event_type=event_type,
+        aggregate_type=aggregate_type,
+        aggregate_id=aggregate_id,
+        limit=limit,
+    )
+    response = OutboxEventListResponse(
+        items=[
+            OutboxEventDetailResponse.model_validate(event.model_dump()) for event in events
+        ],
+        count=len(events),
+        limit=limit,
+        status=validated_status,
+        event_type=event_type,
+        aggregate_type=aggregate_type,
+        aggregate_id=aggregate_id,
+    )
+    typer.echo(response.model_dump_json(indent=2))
+
+
+@app.command("get-outbox-event")
+def get_outbox_event(
+    outbox_event_id: str = OUTBOX_EVENT_ID_ARGUMENT,
+) -> None:
+    """Fetch one durable outbox event by ID."""
+    settings = get_settings()
+    store = build_configured_outbox_store(settings)
+    event = store.get_event(outbox_event_id)
+    if event is None:
+        typer.echo(f"Outbox event not found: {outbox_event_id}", err=True)
+        raise typer.Exit(1)
+    typer.echo(event.model_dump_json(indent=2))
+
+
+@app.command("retry-outbox-event")
+def retry_outbox_event(
+    outbox_event_id: str = OUTBOX_EVENT_ID_ARGUMENT,
+    requested_by: str = OUTBOX_REQUESTED_BY_OPTION,
+) -> None:
+    """Manually requeue a failed durable outbox event."""
+    settings = get_settings()
+    store = build_configured_outbox_store(settings)
+    event = store.get_event(outbox_event_id)
+    if event is None:
+        typer.echo(f"Outbox event not found: {outbox_event_id}", err=True)
+        raise typer.Exit(1)
+    if event.status != OutboxEventStatus.FAILED.value:
+        typer.echo(
+            f"Outbox event is not retryable: {outbox_event_id} status={event.status}",
+            err=True,
+        )
+        raise typer.Exit(1)
+    retried = store.retry_failed(
+        outbox_event_id,
+        requested_by=requested_by.strip() or "cli",
+    )
+    if retried is None:
+        typer.echo(f"Outbox event could not be retried: {outbox_event_id}", err=True)
+        raise typer.Exit(1)
+    typer.echo(retried.model_dump_json(indent=2))
+
+
 @app.command("get-campaign-draft")
 def get_campaign_draft(draft_id: str = CAMPAIGN_DRAFT_ID_ARGUMENT) -> None:
     """Fetch one persisted campaign draft by ID."""
@@ -1380,6 +1470,18 @@ def _advertiser_memory_type_or_exit(value: str | None) -> AdvertiserMemoryType |
 
     allowed = ", ".join(sorted(ALLOWED_ADVERTISER_MEMORY_TYPES))
     typer.echo(f"Invalid advertiser memory type: {value}. Expected one of: {allowed}", err=True)
+    raise typer.Exit(2)
+
+
+def _outbox_event_status_or_exit(value: str | None) -> OutboxEventStatus | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if normalized in ALLOWED_OUTBOX_EVENT_STATUSES:
+        return OutboxEventStatus(normalized)
+
+    allowed = ", ".join(sorted(ALLOWED_OUTBOX_EVENT_STATUSES))
+    typer.echo(f"Invalid outbox event status: {value}. Expected one of: {allowed}", err=True)
     raise typer.Exit(2)
 
 

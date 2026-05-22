@@ -465,6 +465,32 @@ Set `ADVERTISER_MEMORY_PERSISTENCE_BACKEND=postgres` to also write analyzed feed
 OUTBOX_BACKEND=postgres ADVERTISER_MEMORY_PERSISTENCE_BACKEND=postgres ads-growth-agent process-outbox --limit 100
 ```
 
+Operators can inspect and recover the durable outbox from both API and CLI.
+This is useful when memory writes are queued, delayed, or have exhausted their
+retry budget:
+
+```bash
+curl "http://localhost:8000/outbox/events?status=failed&limit=20" \
+  -H "X-Tenant-ID: tenant_demo"
+
+curl http://localhost:8000/outbox/events/outbox_event_example \
+  -H "X-Tenant-ID: tenant_demo"
+
+curl -X POST http://localhost:8000/outbox/events/outbox_event_example/retry \
+  -H "X-Tenant-ID: tenant_demo" \
+  -H "X-Operator-ID: operator_001"
+
+curl -X POST "http://localhost:8000/outbox/process?limit=100" \
+  -H "X-Tenant-ID: tenant_demo" \
+  -H "X-Worker-ID: worker_001"
+
+OUTBOX_BACKEND=postgres ads-growth-agent list-outbox-events --status failed --limit 20
+
+OUTBOX_BACKEND=postgres ads-growth-agent get-outbox-event outbox_event_example
+
+OUTBOX_BACKEND=postgres ads-growth-agent retry-outbox-event outbox_event_example --requested-by operator_001
+```
+
 After the worker completes, replaying the same event returns `Advertiser-Memory-Status: recorded`, and later strategy-generation runs with `KNOWLEDGE_STORE_BACKEND=postgres` can retrieve that memory as an `advertiser_memory` citation. If `OUTBOX_BACKEND=none`, the service keeps the simpler synchronous memory-write fallback for local demos.
 
 Memory retrieval usage tracking is also asynchronous. Set `MEMORY_USAGE_TRACKING_BACKEND=outbox` together with `KNOWLEDGE_STORE_BACKEND=postgres` and `OUTBOX_BACKEND=postgres` to enqueue `advertiser_memory_retrieved` events whenever Postgres RAG cites advertiser memory. `ads-growth-agent process-outbox` updates `advertiser_memories.last_used_at` and `usage_count` outside the retrieval path.

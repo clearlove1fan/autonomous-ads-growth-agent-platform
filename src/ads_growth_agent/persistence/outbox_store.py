@@ -36,6 +36,9 @@ class OutboxEventRecord(BaseModel):
     attempt_count: int = Field(ge=0)
     max_attempts: int = Field(gt=0)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    next_attempt_at: datetime | None = None
+    locked_by: str | None = Field(default=None, min_length=1, max_length=160)
+    locked_until: datetime | None = None
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None = None
@@ -83,6 +86,29 @@ class OutboxStore(Protocol):
     ) -> OutboxEventRecord | None:
         """Record a processing error and retry while attempts remain."""
 
+    def get_event(self, outbox_event_id: str) -> OutboxEventRecord | None:
+        """Fetch one tenant-scoped outbox event."""
+
+    def list_events(
+        self,
+        *,
+        status: OutboxEventStatus | None = None,
+        event_type: str | None = None,
+        aggregate_type: str | None = None,
+        aggregate_id: str | None = None,
+        limit: int = 50,
+    ) -> list[OutboxEventRecord]:
+        """List tenant-scoped outbox events for operator inspection."""
+
+    def retry_failed(
+        self,
+        outbox_event_id: str,
+        *,
+        max_attempts: int | None = None,
+        requested_by: str = "operator",
+    ) -> OutboxEventRecord | None:
+        """Requeue a terminal failed event for manual replay."""
+
 
 class NoopOutboxStore:
     def enqueue(
@@ -111,6 +137,7 @@ class NoopOutboxStore:
             attempt_count=0,
             max_attempts=max_attempts,
             metadata=metadata or {},
+            next_attempt_at=None,
             created_at=now,
             updated_at=now,
         )
@@ -138,6 +165,29 @@ class NoopOutboxStore:
         *,
         error: dict[str, Any],
         retry_delay_seconds: int = 5,
+    ) -> OutboxEventRecord | None:
+        return None
+
+    def get_event(self, outbox_event_id: str) -> OutboxEventRecord | None:
+        return None
+
+    def list_events(
+        self,
+        *,
+        status: OutboxEventStatus | None = None,
+        event_type: str | None = None,
+        aggregate_type: str | None = None,
+        aggregate_id: str | None = None,
+        limit: int = 50,
+    ) -> list[OutboxEventRecord]:
+        return []
+
+    def retry_failed(
+        self,
+        outbox_event_id: str,
+        *,
+        max_attempts: int | None = None,
+        requested_by: str = "operator",
     ) -> OutboxEventRecord | None:
         return None
 
@@ -333,6 +383,91 @@ class PostgresOutboxStore:
             )
         return _row_to_record(updated) if updated is not None else None
 
+    def get_event(self, outbox_event_id: str) -> OutboxEventRecord | None:
+        with _transaction(self._bind) as connection:
+            row = _fetch_by_outbox_event_id(
+                connection,
+                outbox_event_id,
+                tenant_id=self._tenant_id,
+            )
+        return _row_to_record(row) if row is not None else None
+
+    def list_events(
+        self,
+        *,
+        status: OutboxEventStatus | None = None,
+        event_type: str | None = None,
+        aggregate_type: str | None = None,
+        aggregate_id: str | None = None,
+        limit: int = 50,
+    ) -> list[OutboxEventRecord]:
+        statement = sa.select(outbox_events).where(outbox_events.c.tenant_id == self._tenant_id)
+        if status is not None:
+            statement = statement.where(outbox_events.c.status == status)
+        if event_type is not None:
+            statement = statement.where(outbox_events.c.event_type == event_type)
+        if aggregate_type is not None:
+            statement = statement.where(outbox_events.c.aggregate_type == aggregate_type)
+        if aggregate_id is not None:
+            statement = statement.where(outbox_events.c.aggregate_id == aggregate_id)
+
+        statement = statement.order_by(
+            outbox_events.c.created_at.desc(),
+            outbox_events.c.outbox_event_id.desc(),
+        ).limit(limit)
+        with _transaction(self._bind) as connection:
+            rows = connection.execute(statement).mappings().all()
+        return [_row_to_record(row) for row in rows]
+
+    def retry_failed(
+        self,
+        outbox_event_id: str,
+        *,
+        max_attempts: int | None = None,
+        requested_by: str = "operator",
+    ) -> OutboxEventRecord | None:
+        now = datetime.now(UTC)
+        with _transaction(self._bind) as connection:
+            row = _fetch_by_outbox_event_id_for_update(
+                connection,
+                outbox_event_id,
+                tenant_id=self._tenant_id,
+            )
+            if row is None or row["status"] != "failed":
+                return None
+
+            metadata = dict(row["metadata"] or {})
+            previous_error = row["error_json"]
+            if previous_error is not None:
+                metadata["previous_error"] = dict(previous_error)
+            metadata["manual_retry_count"] = int(metadata.get("manual_retry_count") or 0) + 1
+            metadata["last_manual_retry_by"] = requested_by
+            metadata["last_manual_retry_at"] = now.isoformat()
+
+            connection.execute(
+                outbox_events.update()
+                .where(outbox_events.c.tenant_id == self._tenant_id)
+                .where(outbox_events.c.outbox_event_id == outbox_event_id)
+                .values(
+                    status="pending",
+                    error_json=None,
+                    attempt_count=0,
+                    max_attempts=max_attempts or row["max_attempts"],
+                    next_attempt_at=now,
+                    locked_by=None,
+                    locked_until=None,
+                    completed_at=None,
+                    metadata=metadata,
+                    updated_at=sa.func.now(),
+                )
+            )
+            updated = _fetch_by_outbox_event_id(
+                connection,
+                outbox_event_id,
+                tenant_id=self._tenant_id,
+            )
+        return _row_to_record(updated) if updated is not None else None
+
 
 @contextmanager
 def _transaction(bind: Engine | Connection) -> Iterator[Connection]:
@@ -408,6 +543,9 @@ def _row_to_record(row) -> OutboxEventRecord:
         attempt_count=row["attempt_count"],
         max_attempts=row["max_attempts"],
         metadata=dict(row["metadata"] or {}),
+        next_attempt_at=row["next_attempt_at"],
+        locked_by=row["locked_by"],
+        locked_until=row["locked_until"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         completed_at=row["completed_at"],

@@ -73,6 +73,8 @@
   registry APIs and CLI commands, preserving no live campaign mutation.
 - Added optional PostgreSQL persistence plus API/CLI read surfaces for feedback
   execution dry-run validation audit records.
+- Added outbox event list/detail/manual-retry API and CLI surfaces, plus an API
+  endpoint for processing bounded outbox batches.
 
 ## v0.1.0 - 2026-05-18
 

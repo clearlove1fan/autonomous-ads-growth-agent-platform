@@ -1,5 +1,18 @@
+import json
 from datetime import UTC, datetime
 
+from fastapi.testclient import TestClient
+from typer.testing import CliRunner
+
+from ads_growth_agent.api import (
+    app as api_app,
+)
+from ads_growth_agent.api import (
+    get_runtime_advertiser_memory_store,
+    get_runtime_outbox_store,
+    get_runtime_settings,
+)
+from ads_growth_agent.cli import app as cli_app
 from ads_growth_agent.config import Settings
 from ads_growth_agent.contracts import (
     CampaignFeedbackHandoffRecordRequest,
@@ -241,26 +254,176 @@ def test_process_outbox_events_marks_invalid_payload_failed() -> None:
     assert outbox_store.failed == [record.outbox_event_id]
 
 
+def test_outbox_api_lists_gets_retries_and_processes_events() -> None:
+    event = _event_request()
+    analysis = analyze_campaign_performance_event(event)
+    failed_record = _outbox_record(
+        outbox_event_id="outbox_failed",
+        status="failed",
+        payload={"bad": "payload"},
+        error_json={"message": "schema mismatch"},
+    )
+    processable_record = _outbox_record(
+        outbox_event_id="outbox_process",
+        payload={
+            "event": event.model_dump(mode="json"),
+            "analysis": analysis.model_dump(mode="json"),
+        },
+    )
+    outbox_store = FakeOutboxStore(
+        events=[failed_record],
+        claimed=[processable_record],
+    )
+    memory_store = FakeAdvertiserMemoryStore()
+    api_app.dependency_overrides[get_runtime_settings] = lambda: Settings(
+        outbox_backend="postgres"
+    )
+    api_app.dependency_overrides[get_runtime_outbox_store] = lambda: outbox_store
+    api_app.dependency_overrides[get_runtime_advertiser_memory_store] = lambda: memory_store
+    try:
+        client = TestClient(api_app)
+        listed = client.get(
+            "/outbox/events",
+            params={"status": "failed", "limit": "10"},
+            headers={"X-Tenant-ID": "tenant_outbox_api"},
+        )
+        detail = client.get(
+            "/outbox/events/outbox_failed",
+            headers={"X-Tenant-ID": "tenant_outbox_api"},
+        )
+        retried = client.post(
+            "/outbox/events/outbox_failed/retry",
+            headers={
+                "X-Tenant-ID": "tenant_outbox_api",
+                "X-Operator-ID": "operator_api",
+            },
+        )
+        processed = client.post(
+            "/outbox/process",
+            params={"limit": "5"},
+            headers={
+                "X-Tenant-ID": "tenant_outbox_api",
+                "X-Worker-ID": "worker_api",
+            },
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    listed_payload = listed.json()
+    detail_payload = detail.json()
+    retried_payload = retried.json()
+    processed_payload = processed.json()
+    assert listed.status_code == 200
+    assert listed.headers["x-tenant-id"] == "tenant_outbox_api"
+    assert listed.headers["outbox-event-count"] == "1"
+    assert listed_payload["count"] == 1
+    assert listed_payload["status"] == "failed"
+    assert listed_payload["items"][0]["outbox_event_id"] == "outbox_failed"
+    assert detail.status_code == 200
+    assert detail.headers["outbox-event-status"] == "failed"
+    assert detail_payload["error_json"]["message"] == "schema mismatch"
+    assert retried.status_code == 200
+    assert retried.headers["outbox-event-status"] == "pending"
+    assert retried_payload["status"] == "pending"
+    assert retried_payload["attempt_count"] == 0
+    assert retried_payload["error_json"] is None
+    assert retried_payload["metadata"]["manual_retry_count"] == 1
+    assert retried_payload["metadata"]["last_manual_retry_by"] == "operator_api"
+    assert retried_payload["metadata"]["previous_error"]["message"] == "schema mismatch"
+    assert processed.status_code == 200
+    assert processed.headers["outbox-claimed"] == "1"
+    assert processed_payload["worker_id"] == "worker_api"
+    assert processed_payload["completed"] == 1
+    assert memory_store.records == [("evt_perf_001", analysis.feedback_id)]
+
+
+def test_outbox_api_rejects_retry_for_active_event() -> None:
+    pending_record = _outbox_record(
+        outbox_event_id="outbox_pending",
+        status="pending",
+        payload={"queued": True},
+    )
+    outbox_store = FakeOutboxStore(events=[pending_record])
+    api_app.dependency_overrides[get_runtime_settings] = lambda: Settings(
+        outbox_backend="postgres"
+    )
+    api_app.dependency_overrides[get_runtime_outbox_store] = lambda: outbox_store
+    try:
+        response = TestClient(api_app).post("/outbox/events/outbox_pending/retry")
+    finally:
+        api_app.dependency_overrides.clear()
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["error_code"] == "OUTBOX_EVENT_NOT_RETRYABLE"
+    assert response.json()["detail"]["status"] == "pending"
+
+
+def test_outbox_cli_lists_gets_and_retries_events(monkeypatch) -> None:
+    failed_record = _outbox_record(
+        outbox_event_id="outbox_cli_failed",
+        status="failed",
+        payload={"bad": "payload"},
+        error_json={"message": "transient memory write failure"},
+    )
+    outbox_store = FakeOutboxStore(events=[failed_record])
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.get_settings",
+        lambda: Settings(outbox_backend="postgres"),
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_outbox_store",
+        lambda settings: outbox_store,
+    )
+
+    listed = CliRunner().invoke(cli_app, ["list-outbox-events", "--status", "failed"])
+    detail = CliRunner().invoke(cli_app, ["get-outbox-event", "outbox_cli_failed"])
+    retried = CliRunner().invoke(
+        cli_app,
+        [
+            "retry-outbox-event",
+            "outbox_cli_failed",
+            "--requested-by",
+            "operator_cli",
+        ],
+    )
+
+    listed_payload = json.loads(listed.stdout)
+    detail_payload = json.loads(detail.stdout)
+    retried_payload = json.loads(retried.stdout)
+    assert listed.exit_code == 0
+    assert listed_payload["count"] == 1
+    assert listed_payload["items"][0]["status"] == "failed"
+    assert detail.exit_code == 0
+    assert detail_payload["outbox_event_id"] == "outbox_cli_failed"
+    assert retried.exit_code == 0
+    assert retried_payload["status"] == "pending"
+    assert retried_payload["metadata"]["last_manual_retry_by"] == "operator_cli"
+
+
 class FakeOutboxStore:
     def __init__(
         self,
         *,
         status: str = "pending",
         claimed: list[OutboxEventRecord] | None = None,
+        events: list[OutboxEventRecord] | None = None,
     ) -> None:
         self.status = status
         self.claimed = claimed or []
+        self.events = {event.outbox_event_id: event for event in events or []}
         self.enqueued: list[dict[str, object]] = []
         self.completed: list[str] = []
         self.failed: list[str] = []
 
     def enqueue(self, **kwargs) -> OutboxEventRecord:
         self.enqueued.append(kwargs)
-        return _outbox_record(
+        record = _outbox_record(
             status=self.status,
             payload=kwargs["payload"],
             metadata=kwargs.get("metadata") or {},
         )
+        self.events[record.outbox_event_id] = record
+        return record
 
     def claim_pending(self, *, limit: int, worker_id: str, lock_seconds: int = 60):
         return self.claimed[:limit]
@@ -272,6 +435,56 @@ class FakeOutboxStore:
     def mark_failed(self, outbox_event_id: str, *, error, retry_delay_seconds: int = 5):
         self.failed.append(outbox_event_id)
         return None
+
+    def get_event(self, outbox_event_id: str):
+        return self.events.get(outbox_event_id)
+
+    def list_events(
+        self,
+        *,
+        status=None,
+        event_type=None,
+        aggregate_type=None,
+        aggregate_id=None,
+        limit: int = 50,
+    ):
+        records = list(self.events.values())
+        if status is not None:
+            records = [record for record in records if record.status == status]
+        if event_type is not None:
+            records = [record for record in records if record.event_type == event_type]
+        if aggregate_type is not None:
+            records = [
+                record for record in records if record.aggregate_type == aggregate_type
+            ]
+        if aggregate_id is not None:
+            records = [record for record in records if record.aggregate_id == aggregate_id]
+        return records[:limit]
+
+    def retry_failed(self, outbox_event_id: str, *, max_attempts=None, requested_by="operator"):
+        record = self.events.get(outbox_event_id)
+        if record is None or record.status != "failed":
+            return None
+        metadata = dict(record.metadata)
+        if record.error_json is not None:
+            metadata["previous_error"] = record.error_json
+        metadata["manual_retry_count"] = int(metadata.get("manual_retry_count") or 0) + 1
+        metadata["last_manual_retry_by"] = requested_by
+        retried = record.model_copy(
+            update={
+                "status": "pending",
+                "attempt_count": 0,
+                "max_attempts": max_attempts or record.max_attempts,
+                "error_json": None,
+                "metadata": metadata,
+                "next_attempt_at": datetime.now(UTC),
+                "locked_by": None,
+                "locked_until": None,
+                "completed_at": None,
+            }
+        )
+        self.events[outbox_event_id] = retried
+        return retried
 
 
 class FakeAdvertiserMemoryStore:
@@ -310,25 +523,29 @@ class FakeAdvertiserMemoryStore:
 
 def _outbox_record(
     *,
+    outbox_event_id: str = "outbox_test",
     status: str = "pending",
     payload: dict,
     event_type: str = CAMPAIGN_PERFORMANCE_ANALYZED_EVENT,
     aggregate_type: str = "campaign_performance_event",
     aggregate_id: str = "evt_perf_001",
     metadata: dict[str, object] | None = None,
+    error_json: dict[str, object] | None = None,
 ) -> OutboxEventRecord:
     now = datetime.now(UTC)
     return OutboxEventRecord(
-        outbox_event_id="outbox_test",
+        outbox_event_id=outbox_event_id,
         event_type=event_type,
         aggregate_type=aggregate_type,
         aggregate_id=aggregate_id,
         idempotency_key="advertiser-memory:adv_fitness_001:evt_perf_001:v1",
         status=status,
         payload=payload,
+        error_json=error_json,
         attempt_count=0,
         max_attempts=3,
         metadata=metadata or {},
+        next_attempt_at=now if status == "pending" else None,
         created_at=now,
         updated_at=now,
     )

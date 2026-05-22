@@ -96,6 +96,13 @@ class StrategyJobStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class OutboxEventStatus(StrEnum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class AdvertiserBrief(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -629,6 +636,41 @@ class StrategyJobListResponse(BaseModel):
     status: StrategyJobStatus | None = None
     advertiser_id: str | None = Field(default=None, min_length=1, max_length=128)
     run_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class OutboxEventDetailResponse(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    outbox_event_id: str = Field(min_length=1, max_length=160)
+    event_type: str = Field(min_length=1, max_length=160)
+    aggregate_type: str = Field(min_length=1, max_length=120)
+    aggregate_id: str = Field(min_length=1, max_length=160)
+    idempotency_key: str = Field(min_length=1, max_length=240)
+    status: OutboxEventStatus
+    payload: dict[str, Any] = Field(default_factory=dict)
+    result_json: dict[str, Any] | None = None
+    error_json: dict[str, Any] | None = None
+    attempt_count: int = Field(ge=0)
+    max_attempts: int = Field(gt=0)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    next_attempt_at: datetime | None = None
+    locked_by: str | None = Field(default=None, min_length=1, max_length=160)
+    locked_until: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None = None
+
+
+class OutboxEventListResponse(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    items: list[OutboxEventDetailResponse] = Field(default_factory=list)
+    count: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    status: OutboxEventStatus | None = None
+    event_type: str | None = Field(default=None, min_length=1, max_length=160)
+    aggregate_type: str | None = Field(default=None, min_length=1, max_length=120)
+    aggregate_id: str | None = Field(default=None, min_length=1, max_length=160)
 
 
 class StrategyJobCancelRequest(BaseModel):

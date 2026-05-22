@@ -60,6 +60,56 @@ def test_postgres_outbox_claims_distinct_events_with_skip_locked(monkeypatch) ->
         _drop_temporary_database(test_url)
 
 
+def test_postgres_outbox_lists_details_and_retries_failed_events(monkeypatch) -> None:
+    base_url = _integration_database_url()
+    test_url = _create_temporary_database(base_url)
+    engine = sa.create_engine(test_url)
+
+    try:
+        monkeypatch.setenv("DATABASE_URL", test_url.render_as_string(hide_password=False))
+        command.upgrade(Config("alembic.ini"), "head")
+
+        store = PostgresOutboxStore(engine, tenant_id="tenant_outbox_ops")
+        queued = store.enqueue(
+            event_type="campaign_performance_analyzed",
+            aggregate_type="campaign_performance_event",
+            aggregate_id="evt_outbox_failed",
+            idempotency_key="idem_outbox_failed",
+            payload={"event_id": "evt_outbox_failed"},
+            partition_key="evt_outbox_failed",
+            max_attempts=1,
+        )
+        claimed = store.claim_pending(limit=1, worker_id="worker_fail")
+        failed = store.mark_failed(
+            claimed[0].outbox_event_id,
+            error={"message": "transient memory write failure"},
+        )
+        listed = store.list_events(status="failed", limit=10)
+        detail = store.get_event(queued.outbox_event_id)
+        retried = store.retry_failed(
+            queued.outbox_event_id,
+            requested_by="operator_integration",
+        )
+
+        assert failed is not None
+        assert failed.status == "failed"
+        assert listed[0].outbox_event_id == queued.outbox_event_id
+        assert detail is not None
+        assert detail.error_json == {"message": "transient memory write failure"}
+        assert retried is not None
+        assert retried.status == "pending"
+        assert retried.attempt_count == 0
+        assert retried.error_json is None
+        assert retried.metadata["manual_retry_count"] == 1
+        assert retried.metadata["last_manual_retry_by"] == "operator_integration"
+        assert retried.metadata["previous_error"]["message"] == (
+            "transient memory write failure"
+        )
+    finally:
+        engine.dispose()
+        _drop_temporary_database(test_url)
+
+
 def _integration_database_url() -> URL:
     if os.getenv("RUN_POSTGRES_INTEGRATION") != "1":
         pytest.skip("Set RUN_POSTGRES_INTEGRATION=1 to run live PostgreSQL tests.")

@@ -54,6 +54,9 @@ from ads_growth_agent.contracts import (
     GrowthStrategyFromTextResponse,
     GrowthStrategyRequest,
     GrowthStrategyResponse,
+    OutboxEventDetailResponse,
+    OutboxEventListResponse,
+    OutboxEventStatus,
     PerformanceEventType,
     StrategyJobAcceptedResponse,
     StrategyJobCancelRequest,
@@ -104,7 +107,11 @@ from ads_growth_agent.health import ReadinessResponse, check_readiness
 from ads_growth_agent.idempotency_store_factory import build_configured_idempotency_store
 from ads_growth_agent.logging_config import configure_logging
 from ads_growth_agent.observability import RunContext, create_run_context
-from ads_growth_agent.outbox import enqueue_advertiser_memory_write
+from ads_growth_agent.outbox import (
+    OutboxProcessingReport,
+    enqueue_advertiser_memory_write,
+    process_outbox_events,
+)
 from ads_growth_agent.outbox_store_factory import build_configured_outbox_store
 from ads_growth_agent.performance_event_store_factory import (
     build_configured_performance_event_store,
@@ -685,6 +692,163 @@ def get_advertiser_memory(
             },
         )
     return memory
+
+
+@app.get(
+    "/outbox/events",
+    response_model=OutboxEventListResponse,
+    dependencies=[Depends(require_api_auth)],
+)
+def list_outbox_events(
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    outbox_store: Annotated[
+        OutboxStore,
+        Depends(get_runtime_outbox_store),
+    ],
+    status: Annotated[OutboxEventStatus | None, Query()] = None,
+    event_type: Annotated[str | None, Query(min_length=1, max_length=160)] = None,
+    aggregate_type: Annotated[str | None, Query(min_length=1, max_length=120)] = None,
+    aggregate_id: Annotated[str | None, Query(min_length=1, max_length=160)] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> OutboxEventListResponse:
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    events = outbox_store.list_events(
+        status=status.value if status is not None else None,
+        event_type=event_type,
+        aggregate_type=aggregate_type,
+        aggregate_id=aggregate_id,
+        limit=limit,
+    )
+    response.headers["Outbox-Event-Count"] = str(len(events))
+    return OutboxEventListResponse(
+        items=[
+            OutboxEventDetailResponse.model_validate(event.model_dump()) for event in events
+        ],
+        count=len(events),
+        limit=limit,
+        status=status,
+        event_type=event_type,
+        aggregate_type=aggregate_type,
+        aggregate_id=aggregate_id,
+    )
+
+
+@app.get(
+    "/outbox/events/{outbox_event_id}",
+    response_model=OutboxEventDetailResponse,
+    dependencies=[Depends(require_api_auth)],
+)
+def get_outbox_event(
+    outbox_event_id: str,
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    outbox_store: Annotated[
+        OutboxStore,
+        Depends(get_runtime_outbox_store),
+    ],
+) -> OutboxEventDetailResponse:
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    event = outbox_store.get_event(outbox_event_id)
+    if event is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": "Outbox event was not found for the effective tenant.",
+                "error_code": "OUTBOX_EVENT_NOT_FOUND",
+                "outbox_event_id": outbox_event_id,
+            },
+        )
+    response.headers["Outbox-Event-ID"] = event.outbox_event_id
+    response.headers["Outbox-Event-Status"] = event.status
+    return OutboxEventDetailResponse.model_validate(event.model_dump())
+
+
+@app.post(
+    "/outbox/events/{outbox_event_id}/retry",
+    response_model=OutboxEventDetailResponse,
+    dependencies=[Depends(require_api_auth)],
+)
+def retry_outbox_event(
+    outbox_event_id: str,
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    outbox_store: Annotated[
+        OutboxStore,
+        Depends(get_runtime_outbox_store),
+    ],
+    x_operator_id: Annotated[str | None, Header(alias="X-Operator-ID")] = None,
+) -> OutboxEventDetailResponse:
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    event = outbox_store.get_event(outbox_event_id)
+    if event is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": "Outbox event was not found for the effective tenant.",
+                "error_code": "OUTBOX_EVENT_NOT_FOUND",
+                "outbox_event_id": outbox_event_id,
+            },
+        )
+    if event.status != OutboxEventStatus.FAILED.value:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Only failed outbox events can be manually retried.",
+                "error_code": "OUTBOX_EVENT_NOT_RETRYABLE",
+                "outbox_event_id": outbox_event_id,
+                "status": event.status,
+            },
+        )
+
+    retried = outbox_store.retry_failed(
+        outbox_event_id,
+        requested_by=(x_operator_id or "api").strip() or "api",
+    )
+    if retried is None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Outbox event could not be retried.",
+                "error_code": "OUTBOX_EVENT_RETRY_CONFLICT",
+                "outbox_event_id": outbox_event_id,
+            },
+        )
+    response.headers["Outbox-Event-ID"] = retried.outbox_event_id
+    response.headers["Outbox-Event-Status"] = retried.status
+    return OutboxEventDetailResponse.model_validate(retried.model_dump())
+
+
+@app.post(
+    "/outbox/process",
+    response_model=OutboxProcessingReport,
+    dependencies=[Depends(require_api_auth)],
+)
+def process_outbox_batch(
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    outbox_store: Annotated[
+        OutboxStore,
+        Depends(get_runtime_outbox_store),
+    ],
+    memory_store: Annotated[
+        AdvertiserMemoryStore,
+        Depends(get_runtime_advertiser_memory_store),
+    ],
+    limit: Annotated[int, Query(ge=1, le=1_000)] = 100,
+    x_worker_id: Annotated[str | None, Header(alias="X-Worker-ID")] = None,
+) -> OutboxProcessingReport:
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    report = process_outbox_events(
+        outbox_store,
+        memory_store,
+        limit=limit,
+        worker_id=(x_worker_id or "").strip() or None,
+    )
+    response.headers["Outbox-Claimed"] = str(report.claimed)
+    response.headers["Outbox-Completed"] = str(report.completed)
+    response.headers["Outbox-Failed"] = str(report.failed)
+    return report
 
 
 @app.post(
