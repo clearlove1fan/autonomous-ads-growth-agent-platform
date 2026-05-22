@@ -127,6 +127,17 @@ def test_persisted_product_loop_walkthrough() -> None:
         "outcome_improved"
     )
     assert summary["feedback_loop_command_center"]["cli_outcome_status"] == "improved"
+    assert summary["feedback_loop_chain"]["outcome_status"] == "improved"
+    assert summary["feedback_loop_chain"]["followup_event_id"] == summary[
+        "followup_event"
+    ]["event_id"]
+    assert summary["feedback_loop_chain"]["followup_current_stage"] == "review_pending"
+    assert summary["feedback_loop_chain"]["recommended_focus"] == (
+        "monitor_followup_outcome"
+    )
+    assert summary["feedback_loop_chain"]["cli_recommended_focus"] == (
+        "monitor_followup_outcome"
+    )
     assert summary["execution_plan"]["execution_mode"] == "dry_run"
     assert summary["execution_plan"]["first_tool_name"] == "draft_budget_reallocation"
     assert summary["execution_dry_run"]["status"] == "passed"

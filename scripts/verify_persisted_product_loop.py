@@ -678,6 +678,23 @@ def run_persisted_product_loop(
                     "20",
                 ],
             )
+            feedback_loop_chain = _api_json(
+                client.get(
+                    f"/campaign-events/performance/{event_id}/feedback-loop-chain",
+                    params={"limit": "20"},
+                    headers=_tenant_headers(tenant_id),
+                ),
+                label="get feedback loop chain",
+            )
+            cli_feedback_loop_chain = _invoke_cli(
+                settings,
+                [
+                    "get-feedback-loop-chain",
+                    event_id,
+                    "--limit",
+                    "20",
+                ],
+            )
             cli_event_list = _invoke_cli(
                 settings,
                 [
@@ -1023,6 +1040,28 @@ def run_persisted_product_loop(
                 "CLI feedback loop command center should match API stage",
             )
             _expect(
+                feedback_loop_chain["outcome_status"] == "improved",
+                "feedback loop chain should surface the improved outcome",
+            )
+            _expect(
+                feedback_loop_chain["followup_event_id"]
+                == followup_event_response["event_id"],
+                "feedback loop chain should link to the follow-up event",
+            )
+            _expect(
+                feedback_loop_chain["followup_current_stage"] == "review_pending",
+                "feedback loop chain should summarize the follow-up loop",
+            )
+            _expect(
+                feedback_loop_chain["recommended_focus"] == "monitor_followup_outcome",
+                "feedback loop chain should recommend monitoring improved outcomes",
+            )
+            _expect(
+                cli_feedback_loop_chain["recommended_focus"]
+                == feedback_loop_chain["recommended_focus"],
+                "CLI feedback loop chain should match API focus",
+            )
+            _expect(
                 followup_event_response["advertiser_memory_status"] == "queued",
                 "follow-up performance feedback should queue advertiser memory",
             )
@@ -1250,6 +1289,17 @@ def run_persisted_product_loop(
                 "cli_current_stage": cli_feedback_loop_command_center["current_stage"],
                 "cli_outcome_status": cli_feedback_loop_command_center["outcome_status"],
             },
+            "feedback_loop_chain": {
+                "outcome_status": feedback_loop_chain["outcome_status"],
+                "followup_event_id": feedback_loop_chain["followup_event_id"],
+                "followup_current_stage": feedback_loop_chain[
+                    "followup_current_stage"
+                ],
+                "recommended_focus": feedback_loop_chain["recommended_focus"],
+                "cli_recommended_focus": cli_feedback_loop_chain[
+                    "recommended_focus"
+                ],
+            },
             "execution_plan": {
                 "execution_plan_id": execution_plan["execution_plan_id"],
                 "execution_mode": execution_plan["execution_mode"],
@@ -1451,6 +1501,14 @@ def render_summary(summary: dict[str, Any]) -> str:
                 f"api={summary['feedback_loop_command_center']['primary_api_path']} "
                 f"cli={summary['feedback_loop_command_center']['cli_primary_command_id']} "
                 f"cli_stage={summary['feedback_loop_command_center']['cli_current_stage']}"
+            ),
+            (
+                "Feedback loop chain: "
+                f"outcome={summary['feedback_loop_chain']['outcome_status']} "
+                f"followup={summary['feedback_loop_chain']['followup_event_id']} "
+                f"stage={summary['feedback_loop_chain']['followup_current_stage']} "
+                f"focus={summary['feedback_loop_chain']['recommended_focus']} "
+                f"cli_focus={summary['feedback_loop_chain']['cli_recommended_focus']}"
             ),
             (
                 "Execution plan: "

@@ -52,6 +52,8 @@
 - Added follow-up optimization re-entry commands for regressed or mixed
   outcomes, linking operators to the follow-up event action plan, draft, and
   review command.
+- Added feedback loop chain API and CLI reads that link baseline loop status,
+  outcome status, follow-up loop status, and recommended operator focus.
 - Added feedback outcome report API and CLI surfaces to compare a baseline
   feedback event with the next performance snapshot and classify
   improved/regressed/mixed outcomes.

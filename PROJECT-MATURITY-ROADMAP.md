@@ -11,7 +11,7 @@ This roadmap defines the order in which the Autonomous Ads Growth Agent Platform
 | Production architecture skeleton | 68-72% | 75-80% | In progress |
 | True production-ready system | 15-20% | 60%+ for this repo | Early |
 
-These numbers are intentionally conservative. The project now has a credible agent-runtime and production-skeleton foundation, including persistence, tenant scoping, retry/resume, checkpointing, async strategy jobs, event feedback, feedback action plans, feedback optimization drafts, persisted feedback review decisions, revision drafts and second-pass reviews for `needs_revision` reviews, individual and filtered review lineage with execution/dry-run audit, feedback loop summaries, timelines, outcome-aware command centers, manual handoff packages, handoff outcome records, persisted handoff outcome memory, persisted dry-run execution validation, performance event discovery, advertiser memory write/read surfaces, dependency locking, explicit CI quality gates, a deterministic one-command MVP demo, local agent evals, curated positive/negative demo verifiers, a persisted product loop verifier, and an optional local API key boundary. Phase 1 is complete for the v0.1 MVP, while branch protection remains a GitHub repository setting tracked in Phase 1.5 and is currently blocked for the private repo by GitHub plan limits. The project should still not claim production-grade availability, full security, or distributed-system readiness yet.
+These numbers are intentionally conservative. The project now has a credible agent-runtime and production-skeleton foundation, including persistence, tenant scoping, retry/resume, checkpointing, async strategy jobs, event feedback, feedback action plans, feedback optimization drafts, persisted feedback review decisions, revision drafts and second-pass reviews for `needs_revision` reviews, individual and filtered review lineage with execution/dry-run audit, feedback loop summaries, timelines, outcome-aware command centers, chain views, manual handoff packages, handoff outcome records, persisted handoff outcome memory, persisted dry-run execution validation, performance event discovery, advertiser memory write/read surfaces, dependency locking, explicit CI quality gates, a deterministic one-command MVP demo, local agent evals, curated positive/negative demo verifiers, a persisted product loop verifier, and an optional local API key boundary. Phase 1 is complete for the v0.1 MVP, while branch protection remains a GitHub repository setting tracked in Phase 1.5 and is currently blocked for the private repo by GitHub plan limits. The project should still not claim production-grade availability, full security, or distributed-system readiness yet.
 
 ## Phase 1: Interview-Quality Technical Project
 
@@ -189,6 +189,8 @@ Planned work:
 - Feedback loop timeline APIs/CLI for ordered event-rooted audit milestones.
 - Feedback loop command-center APIs/CLI for stage-aware and outcome-aware
   operator affordances.
+- Feedback loop chain APIs/CLI for baseline outcome and follow-up loop status
+  review.
 - Feedback handoff package APIs/CLI for approved manual handoff packages.
 - Feedback handoff record APIs/CLI for operator outcome audit.
 - Feedback execution plan APIs/CLI for approved feedback optimization reviews,
@@ -231,6 +233,9 @@ Exit criteria:
   event, showing the primary next command plus concrete API and CLI affordances,
   including follow-up optimization re-entry commands for regressed or mixed
   outcomes.
+- A feedback loop chain can be fetched for one persisted performance event,
+  linking baseline status, outcome report, follow-up status, and recommended
+  operator focus.
 - A feedback outcome report can compare one baseline feedback event with the
   next persisted performance snapshot and classify improved, regressed, mixed,
   insufficient-data, or no-follow-up outcomes.
@@ -249,8 +254,8 @@ Exit criteria:
 - A live PostgreSQL walkthrough proves strategy draft -> feedback event ->
   optimization review -> revision draft -> revision review -> dry-run execution
   plan -> persisted execution dry-run validation -> review lineage and filtered
-  lineage list with execution audit -> feedback loop summary, timeline, and
-  outcome-aware command center -> manual handoff
+  lineage list with execution audit -> feedback loop summary, timeline,
+  outcome-aware command center, and chain view -> manual handoff
   package -> handoff outcome record -> follow-up performance snapshot -> outcome
   report -> performance and handoff outbox memories -> API/CLI reads -> later
   RAG retrieval.

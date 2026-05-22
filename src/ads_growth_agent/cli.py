@@ -24,6 +24,7 @@ from ads_growth_agent.contracts import (
     CampaignFeedbackHandoffPackageResponse,
     CampaignFeedbackHandoffRecordListResponse,
     CampaignFeedbackHandoffRecordRequest,
+    CampaignFeedbackLoopChainResponse,
     CampaignFeedbackLoopCommandCenterResponse,
     CampaignFeedbackLoopSummaryResponse,
     CampaignFeedbackLoopTimelineResponse,
@@ -72,6 +73,7 @@ from ads_growth_agent.feedback_lineage import (
 from ads_growth_agent.feedback_lineage import (
     list_feedback_optimization_review_lineages as build_feedback_optimization_review_lineage_list,
 )
+from ads_growth_agent.feedback_loop_chain import build_campaign_feedback_loop_chain
 from ads_growth_agent.feedback_loop_command_center import (
     build_campaign_feedback_loop_command_center,
 )
@@ -483,6 +485,40 @@ def get_feedback_loop_command_center(
         limit=limit,
     )
     response = CampaignFeedbackLoopCommandCenterResponse.model_validate(command_center)
+    typer.echo(response.model_dump_json(indent=2))
+
+
+@app.command("get-feedback-loop-chain")
+def get_feedback_loop_chain(
+    event_id: str = PERFORMANCE_EVENT_ID_ARGUMENT,
+    limit: int = FEEDBACK_REVIEW_LIST_LIMIT_OPTION,
+) -> None:
+    """Fetch a baseline -> outcome -> follow-up loop chain projection."""
+    settings = get_settings()
+    event_store = build_configured_performance_event_store(settings)
+    event = event_store.get_event(event_id)
+    if event is None:
+        typer.echo(f"Performance event not found: {event_id}", err=True)
+        raise typer.Exit(1)
+    review_store = build_configured_feedback_review_store(settings)
+    execution_store = build_configured_feedback_execution_store(settings)
+    handoff_store = build_configured_feedback_handoff_store(settings)
+    chain = build_campaign_feedback_loop_chain(
+        event,
+        event_store,
+        review_store,
+        execution_store,
+        handoff_store,
+        review_persistence_enabled=settings.feedback_review_persistence_backend != "none",
+        execution_persistence_enabled=(
+            settings.feedback_execution_persistence_backend != "none"
+        ),
+        handoff_persistence_enabled=(
+            settings.feedback_execution_persistence_backend != "none"
+        ),
+        limit=limit,
+    )
+    response = CampaignFeedbackLoopChainResponse.model_validate(chain)
     typer.echo(response.model_dump_json(indent=2))
 
 

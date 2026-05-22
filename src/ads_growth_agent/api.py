@@ -32,6 +32,7 @@ from ads_growth_agent.contracts import (
     CampaignFeedbackHandoffRecordListResponse,
     CampaignFeedbackHandoffRecordRequest,
     CampaignFeedbackHandoffRecordResponse,
+    CampaignFeedbackLoopChainResponse,
     CampaignFeedbackLoopCommandCenterResponse,
     CampaignFeedbackLoopSummaryResponse,
     CampaignFeedbackLoopTimelineResponse,
@@ -89,6 +90,7 @@ from ads_growth_agent.feedback_lineage import (
     build_feedback_optimization_review_lineage,
     list_feedback_optimization_review_lineages,
 )
+from ads_growth_agent.feedback_loop_chain import build_campaign_feedback_loop_chain
 from ads_growth_agent.feedback_loop_command_center import (
     build_campaign_feedback_loop_command_center,
 )
@@ -1204,6 +1206,73 @@ def get_campaign_feedback_loop_command_center(
             command_center.outcome_report.followup_event_id
         )
     return command_center
+
+
+@app.get(
+    "/campaign-events/performance/{event_id}/feedback-loop-chain",
+    response_model=CampaignFeedbackLoopChainResponse,
+    dependencies=[Depends(require_api_auth)],
+)
+def get_campaign_feedback_loop_chain(
+    event_id: str,
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    event_store: Annotated[
+        CampaignPerformanceEventStore,
+        Depends(get_runtime_performance_event_store),
+    ],
+    review_store: Annotated[
+        FeedbackOptimizationReviewStore,
+        Depends(get_runtime_feedback_review_store),
+    ],
+    feedback_execution_store: Annotated[
+        FeedbackExecutionDryRunStore,
+        Depends(get_runtime_feedback_execution_store),
+    ],
+    handoff_store: Annotated[
+        FeedbackHandoffRecordStore,
+        Depends(get_runtime_feedback_handoff_store),
+    ],
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> CampaignFeedbackLoopChainResponse:
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    event = event_store.get_event(event_id)
+    if event is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": "Campaign performance event was not found for the effective tenant.",
+                "error_code": "PERFORMANCE_EVENT_NOT_FOUND",
+                "event_id": event_id,
+            },
+        )
+    chain = build_campaign_feedback_loop_chain(
+        event,
+        event_store,
+        review_store,
+        feedback_execution_store,
+        handoff_store,
+        review_persistence_enabled=settings.feedback_review_persistence_backend != "none",
+        execution_persistence_enabled=(
+            settings.feedback_execution_persistence_backend != "none"
+        ),
+        handoff_persistence_enabled=(
+            settings.feedback_execution_persistence_backend != "none"
+        ),
+        limit=limit,
+    )
+    response.headers["Feedback-ID"] = event.analysis.feedback_id
+    response.headers["Feedback-Loop-Stage"] = chain.baseline_current_stage
+    response.headers["Feedback-Chain-Focus"] = chain.recommended_focus
+    if chain.outcome_status is not None:
+        response.headers["Feedback-Outcome-Status"] = chain.outcome_status
+    if chain.followup_event_id is not None:
+        response.headers["Feedback-Followup-Event-ID"] = chain.followup_event_id
+    if chain.followup_current_stage is not None:
+        response.headers["Feedback-Followup-Loop-Stage"] = (
+            chain.followup_current_stage
+        )
+    return chain
 
 
 @app.get(

@@ -46,6 +46,7 @@ from ads_growth_agent.feedback_lineage import (
     build_feedback_optimization_review_lineage,
     list_feedback_optimization_review_lineages,
 )
+from ads_growth_agent.feedback_loop_chain import build_campaign_feedback_loop_chain
 from ads_growth_agent.feedback_loop_command_center import (
     build_campaign_feedback_loop_command_center,
 )
@@ -1579,6 +1580,97 @@ def test_feedback_loop_command_center_promotes_outcome_report_after_followup() -
     assert "FEEDBACK_REVIEW_PERSISTENCE_BACKEND" in (
         review_disabled_command.disabled_reason
     )
+
+
+def test_feedback_loop_chain_links_baseline_outcome_to_followup_loop() -> None:
+    baseline_event = CampaignPerformanceEventRequest(
+        event_id="evt_feedback_loop_chain_baseline",
+        advertiser_id="adv_fitness_001",
+        run_id="run_001",
+        campaign_id="cmp_fittrack",
+        draft_id="draft_fittrack",
+        objective=CampaignObjective.REGISTRATIONS,
+        occurred_at="2026-05-12T12:00:00Z",
+        metrics=PerformanceMetrics(
+            impressions=10_000,
+            clicks=500,
+            spend="1000.00",
+            conversions=20,
+        ),
+        target_cpa="20.00",
+    )
+    followup_event = CampaignPerformanceEventRequest(
+        event_id="evt_feedback_loop_chain_followup",
+        advertiser_id=baseline_event.advertiser_id,
+        run_id=baseline_event.run_id,
+        campaign_id=baseline_event.campaign_id,
+        draft_id=baseline_event.draft_id,
+        objective=baseline_event.objective,
+        occurred_at="2026-05-13T12:00:00Z",
+        metrics=PerformanceMetrics(
+            impressions=8_000,
+            clicks=240,
+            spend="1100.00",
+            conversions=10,
+        ),
+        target_cpa="20.00",
+    )
+    baseline_analysis = analyze_campaign_performance_event(baseline_event)
+    followup_analysis = analyze_campaign_performance_event(followup_event)
+    baseline_detail = CampaignPerformanceEventDetailResponse(
+        event_id=baseline_event.event_id,
+        advertiser_id=baseline_event.advertiser_id,
+        run_id=baseline_event.run_id,
+        campaign_id=baseline_event.campaign_id,
+        draft_id=baseline_event.draft_id,
+        objective=baseline_event.objective,
+        event_type=baseline_event.event_type,
+        occurred_at=baseline_event.occurred_at,
+        metrics=baseline_event.metrics,
+        status="analyzed",
+        metadata={},
+        analysis=baseline_analysis,
+        created_at=baseline_analysis.created_at,
+        updated_at=baseline_analysis.created_at,
+    )
+    followup_detail = CampaignPerformanceEventDetailResponse(
+        event_id=followup_event.event_id,
+        advertiser_id=followup_event.advertiser_id,
+        run_id=followup_event.run_id,
+        campaign_id=followup_event.campaign_id,
+        draft_id=followup_event.draft_id,
+        objective=followup_event.objective,
+        event_type=followup_event.event_type,
+        occurred_at=followup_event.occurred_at,
+        metrics=followup_event.metrics,
+        status="analyzed",
+        metadata={},
+        analysis=followup_analysis,
+        created_at=followup_analysis.created_at,
+        updated_at=followup_analysis.created_at,
+    )
+    store = _OutcomeEventStore([followup_detail, baseline_detail])
+
+    no_followup_chain = build_campaign_feedback_loop_chain(
+        baseline_detail,
+        _OutcomeEventStore([baseline_detail]),
+    )
+    chain = build_campaign_feedback_loop_chain(
+        baseline_detail,
+        store,
+        limit=20,
+    )
+
+    assert no_followup_chain.outcome_status == "no_followup_event"
+    assert no_followup_chain.followup_summary is None
+    assert no_followup_chain.recommended_focus == "record_followup_snapshot"
+    assert chain.outcome_status == "regressed"
+    assert chain.followup_event_id == followup_event.event_id
+    assert chain.followup_current_stage == "review_pending"
+    assert chain.followup_summary is not None
+    assert chain.followup_summary.event_id == followup_event.event_id
+    assert chain.recommended_focus == "review_followup_optimization_draft"
+    assert "read-only operator projection" in chain.guardrails[0]
 
 
 def test_feedback_execution_plan_maps_approved_review_to_dry_run_tool_intents() -> None:

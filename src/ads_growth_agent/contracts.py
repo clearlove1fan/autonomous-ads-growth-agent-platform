@@ -1495,3 +1495,35 @@ class CampaignFeedbackLoopCommandCenterResponse(BaseModel):
     timeline: CampaignFeedbackLoopTimelineResponse
     summary: str = Field(min_length=1, max_length=1_000)
     guardrails: list[str] = Field(default_factory=list)
+
+
+FeedbackLoopChainRecommendedFocus = Literal[
+    "record_followup_snapshot",
+    "monitor_followup_outcome",
+    "review_followup_optimization_draft",
+    "generate_followup_revision",
+    "run_followup_execution_dry_run",
+    "inspect_followup_dry_run",
+    "prepare_followup_handoff",
+    "monitor_followup_handoff",
+]
+
+
+class CampaignFeedbackLoopChainResponse(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    event_id: str = Field(min_length=1, max_length=128)
+    advertiser_id: str = Field(min_length=1, max_length=128)
+    run_id: str | None = Field(default=None, min_length=1, max_length=128)
+    campaign_id: str | None = Field(default=None, min_length=1, max_length=128)
+    draft_id: str | None = Field(default=None, min_length=1, max_length=160)
+    baseline_current_stage: FeedbackLoopCurrentStage
+    outcome_status: FeedbackOutcomeStatus | None = None
+    followup_event_id: str | None = Field(default=None, min_length=1, max_length=128)
+    followup_current_stage: FeedbackLoopCurrentStage | None = None
+    recommended_focus: FeedbackLoopChainRecommendedFocus
+    baseline_summary: CampaignFeedbackLoopSummaryResponse
+    outcome_report: CampaignFeedbackOutcomeReportResponse | None = None
+    followup_summary: CampaignFeedbackLoopSummaryResponse | None = None
+    summary: str = Field(min_length=1, max_length=1_000)
+    guardrails: list[str] = Field(default_factory=list)
