@@ -12,7 +12,7 @@
 | DRI | TBD |
 | Reviewers | Product, Ads Engineering, ML Platform, Data Engineering, Privacy/Safety, LLMOps |
 | Audience | Product, Engineering, ML/LLMOps, Data, Ads Platform, Leadership |
-| Last Updated | 2026-05-20 |
+| Last Updated | 2026-05-24 |
 
 ### 1.1 Review Protocol
 
@@ -352,7 +352,7 @@ flowchart TD
 | Knowledge Layer | Retrieve policy, strategy, and historical campaign context | In-memory default store plus optional PostgreSQL documents, pgvector columns, and retrieval events |
 | Memory Layer | Store in-run and advertiser-level context | LangGraph state plus PostgreSQL-backed advertiser memory and optional graph checkpoints |
 | Run Lifecycle Layer | Persist workflow executions for audit, debug, retry, and resume | Optional PostgreSQL `agent_runs` and `agent_run_steps` with running/completed/failed lifecycle |
-| Async Job Layer | Accept long-running strategy requests and expose pollable status | `POST /growth-strategies/jobs`, `GET /growth-strategies/jobs/{job_id}`, in-process background executor, memory/Postgres job store |
+| Async Job Layer | Accept long-running strategy requests and expose pollable status | `POST /growth-strategies/jobs`, `GET /growth-strategies/jobs/{job_id}`, protected bounded processing API, in-process background executor, external worker mode, memory/Postgres job store |
 | Feedback Loop Layer | Ingest campaign telemetry and return optimization recommendations | Performance event API, deterministic feedback analyzer, draft-only action plans, optimization drafts, human review records, revision drafts, second-pass revision reviews, individual and filtered review lineage with execution/dry-run audit, execution dry-run validation, operator feedback loop summary, timeline, command center, chain view, manual handoff package, handoff outcome record, optional PostgreSQL persistence, and event-level idempotency |
 | Evaluation Layer | Score output quality and workflow health | Local deterministic eval suite with LangSmith-compatible run metadata |
 | Observability Layer | Trace decisions, tool calls, errors, and state transitions | LangSmith trace IDs plus structured JSON logs and persisted run/event records |
@@ -598,7 +598,7 @@ These decisions close a gap in the original RFC: v0.1 had a technical test plan,
 | Run detail API | Implemented | `GET /runs/{run_id}` returns status, strategy/error, metadata, and steps |
 | Retry API | Implemented | Failed runs can be retried as a new execution under the same strategy identity |
 | Resume API | Implemented with honest v0.1 semantics | Failed/running runs reuse the same run ID; Postgres checkpointer enables checkpoint-thread reuse |
-| Async strategy job API | Implemented with v0.1 in-process executor | Jobs are queued through `/growth-strategies/jobs` or `/growth-strategies/jobs/from-text`, executed by FastAPI background tasks, and pollable through job detail API |
+| Async strategy job API | Implemented with v0.1 in-process executor and bounded external processing | Jobs are queued through `/growth-strategies/jobs` or `/growth-strategies/jobs/from-text`, executed by FastAPI background tasks by default, pollable through job detail/list APIs, and processable in bounded batches through `/growth-strategies/jobs/process` when external mode is enabled |
 | API idempotency | Implemented as opt-in Postgres backend | Same key/body replays response; same key/different body returns conflict |
 | Campaign draft persistence | Implemented as opt-in Postgres backend | Drafts remain `status=draft`, are queryable through API/CLI for review, and no live spend action is executed |
 | Campaign performance feedback loop | Implemented | Performance snapshots produce metrics, health status, matched strategy rules from `feedback_context`, recommendations, guardrails, draft-only action plans, draft-only optimization drafts, human review records, revision drafts and second-pass reviews for `needs_revision` decisions, individual and filtered review lineage with execution/dry-run audit, dry-run execution plans, persisted execution dry-run validation through typed tools, operator feedback loop summaries, timelines, outcome-aware command centers with follow-up optimization re-entry commands for regressed/mixed outcomes, chain views linking baseline/outcome/follow-up status and recommended commands, outcome reports, manual handoff packages, handoff outcome records, and persisted event discovery by advertiser/run/campaign/draft |
@@ -889,6 +889,7 @@ The first version should prioritize a complete, traceable, and recoverable end-t
 | 2026-05-22 | Add feedback loop chain view | Operators can inspect baseline loop status, outcome status, follow-up loop status, and recommended focus in one API/CLI read | Accepted |
 | 2026-05-22 | Add feedback loop chain recommended command | Chain views now include the concrete API/CLI command matching the recommended focus | Accepted |
 | 2026-05-22 | Add outbox ops visibility | Operators can inspect, retry, and process durable side-effect events through API/CLI without relying only on direct database inspection | Accepted |
+| 2026-05-24 | Add strategy job process API | External strategy-job execution mode can now claim and process bounded queued jobs through protected API as well as CLI | Accepted |
 | 2026-05-20 | Add feedback manual handoff package | Approved reviews can produce read-only manual handoff packages with latest dry-run validation, checklist, and guardrails | Accepted |
 | 2026-05-20 | Add feedback handoff outcome records | Operators can record applied, blocked, or skipped manual handoff results as persisted audit records without live mutation | Accepted |
 | 2026-05-21 | Add handoff outcome memory | Applied, blocked, or skipped manual handoff outcomes can be persisted directly or queued through the outbox as learned advertiser memory | Accepted |

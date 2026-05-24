@@ -75,6 +75,8 @@
   execution dry-run validation audit records.
 - Added outbox event list/detail/manual-retry API and CLI surfaces, plus an API
   endpoint for processing bounded outbox batches.
+- Added a protected strategy-job processing API so external execution mode can
+  claim and complete bounded queued jobs without requiring the CLI worker.
 
 ## v0.1.0 - 2026-05-18
 

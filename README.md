@@ -298,6 +298,9 @@ curl "http://localhost:8000/growth-strategies/jobs?status=queued&limit=20"
 
 curl "http://localhost:8000/growth-strategies/jobs?run_id=run_abc123&limit=20"
 
+curl -X POST "http://localhost:8000/growth-strategies/jobs/process?limit=10&lock_seconds=1800" \
+  -H 'X-Worker-ID: worker_a'
+
 curl -X POST http://localhost:8000/growth-strategies/jobs/job_abc123/retry \
   -H 'X-Operator-ID: operator_a'
 
@@ -309,7 +312,7 @@ curl -X POST http://localhost:8000/growth-strategies/jobs/job_abc123/cancel \
 
 The default job executor uses FastAPI background tasks for local development. Set `STRATEGY_JOB_BACKEND=postgres` to persist job status and completed results in `strategy_jobs`.
 
-For a production-style worker path, set `STRATEGY_JOB_BACKEND=postgres` and `STRATEGY_JOB_EXECUTION_MODE=external`. The API will leave jobs in `queued` state, and bounded workers can claim distinct jobs with PostgreSQL row locks:
+For a production-style worker path, set `STRATEGY_JOB_BACKEND=postgres` and `STRATEGY_JOB_EXECUTION_MODE=external`. The API will leave jobs in `queued` state, and bounded workers can claim distinct jobs with PostgreSQL row locks through either API or CLI:
 
 ```bash
 STRATEGY_JOB_BACKEND=postgres ads-growth-agent submit-strategy-job examples/advertiser_brief.json

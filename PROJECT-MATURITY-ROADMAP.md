@@ -11,7 +11,7 @@ This roadmap defines the order in which the Autonomous Ads Growth Agent Platform
 | Production architecture skeleton | 68-72% | 75-80% | In progress |
 | True production-ready system | 15-20% | 60%+ for this repo | Early |
 
-These numbers are intentionally conservative. The project now has a credible agent-runtime and production-skeleton foundation, including persistence, tenant scoping, retry/resume, checkpointing, async strategy jobs, event feedback, feedback action plans, feedback optimization drafts, persisted feedback review decisions, revision drafts and second-pass reviews for `needs_revision` reviews, individual and filtered review lineage with execution/dry-run audit, feedback loop summaries, timelines, outcome-aware command centers, chain views, manual handoff packages, handoff outcome records, persisted handoff outcome memory, persisted dry-run execution validation, performance event discovery, advertiser memory write/read surfaces, durable outbox visibility and manual retry surfaces, dependency locking, explicit CI quality gates, a deterministic one-command MVP demo, local agent evals, curated positive/negative demo verifiers, a persisted product loop verifier, and an optional local API key boundary. Phase 1 is complete for the v0.1 MVP, while branch protection remains a GitHub repository setting tracked in Phase 1.5 and is currently blocked for the private repo by GitHub plan limits. The project should still not claim production-grade availability, full security, or distributed-system readiness yet.
+These numbers are intentionally conservative. The project now has a credible agent-runtime and production-skeleton foundation, including persistence, tenant scoping, retry/resume, checkpointing, async strategy jobs with API/CLI worker processing, event feedback, feedback action plans, feedback optimization drafts, persisted feedback review decisions, revision drafts and second-pass reviews for `needs_revision` reviews, individual and filtered review lineage with execution/dry-run audit, feedback loop summaries, timelines, outcome-aware command centers, chain views, manual handoff packages, handoff outcome records, persisted handoff outcome memory, persisted dry-run execution validation, performance event discovery, advertiser memory write/read surfaces, durable outbox visibility and manual retry surfaces, dependency locking, explicit CI quality gates, a deterministic one-command MVP demo, local agent evals, curated positive/negative demo verifiers, a persisted product loop verifier, and an optional local API key boundary. Phase 1 is complete for the v0.1 MVP, while branch protection remains a GitHub repository setting tracked in Phase 1.5 and is currently blocked for the private repo by GitHub plan limits. The project should still not claim production-grade availability, full security, or distributed-system readiness yet.
 
 ## Phase 1: Interview-Quality Technical Project
 
@@ -202,6 +202,7 @@ Planned work:
 - Async strategy job submission from natural-language advertiser goals.
 - Async strategy job submission and detail lookup from the CLI.
 - Async strategy job discovery by `run_id` from API and CLI.
+- Async strategy job bounded worker processing from API and CLI.
 - Optional local API key authentication boundary for product endpoints.
 
 Exit criteria:
@@ -265,6 +266,8 @@ Exit criteria:
   RAG retrieval.
 - Failed runs can be retried and failed/running runs can be resumed with clear semantics.
 - Strategy generation can be submitted as a pollable job with persisted status.
+- Queued external strategy jobs can be processed in bounded batches through API
+  or CLI.
 - Alembic migrations create the local database from scratch.
 - Local Docker Compose can run API, Postgres + pgvector, and LiteLLM together.
 

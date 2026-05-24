@@ -145,7 +145,11 @@ from ads_growth_agent.run_store_factory import build_configured_run_read_store
 from ads_growth_agent.strategy import StrategyGenerationError, generate_growth_strategy
 from ads_growth_agent.strategy_job_store_factory import build_configured_strategy_job_store
 from ads_growth_agent.strategy_job_submission import enqueue_strategy_job
-from ads_growth_agent.strategy_job_worker import execute_background_strategy_job
+from ads_growth_agent.strategy_job_worker import (
+    StrategyJobWorkerReport,
+    execute_background_strategy_job,
+    process_strategy_jobs,
+)
 
 
 class HealthResponse(BaseModel):
@@ -575,6 +579,38 @@ def get_growth_strategy_job(
             },
         )
     return job
+
+
+@app.post(
+    "/growth-strategies/jobs/process",
+    response_model=StrategyJobWorkerReport,
+    dependencies=[Depends(require_api_auth)],
+)
+def process_growth_strategy_jobs(
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    job_store: Annotated[
+        StrategyJobStore,
+        Depends(get_runtime_strategy_job_store),
+    ],
+    limit: Annotated[int, Query(ge=1, le=100)] = 10,
+    lock_seconds: Annotated[int, Query(ge=30, le=86_400)] = 1_800,
+    x_worker_id: Annotated[str | None, Header(alias="X-Worker-ID")] = None,
+) -> StrategyJobWorkerReport:
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    report = process_strategy_jobs(
+        job_store,
+        settings=settings,
+        limit=limit,
+        worker_id=(x_worker_id or "").strip() or None,
+        lock_seconds=lock_seconds,
+    )
+    response.headers["Strategy-Jobs-Claimed"] = str(report.claimed)
+    response.headers["Strategy-Jobs-Completed"] = str(report.completed)
+    response.headers["Strategy-Jobs-Retry-Scheduled"] = str(report.retry_scheduled)
+    response.headers["Strategy-Jobs-Failed"] = str(report.failed)
+    response.headers["Strategy-Jobs-Cancelled"] = str(report.cancelled)
+    return report
 
 
 @app.get(

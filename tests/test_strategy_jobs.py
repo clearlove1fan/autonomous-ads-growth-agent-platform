@@ -389,6 +389,51 @@ def test_external_strategy_job_execution_mode_leaves_job_queued_then_worker_comp
     assert completed.result is not None
 
 
+def test_external_strategy_jobs_can_be_processed_via_api() -> None:
+    store = InMemoryStrategyJobStore()
+    settings = Settings(strategy_job_backend="memory", strategy_job_execution_mode="external")
+    api_app.dependency_overrides[get_runtime_settings] = lambda: settings
+    api_app.dependency_overrides[get_runtime_strategy_job_store] = lambda: store
+    try:
+        client = TestClient(api_app)
+        accepted = client.post(
+            "/growth-strategies/jobs",
+            json={"brief": _brief_payload()},
+            headers={"X-Tenant-ID": "tenant_jobs"},
+        )
+        process_response = client.post(
+            "/growth-strategies/jobs/process",
+            params={"limit": "1", "lock_seconds": "60"},
+            headers={
+                "X-Tenant-ID": "tenant_jobs",
+                "X-Worker-ID": "worker_api",
+            },
+        )
+        detail = client.get(
+            accepted.json()["polling_url"],
+            headers={"X-Tenant-ID": "tenant_jobs"},
+        )
+    finally:
+        api_app.dependency_overrides.clear()
+
+    process_payload = process_response.json()
+    detail_payload = detail.json()
+    assert accepted.status_code == 202
+    assert accepted.headers["strategy-job-execution-mode"] == "external"
+    assert process_response.status_code == 200
+    assert process_response.headers["x-tenant-id"] == "tenant_jobs"
+    assert process_response.headers["strategy-jobs-claimed"] == "1"
+    assert process_response.headers["strategy-jobs-completed"] == "1"
+    assert process_response.headers["strategy-jobs-retry-scheduled"] == "0"
+    assert process_response.headers["strategy-jobs-failed"] == "0"
+    assert process_payload["worker_id"] == "worker_api"
+    assert process_payload["job_ids"] == [accepted.json()["job_id"]]
+    assert process_payload["completed"] == 1
+    assert detail.status_code == 200
+    assert detail_payload["status"] == "completed"
+    assert detail_payload["result"]["strategy"]["advertiser_id"] == "adv_fitness_001"
+
+
 def test_running_strategy_job_cancel_is_not_overwritten_by_worker_completion(
     monkeypatch,
 ) -> None:
