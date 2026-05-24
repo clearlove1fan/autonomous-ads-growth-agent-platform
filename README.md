@@ -6,7 +6,7 @@ The platform turns advertiser goals into structured campaign strategies across a
 
 ## Current Status
 
-v0.1 Phase 1 MVP is complete as of 2026-05-18. The current milestone is a deterministic local MVP workflow:
+v0.1 Phase 1 MVP is complete as of 2026-05-18. Phase 2 is adding the local production-architecture skeleton around that product loop. The current deterministic MVP workflow can:
 
 1. Accept an advertiser growth goal through FastAPI or CLI.
 2. Convert the request into a structured advertiser brief.
@@ -30,6 +30,7 @@ v0.1 Phase 1 MVP is complete as of 2026-05-18. The current milestone is a determ
 20. Generate a read-only manual handoff package for approved, dry-run-validated changes.
 21. Record and inspect manual handoff outcomes as operator audit records.
 22. Retrieve learned advertiser memory in a later PostgreSQL-backed strategy run.
+23. Inspect a local ops summary for failed runs, failed jobs, failed outbox events, and feedback loops needing attention.
 
 Phase 1 is intentionally a functional MVP, not a production launch claim. A single advertiser can run the core product loop locally through CLI or FastAPI without external model keys. The system still does not execute live ad spend, enforce real authentication, provide production SLO dashboards, or require GitHub branch protection in repository settings.
 
@@ -232,6 +233,20 @@ curl http://localhost:8000/health/ready
 ```
 
 `/health/live` is a shallow process check. `/health/ready` validates dependencies that are required by the current configuration, such as PostgreSQL-backed persistence or LiteLLM-backed agent reasoning.
+
+Inspect the local operator summary:
+
+```bash
+curl "http://localhost:8000/ops/summary?limit=20" \
+  -H "X-Tenant-ID: tenant_demo"
+
+ads-growth-agent ops-summary --limit 20
+```
+
+The ops summary is a Phase 2 diagnostic read model. It surfaces recent failed
+runs, failed strategy jobs, failed outbox events, and feedback loops whose
+current health needs operator attention, including the primary next command
+when available. It is intentionally not a production SLO dashboard.
 
 Generate a draft growth strategy:
 
@@ -852,6 +867,12 @@ API and CLI runs emit structured JSON logs to stderr. CLI command payloads remai
 - `failed_tool_count`
 - `suite_id`
 - `pass_rate`
+
+For local diagnosis across persisted stores, `GET /ops/summary` and
+`ads-growth-agent ops-summary` return the same compact `OpsSummaryResponse`
+contract. The response includes count headers in the API path so automated
+checks can quickly detect whether failed runs, failed jobs, failed outbox
+events, or feedback attention items exist.
 
 Check the repository-defined services:
 

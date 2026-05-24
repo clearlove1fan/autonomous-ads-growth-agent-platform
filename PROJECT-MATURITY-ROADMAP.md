@@ -63,6 +63,8 @@ Completed:
   original/revision reviews, execution readiness, and persisted dry-run
   validation.
 - Feedback loop summary API and CLI for event-rooted operator status review.
+- Local ops summary API and CLI for failed runs, failed jobs, failed outbox
+  events, and feedback loops needing attention.
 - Feedback handoff package API and CLI for approved dry-run-validated manual
   action review.
 - Feedback handoff record API and CLI for applied, blocked, or skipped manual
@@ -193,6 +195,8 @@ Planned work:
   operator affordances.
 - Feedback loop chain APIs/CLI for baseline outcome and follow-up loop status
   review.
+- Local ops summary APIs/CLI for failed runs, failed strategy jobs, failed
+  outbox events, and feedback attention queues.
 - Feedback handoff package APIs/CLI for approved manual handoff packages.
 - Feedback handoff record APIs/CLI for operator outcome audit.
 - Feedback execution plan APIs/CLI for approved feedback optimization reviews,
@@ -268,6 +272,9 @@ Exit criteria:
 - Strategy generation can be submitted as a pollable job with persisted status.
 - Queued external strategy jobs can be processed in bounded batches through API
   or CLI.
+- A local ops summary can be fetched through API or CLI to inspect failed runs,
+  failed strategy jobs, failed outbox events, and feedback loops needing
+  attention without reading stdout logs or querying the database directly.
 - Alembic migrations create the local database from scratch.
 - Local Docker Compose can run API, Postgres + pgvector, and LiteLLM together.
 

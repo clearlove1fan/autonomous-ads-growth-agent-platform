@@ -41,6 +41,7 @@ PROTECTED_PATHS = {
     "/growth-strategies/jobs/{job_id}/cancel",
     "/growth-strategies/jobs/{job_id}/retry",
     "/growth-strategies/jobs/process",
+    "/ops/summary",
     "/outbox/events",
     "/outbox/events/{outbox_event_id}",
     "/outbox/events/{outbox_event_id}/retry",

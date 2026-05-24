@@ -8,6 +8,8 @@
   idempotency conflict, and performance event conflict.
 - Added optional local API key authentication for product API endpoints while
   keeping health probes public.
+- Added local ops summary API and CLI surfaces for failed runs, failed strategy
+  jobs, failed outbox events, and feedback loops needing operator attention.
 - Added `run_id` filtering for async strategy job discovery in the API, CLI,
   memory store, and PostgreSQL store.
 - Added natural-language async strategy job submission through

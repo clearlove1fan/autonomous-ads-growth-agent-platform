@@ -37,6 +37,7 @@ from ads_growth_agent.contracts import (
     FeedbackHandoffOutcome,
     FeedbackOptimizationReviewDecision,
     GrowthStrategyRequest,
+    OpsSummaryResponse,
     OutboxEventDetailResponse,
     OutboxEventListResponse,
     OutboxEventStatus,
@@ -86,6 +87,7 @@ from ads_growth_agent.feedback_outcome_report import build_campaign_feedback_out
 from ads_growth_agent.feedback_review_store_factory import build_configured_feedback_review_store
 from ads_growth_agent.handoff_memory import schedule_or_record_handoff_memory
 from ads_growth_agent.logging_config import configure_logging
+from ads_growth_agent.ops_summary import build_ops_summary
 from ads_growth_agent.outbox import process_configured_outbox
 from ads_growth_agent.outbox_store_factory import build_configured_outbox_store
 from ads_growth_agent.performance_event_store_factory import (
@@ -95,6 +97,7 @@ from ads_growth_agent.persistence.advertiser_memory_store import AdvertiserMemor
 from ads_growth_agent.persistence.feedback_execution_store import FeedbackExecutionDryRunStatus
 from ads_growth_agent.persistence.knowledge_seed import seed_default_knowledge
 from ads_growth_agent.persistence.outbox_store import OutboxConflictError
+from ads_growth_agent.run_store_factory import build_configured_run_read_store
 from ads_growth_agent.strategy import StrategyGenerationError, generate_growth_strategy
 from ads_growth_agent.strategy_job_store_factory import build_configured_strategy_job_store
 from ads_growth_agent.strategy_job_submission import enqueue_strategy_job
@@ -151,6 +154,7 @@ OUTBOX_REQUESTED_BY_OPTION = typer.Option(
     "--requested-by",
     help="Operator or automation identifier recorded in manual retry metadata.",
 )
+OPS_SUMMARY_LIMIT_OPTION = typer.Option(20, "--limit", min=1, max=100)
 ALLOWED_ADVERTISER_MEMORY_TYPES = {
     "profile",
     "constraint",
@@ -256,6 +260,24 @@ def health() -> None:
             "environment": settings.ads_growth_env,
         }
     )
+
+
+@app.command("ops-summary")
+def ops_summary(limit: int = OPS_SUMMARY_LIMIT_OPTION) -> None:
+    """Print a compact local operator summary from configured stores."""
+    settings = get_settings()
+    summary = build_ops_summary(
+        settings=settings,
+        run_store=build_configured_run_read_store(settings),
+        strategy_job_store=build_configured_strategy_job_store(settings),
+        outbox_store=build_configured_outbox_store(settings),
+        performance_event_store=build_configured_performance_event_store(settings),
+        review_store=build_configured_feedback_review_store(settings),
+        feedback_execution_store=build_configured_feedback_execution_store(settings),
+        handoff_store=build_configured_feedback_handoff_store(settings),
+        limit=limit,
+    )
+    typer.echo(OpsSummaryResponse.model_validate(summary).model_dump_json(indent=2))
 
 
 @app.command()

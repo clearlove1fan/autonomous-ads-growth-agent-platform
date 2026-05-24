@@ -54,6 +54,7 @@ from ads_growth_agent.contracts import (
     GrowthStrategyFromTextResponse,
     GrowthStrategyRequest,
     GrowthStrategyResponse,
+    OpsSummaryResponse,
     OutboxEventDetailResponse,
     OutboxEventListResponse,
     OutboxEventStatus,
@@ -107,6 +108,7 @@ from ads_growth_agent.health import ReadinessResponse, check_readiness
 from ads_growth_agent.idempotency_store_factory import build_configured_idempotency_store
 from ads_growth_agent.logging_config import configure_logging
 from ads_growth_agent.observability import RunContext, create_run_context
+from ads_growth_agent.ops_summary import build_ops_summary
 from ads_growth_agent.outbox import (
     OutboxProcessingReport,
     enqueue_advertiser_memory_write,
@@ -358,6 +360,69 @@ def health_ready(
     if readiness.status != "ok":
         response.status_code = 503
     return readiness
+
+
+@app.get(
+    "/ops/summary",
+    response_model=OpsSummaryResponse,
+    dependencies=[Depends(require_api_auth)],
+)
+def get_ops_summary(
+    response: Response,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+    run_store: Annotated[
+        AgentRunReadStore,
+        Depends(get_runtime_run_read_store),
+    ],
+    job_store: Annotated[
+        StrategyJobStore,
+        Depends(get_runtime_strategy_job_store),
+    ],
+    outbox_store: Annotated[
+        OutboxStore,
+        Depends(get_runtime_outbox_store),
+    ],
+    event_store: Annotated[
+        CampaignPerformanceEventStore,
+        Depends(get_runtime_performance_event_store),
+    ],
+    review_store: Annotated[
+        FeedbackOptimizationReviewStore,
+        Depends(get_runtime_feedback_review_store),
+    ],
+    feedback_execution_store: Annotated[
+        FeedbackExecutionDryRunStore,
+        Depends(get_runtime_feedback_execution_store),
+    ],
+    handoff_store: Annotated[
+        FeedbackHandoffRecordStore,
+        Depends(get_runtime_feedback_handoff_store),
+    ],
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> OpsSummaryResponse:
+    response.headers["X-Tenant-ID"] = settings.tenant_id
+    summary = build_ops_summary(
+        settings=settings,
+        run_store=run_store,
+        strategy_job_store=job_store,
+        outbox_store=outbox_store,
+        performance_event_store=event_store,
+        review_store=review_store,
+        feedback_execution_store=feedback_execution_store,
+        handoff_store=handoff_store,
+        limit=limit,
+    )
+    response.headers["Ops-Failed-Run-Count"] = str(summary.failed_run_count)
+    response.headers["Ops-Failed-Strategy-Job-Count"] = str(
+        summary.failed_strategy_job_count
+    )
+    response.headers["Ops-Failed-Outbox-Event-Count"] = str(
+        summary.failed_outbox_event_count
+    )
+    response.headers["Ops-Feedback-Attention-Count"] = str(
+        summary.feedback_attention_count
+    )
+    return summary
 
 
 def _health_response(settings: Settings) -> HealthResponse:

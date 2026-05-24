@@ -249,6 +249,7 @@ The product aims to create an autonomous agent workflow that can reason over adv
 | NFR-18 | Each agent decision should be traceable | P0 | LangSmith trace includes agent, input, output, and tool calls |
 | NFR-19 | Run quality should be measurable over time | P1 | Evaluation scores can be compared across test cases |
 | NFR-20 | Failures should be diagnosable | P1 | Errors include node name, tool name, state snapshot, and retry count |
+| NFR-31 | Local operators should be able to query urgent runtime state | P1 | Ops summary API/CLI surfaces failed runs, failed jobs, failed outbox events, and feedback loops needing attention |
 
 ### 9.7 Maintainability
 
@@ -343,7 +344,7 @@ flowchart TD
 
 | Component | Responsibility | Current v0.1 Implementation |
 |---|---|---|
-| Experience/API Layer | Accept advertiser requests, return strategy output, expose run, event, draft, review, memory, and outbox APIs | FastAPI endpoints for strategy generation, run detail, retry, resume, campaign performance events, feedback optimization reviews, campaign drafts, advertiser memories, and outbox event operations; CLI for demo, eval, debugging, and operator recovery |
+| Experience/API Layer | Accept advertiser requests, return strategy output, expose run, event, draft, review, memory, outbox, and ops APIs | FastAPI endpoints for strategy generation, run detail, retry, resume, campaign performance events, feedback optimization reviews, campaign drafts, advertiser memories, outbox event operations, and ops summary; CLI for demo, eval, debugging, and operator recovery |
 | Request Context Layer | Resolve tenant scope and duplicate request behavior | `X-Tenant-ID` request override plus optional PostgreSQL idempotency key store |
 | Orchestration Layer | Manage graph state, routing, checkpointing, and revision loop | LangGraph StateGraph with deterministic default nodes and optional Postgres checkpointer |
 | Agent Layer | Perform role-specific planning, retrieval, tool execution, critique, and finalization | Implemented as explicit graph nodes: planner, retriever, tool_executor, critic, finalizer |
@@ -355,7 +356,7 @@ flowchart TD
 | Async Job Layer | Accept long-running strategy requests and expose pollable status | `POST /growth-strategies/jobs`, `GET /growth-strategies/jobs/{job_id}`, protected bounded processing API, in-process background executor, external worker mode, memory/Postgres job store |
 | Feedback Loop Layer | Ingest campaign telemetry and return optimization recommendations | Performance event API, deterministic feedback analyzer, draft-only action plans, optimization drafts, human review records, revision drafts, second-pass revision reviews, individual and filtered review lineage with execution/dry-run audit, execution dry-run validation, operator feedback loop summary, timeline, command center, chain view, manual handoff package, handoff outcome record, optional PostgreSQL persistence, and event-level idempotency |
 | Evaluation Layer | Score output quality and workflow health | Local deterministic eval suite with LangSmith-compatible run metadata |
-| Observability Layer | Trace decisions, tool calls, errors, and state transitions | LangSmith trace IDs plus structured JSON logs and persisted run/event records |
+| Observability Layer | Trace decisions, tool calls, errors, state transitions, and local operator attention queues | LangSmith trace IDs plus structured JSON logs, persisted run/event records, and compact ops summary reads |
 
 ### 10.2 Interface Contracts
 
@@ -390,6 +391,7 @@ flowchart TD
 | CampaignFeedbackHandoffRecordRequest/Response | Feedback Loop Layer | API caller, CLI user | Operator audit record for applied, blocked, or skipped manual handoff outcomes |
 | AdvertiserMemoryDetailResponse | Memory Store | API caller, CLI user | Public source ID, memory type, content, metadata, importance, usage count, and timestamps |
 | OutboxEventDetailResponse/ListResponse | Outbox Store | API caller, CLI user | Tenant-scoped outbox event status, payload, result, error, retry metadata, locks, and timestamps for queued side-effect inspection |
+| OpsSummaryResponse | Ops Summary Builder | API caller, CLI user | Compact local operator view of failed runs, failed strategy jobs, failed outbox events, feedback loops needing attention, backend configuration, and guardrails |
 
 ### 10.3 Strategy Generation Sequence
 
@@ -589,7 +591,7 @@ These decisions close a gap in the original RFC: v0.1 had a technical test plan,
 | Capability | Status | Evidence |
 |---|---|---|
 | FastAPI strategy generation | Implemented | `POST /growth-strategies` returns a validated `GrowthStrategyResponse` |
-| CLI demo and eval | Implemented | `ads-growth-agent demo`, `plan`, `plan-text`, `submit-strategy-job`, `submit-strategy-job-text`, `get-strategy-job`, `process-strategy-jobs`, `list-strategy-jobs`, `get-performance-event`, `list-performance-events`, `get-feedback-action-plan`, `get-feedback-optimization-draft`, `get-feedback-loop-summary`, `get-feedback-loop-timeline`, `get-feedback-loop-command-center`, `get-feedback-loop-chain`, `get-feedback-outcome-report`, `submit-feedback-optimization-review`, `get-feedback-optimization-review`, `list-feedback-optimization-reviews`, `get-feedback-optimization-review-lineage`, `list-feedback-optimization-review-lineages`, `get-feedback-optimization-revision-draft`, `submit-feedback-optimization-revision-review`, `get-feedback-execution-plan`, `get-feedback-handoff-package`, `submit-feedback-handoff-record`, `get-feedback-handoff-record`, `list-feedback-handoff-records`, `dry-run-feedback-execution-plan`, `get-feedback-execution-dry-run`, `list-feedback-execution-dry-runs`, `get-advertiser-memory`, `list-advertiser-memories`, `process-outbox`, `list-outbox-events`, `get-outbox-event`, `retry-outbox-event`, `analyze-performance`, `health`, `seed-knowledge`, and `eval` commands |
+| CLI demo and eval | Implemented | `ads-growth-agent demo`, `plan`, `plan-text`, `submit-strategy-job`, `submit-strategy-job-text`, `get-strategy-job`, `process-strategy-jobs`, `list-strategy-jobs`, `get-performance-event`, `list-performance-events`, `get-feedback-action-plan`, `get-feedback-optimization-draft`, `get-feedback-loop-summary`, `get-feedback-loop-timeline`, `get-feedback-loop-command-center`, `get-feedback-loop-chain`, `get-feedback-outcome-report`, `submit-feedback-optimization-review`, `get-feedback-optimization-review`, `list-feedback-optimization-reviews`, `get-feedback-optimization-review-lineage`, `list-feedback-optimization-review-lineages`, `get-feedback-optimization-revision-draft`, `submit-feedback-optimization-revision-review`, `get-feedback-execution-plan`, `get-feedback-handoff-package`, `submit-feedback-handoff-record`, `get-feedback-handoff-record`, `list-feedback-handoff-records`, `dry-run-feedback-execution-plan`, `get-feedback-execution-dry-run`, `list-feedback-execution-dry-runs`, `get-advertiser-memory`, `list-advertiser-memories`, `process-outbox`, `list-outbox-events`, `get-outbox-event`, `retry-outbox-event`, `ops-summary`, `analyze-performance`, `health`, `seed-knowledge`, and `eval` commands |
 | Deterministic LangGraph workflow | Implemented | Graph nodes run planner, retriever, tool_executor, critic, and finalizer |
 | Internal typed tool registry | Implemented | Unknown tools, invalid params, permission errors, and failures return structured results |
 | LiteLLM gateway | Implemented behind feature flags | Optional LLM planner/critic and structured output fallback route through LiteLLM |
@@ -604,6 +606,7 @@ These decisions close a gap in the original RFC: v0.1 had a technical test plan,
 | Campaign performance feedback loop | Implemented | Performance snapshots produce metrics, health status, matched strategy rules from `feedback_context`, recommendations, guardrails, draft-only action plans, draft-only optimization drafts, human review records, revision drafts and second-pass reviews for `needs_revision` decisions, individual and filtered review lineage with execution/dry-run audit, dry-run execution plans, persisted execution dry-run validation through typed tools, operator feedback loop summaries, timelines, outcome-aware command centers with follow-up optimization re-entry commands for regressed/mixed outcomes, chain views linking baseline/outcome/follow-up status and recommended commands, outcome reports, manual handoff packages, handoff outcome records, and persisted event discovery by advertiser/run/campaign/draft |
 | Advertiser memory review | Implemented as opt-in Postgres backend | Persisted memories can be listed by advertiser/type and inspected by source ID through API/CLI |
 | Outbox side-effect visibility | Implemented as opt-in Postgres backend | Durable outbox events can be listed, inspected, manually retried after terminal failure, and processed in bounded batches through API/CLI |
+| Local ops summary | Implemented | `GET /ops/summary` and `ads-growth-agent ops-summary` return failed runs, failed strategy jobs, failed outbox events, and feedback loops needing attention without requiring direct database inspection |
 | Persisted product loop walkthrough | Implemented as live Postgres verifier | `python scripts/verify_persisted_product_loop.py` validates strategy draft -> feedback event -> optimization review -> revision draft -> revision review -> dry-run execution plan -> persisted execution dry-run validation -> review lineage and filtered lineage list with execution audit -> feedback loop summary, timeline, outcome-aware command center, and chain view -> manual handoff package -> handoff outcome record -> follow-up performance snapshot -> outcome report -> performance and handoff outbox memories -> API/CLI reads -> later RAG retrieval |
 | Performance event idempotency | Implemented | Same event payload replays persisted analysis; same event ID with changed payload returns `409` |
 | Dependency readiness checks | Implemented | `/health/live` is shallow; `/health/ready` checks configured Postgres and LiteLLM dependencies |
@@ -890,6 +893,7 @@ The first version should prioritize a complete, traceable, and recoverable end-t
 | 2026-05-22 | Add feedback loop chain recommended command | Chain views now include the concrete API/CLI command matching the recommended focus | Accepted |
 | 2026-05-22 | Add outbox ops visibility | Operators can inspect, retry, and process durable side-effect events through API/CLI without relying only on direct database inspection | Accepted |
 | 2026-05-24 | Add strategy job process API | External strategy-job execution mode can now claim and process bounded queued jobs through protected API as well as CLI | Accepted |
+| 2026-05-24 | Add local ops summary | Operators can query failed runs, failed strategy jobs, failed outbox events, and feedback attention items through one API/CLI read | Accepted |
 | 2026-05-20 | Add feedback manual handoff package | Approved reviews can produce read-only manual handoff packages with latest dry-run validation, checklist, and guardrails | Accepted |
 | 2026-05-20 | Add feedback handoff outcome records | Operators can record applied, blocked, or skipped manual handoff results as persisted audit records without live mutation | Accepted |
 | 2026-05-21 | Add handoff outcome memory | Applied, blocked, or skipped manual handoff outcomes can be persisted directly or queued through the outbox as learned advertiser memory | Accepted |

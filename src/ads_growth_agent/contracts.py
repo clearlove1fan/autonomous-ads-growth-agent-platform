@@ -673,6 +673,103 @@ class OutboxEventListResponse(BaseModel):
     aggregate_id: str | None = Field(default=None, min_length=1, max_length=160)
 
 
+class OpsRunSummary(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    run_id: str = Field(min_length=1, max_length=128)
+    execution_id: str = Field(min_length=1, max_length=128)
+    strategy_id: str = Field(min_length=1, max_length=128)
+    advertiser_id: str = Field(min_length=1, max_length=128)
+    objective: CampaignObjective
+    status: Literal["running", "completed", "failed"]
+    trace_id: str = Field(min_length=1, max_length=128)
+    error_summary: list[str] = Field(default_factory=list)
+    created_at: datetime
+    completed_at: datetime | None = None
+
+
+class OpsStrategyJobSummary(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    job_id: str = Field(min_length=1, max_length=128)
+    status: StrategyJobStatus
+    strategy_id: str = Field(min_length=1, max_length=128)
+    advertiser_id: str = Field(min_length=1, max_length=128)
+    objective: CampaignObjective
+    run_id: str = Field(min_length=1, max_length=128)
+    trace_id: str = Field(min_length=1, max_length=128)
+    attempt_count: int = Field(ge=0)
+    max_attempts: int = Field(gt=0)
+    next_attempt_at: datetime | None = None
+    locked_by: str | None = Field(default=None, min_length=1, max_length=160)
+    locked_until: datetime | None = None
+    error_code: str | None = Field(default=None, max_length=160)
+    error_message: str | None = Field(default=None, max_length=500)
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None = None
+
+
+class OpsOutboxEventSummary(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    outbox_event_id: str = Field(min_length=1, max_length=160)
+    event_type: str = Field(min_length=1, max_length=160)
+    aggregate_type: str = Field(min_length=1, max_length=120)
+    aggregate_id: str = Field(min_length=1, max_length=160)
+    status: OutboxEventStatus
+    attempt_count: int = Field(ge=0)
+    max_attempts: int = Field(gt=0)
+    next_attempt_at: datetime | None = None
+    locked_by: str | None = Field(default=None, min_length=1, max_length=160)
+    locked_until: datetime | None = None
+    error_type: str | None = Field(default=None, max_length=160)
+    error_message: str | None = Field(default=None, max_length=500)
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None = None
+
+
+class OpsFeedbackAttentionSummary(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    event_id: str = Field(min_length=1, max_length=128)
+    feedback_id: str = Field(min_length=1, max_length=160)
+    advertiser_id: str = Field(min_length=1, max_length=128)
+    run_id: str | None = Field(default=None, min_length=1, max_length=128)
+    campaign_id: str | None = Field(default=None, min_length=1, max_length=128)
+    draft_id: str | None = Field(default=None, min_length=1, max_length=160)
+    health_status: FeedbackHealthStatus
+    current_stage: str = Field(min_length=1, max_length=80)
+    primary_command_id: str | None = Field(default=None, min_length=1, max_length=180)
+    primary_command_label: str | None = Field(default=None, min_length=1, max_length=160)
+    primary_command_api_method: str | None = Field(default=None, min_length=1, max_length=8)
+    primary_command_api_path: str | None = Field(default=None, min_length=1, max_length=320)
+    primary_command_cli: list[str] = Field(default_factory=list)
+    occurred_at: datetime
+    created_at: datetime
+
+
+class OpsSummaryResponse(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    tenant_id: str = Field(min_length=1, max_length=128)
+    generated_at: datetime
+    limit: int = Field(ge=1, le=100)
+    failed_run_count: int = Field(ge=0)
+    failed_strategy_job_count: int = Field(ge=0)
+    failed_outbox_event_count: int = Field(ge=0)
+    feedback_attention_count: int = Field(ge=0)
+    failed_runs: list[OpsRunSummary] = Field(default_factory=list)
+    failed_strategy_jobs: list[OpsStrategyJobSummary] = Field(default_factory=list)
+    failed_outbox_events: list[OpsOutboxEventSummary] = Field(default_factory=list)
+    feedback_needing_attention: list[OpsFeedbackAttentionSummary] = Field(
+        default_factory=list
+    )
+    backends: dict[str, str] = Field(default_factory=dict)
+    guardrails: list[str] = Field(default_factory=list)
+
+
 class StrategyJobCancelRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
