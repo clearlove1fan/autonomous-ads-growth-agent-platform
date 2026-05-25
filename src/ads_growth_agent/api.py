@@ -4,7 +4,7 @@ from collections.abc import Callable
 from typing import Annotated, Literal
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query, Response
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from ads_growth_agent import __version__
 from ads_growth_agent.advertiser_memory_store_factory import (
@@ -14,7 +14,6 @@ from ads_growth_agent.brief_intake import parse_advertiser_brief
 from ads_growth_agent.campaign_draft_store_factory import build_configured_campaign_draft_store
 from ads_growth_agent.config import Settings, get_settings
 from ads_growth_agent.contracts import (
-    AdvertiserBrief,
     AdvertiserBriefIntakeRequest,
     AdvertiserBriefIntakeResponse,
     AdvertiserMemoryDetailResponse,
@@ -102,7 +101,6 @@ from ads_growth_agent.feedback_loop_summary import build_campaign_feedback_loop_
 from ads_growth_agent.feedback_loop_timeline import build_campaign_feedback_loop_timeline
 from ads_growth_agent.feedback_outcome_report import build_campaign_feedback_outcome_report
 from ads_growth_agent.feedback_review_store_factory import build_configured_feedback_review_store
-from ads_growth_agent.graph import strategy_id_for_brief
 from ads_growth_agent.handoff_memory import schedule_or_record_handoff_memory
 from ads_growth_agent.health import ReadinessResponse, check_readiness
 from ads_growth_agent.idempotency_store_factory import build_configured_idempotency_store
@@ -143,6 +141,11 @@ from ads_growth_agent.persistence.performance_event_store import (
 )
 from ads_growth_agent.persistence.run_read_store import AgentRunReadStore
 from ads_growth_agent.persistence.strategy_job_store import StrategyJobStore
+from ads_growth_agent.run_lifecycle import (
+    RunLifecycleError,
+    resumable_brief_from_run,
+    validate_retry_request_for_run,
+)
 from ads_growth_agent.run_store_factory import build_configured_run_read_store
 from ads_growth_agent.strategy import StrategyGenerationError, generate_growth_strategy
 from ads_growth_agent.strategy_job_store_factory import build_configured_strategy_job_store
@@ -2444,28 +2447,10 @@ def resume_agent_run(
                 "run_id": run_id,
             },
         )
-    if original_run.status == "completed":
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "message": "Completed runs cannot be resumed.",
-                "error_code": "RUN_NOT_RESUMABLE",
-                "run_id": run_id,
-                "status": original_run.status,
-            },
-        )
-
-    brief = _brief_from_run_metadata(original_run)
-    if strategy_id_for_brief(brief) != original_run.strategy_id:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "message": "Stored run brief does not match the original strategy identity.",
-                "error_code": "RUN_BRIEF_MISMATCH",
-                "run_id": run_id,
-                "strategy_id": original_run.strategy_id,
-            },
-        )
+    try:
+        brief = resumable_brief_from_run(original_run)
+    except RunLifecycleError as exc:
+        raise _run_lifecycle_http_exception(exc) from exc
 
     run_context = create_run_context(
         run_id=original_run.run_id,
@@ -2507,30 +2492,10 @@ def retry_agent_run(
                 "run_id": run_id,
             },
         )
-    if original_run.status != "failed":
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "message": "Only failed runs can be retried.",
-                "error_code": "RUN_NOT_RETRYABLE",
-                "run_id": run_id,
-                "status": original_run.status,
-            },
-        )
-    if (
-        request.brief.advertiser_id != original_run.advertiser_id
-        or request.brief.objective != original_run.objective
-    ):
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "message": "Retry brief must match the original run advertiser and objective.",
-                "error_code": "RETRY_BRIEF_MISMATCH",
-                "run_id": run_id,
-                "advertiser_id": original_run.advertiser_id,
-                "objective": original_run.objective.value,
-            },
-        )
+    try:
+        validate_retry_request_for_run(original_run, request)
+    except RunLifecycleError as exc:
+        raise _run_lifecycle_http_exception(exc) from exc
 
     return _generate_growth_strategy_response(request, settings=settings)
 
@@ -2620,28 +2585,8 @@ def _generate_growth_strategy_response(
         ) from exc
 
 
-def _brief_from_run_metadata(run: AgentRunDetailResponse) -> AdvertiserBrief:
-    brief_json = run.metadata.get("advertiser_brief")
-    if not isinstance(brief_json, dict):
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "message": "Run does not contain a stored advertiser brief.",
-                "error_code": "RUN_BRIEF_NOT_AVAILABLE",
-                "run_id": run.run_id,
-            },
-        )
-    try:
-        return AdvertiserBrief.model_validate(brief_json)
-    except ValidationError as exc:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "message": "Stored advertiser brief is no longer valid.",
-                "error_code": "RUN_BRIEF_NOT_AVAILABLE",
-                "run_id": run.run_id,
-            },
-        ) from exc
+def _run_lifecycle_http_exception(exc: RunLifecycleError) -> HTTPException:
+    return HTTPException(status_code=409, detail=exc.detail())
 
 
 def _run_id_from_http_error(exc: HTTPException) -> str | None:

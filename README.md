@@ -424,11 +424,13 @@ RUN_PERSISTENCE_BACKEND=postgres ads-growth-agent plan examples/fitness_app_brie
 
 When run persistence is enabled, each execution is first recorded as `running` before LangGraph starts. The same row is then updated to `completed` or `failed`, with node-level rows written to `agent_run_steps` once terminal state is reached. This lifecycle is the foundation for later resume and retry endpoints.
 
-Persisted runs can be queried through the API:
+Persisted runs can be queried through the API or CLI:
 
 ```bash
 curl http://localhost:8000/runs/run_abc123 \
   -H "X-Tenant-ID: tenant_demo"
+
+RUN_PERSISTENCE_BACKEND=postgres ads-growth-agent get-run run_abc123
 ```
 
 The response includes lifecycle status, `strategy_id`, `execution_id`, trace metadata, the final strategy when completed, error summaries when failed, and ordered node step records.
@@ -440,6 +442,9 @@ curl -X POST http://localhost:8000/runs/run_failed_abc/retry \
   -H "Content-Type: application/json" \
   -H "X-Tenant-ID: tenant_demo" \
   -d '{"brief":{"advertiser_id":"adv_fitness_001","product_name":"FitTrack Pro","product_category":"fitness app","objective":"registrations","budget":"2000.00","currency":"USD","duration_days":14,"target_market":"United States","primary_kpi":"trial registrations"}}'
+
+RUN_PERSISTENCE_BACKEND=postgres \
+  ads-growth-agent retry-run run_failed_abc examples/fitness_app_brief.json
 ```
 
 Retry is intentionally separate from resume: the original failed run remains unchanged, and the retry creates a fresh `run_metadata.run_id` under the same stable strategy identity. Only failed runs are retryable, and the retry brief must match the original run's advertiser and objective.
@@ -449,6 +454,8 @@ Failed or running persisted runs can also be resumed under the same execution ID
 ```bash
 curl -X POST http://localhost:8000/runs/run_failed_abc/resume \
   -H "X-Tenant-ID: tenant_demo"
+
+RUN_PERSISTENCE_BACKEND=postgres ads-growth-agent resume-run run_failed_abc
 ```
 
 Resume uses the original `advertiser_brief` stored in `agent_runs.metadata`, rejects completed runs, and returns the normal `GrowthStrategyResponse` with `Resumed-Run-ID` and `Resume-Mode` headers. If `GRAPH_CHECKPOINTER_BACKEND=postgres`, the same LangGraph checkpoint thread is reused; otherwise v0.1 resume is same-run replay with honest API semantics.

@@ -583,6 +583,165 @@ def test_retry_agent_run_api_rejects_brief_identity_mismatch() -> None:
     assert response.json()["detail"]["error_code"] == "RETRY_BRIEF_MISMATCH"
 
 
+def test_get_agent_run_cli_returns_detail(monkeypatch) -> None:
+    growth_response = generate_mock_growth_strategy(
+        AdvertiserBrief.model_validate(_brief_payload())
+    )
+    failed_run = _run_detail_from_growth_response(growth_response, status="failed")
+    store = FakeRunReadStore(failed_run)
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.get_settings",
+        lambda: Settings(run_persistence_backend="postgres"),
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_run_read_store",
+        lambda settings: store,
+    )
+
+    result = CliRunner().invoke(cli_app, ["get-run", failed_run.run_id])
+
+    payload = json.loads(result.stdout)
+    assert result.exit_code == 0
+    assert store.requested_run_ids == [failed_run.run_id]
+    assert payload["run_id"] == failed_run.run_id
+    assert payload["status"] == "failed"
+    assert payload["error_summary"] == ["original run failed"]
+
+
+def test_resume_agent_run_cli_reuses_original_execution(monkeypatch) -> None:
+    original_response = generate_mock_growth_strategy(
+        AdvertiserBrief.model_validate(_brief_payload())
+    )
+    failed_run = _run_detail_from_growth_response(original_response, status="failed")
+    store = FakeRunReadStore(failed_run)
+    captured: dict[str, str] = {}
+
+    def fake_generate_growth_strategy(
+        brief: AdvertiserBrief,
+        *,
+        settings: Settings,
+        run_context,
+    ):
+        response = generate_mock_growth_strategy(brief)
+        captured["advertiser_id"] = brief.advertiser_id
+        captured["run_id"] = run_context.run_id
+        captured["strategy_id"] = run_context.strategy_id
+        captured["trace_id"] = run_context.trace_id
+        return response.model_copy(
+            update={
+                "run_metadata": response.run_metadata.model_copy(
+                    update={
+                        "run_id": run_context.run_id,
+                        "execution_id": run_context.run_id,
+                        "strategy_id": run_context.strategy_id,
+                        "trace_id": run_context.trace_id,
+                    }
+                )
+            }
+        )
+
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.get_settings",
+        lambda: Settings(run_persistence_backend="postgres"),
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_run_read_store",
+        lambda settings: store,
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.generate_growth_strategy",
+        fake_generate_growth_strategy,
+    )
+
+    result = CliRunner().invoke(cli_app, ["resume-run", failed_run.run_id])
+
+    payload = json.loads(result.stdout)
+    assert result.exit_code == 0, result.output
+    assert store.requested_run_ids == [failed_run.run_id]
+    assert captured == {
+        "advertiser_id": "adv_fitness_001",
+        "run_id": failed_run.run_id,
+        "strategy_id": failed_run.strategy_id,
+        "trace_id": failed_run.trace_id,
+    }
+    assert payload["run_metadata"]["run_id"] == failed_run.run_id
+    assert payload["run_metadata"]["strategy_id"] == failed_run.strategy_id
+    assert payload["run_metadata"]["trace_id"] == failed_run.trace_id
+
+
+def test_retry_agent_run_cli_retries_failed_run_from_brief_file(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    original_response = generate_mock_growth_strategy(
+        AdvertiserBrief.model_validate(_brief_payload())
+    )
+    failed_run = _run_detail_from_growth_response(original_response, status="failed")
+    retried_response = generate_mock_growth_strategy(
+        AdvertiserBrief.model_validate(_brief_payload())
+    )
+    store = FakeRunReadStore(failed_run)
+    brief_file = tmp_path / "brief.json"
+    brief_file.write_text(json.dumps({"brief": _brief_payload()}))
+    captured: dict[str, str] = {}
+
+    def fake_generate_growth_strategy(
+        brief: AdvertiserBrief,
+        *,
+        settings: Settings,
+    ):
+        captured["advertiser_id"] = brief.advertiser_id
+        return retried_response
+
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.get_settings",
+        lambda: Settings(run_persistence_backend="postgres"),
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_run_read_store",
+        lambda settings: store,
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.generate_growth_strategy",
+        fake_generate_growth_strategy,
+    )
+
+    result = CliRunner().invoke(cli_app, ["retry-run", failed_run.run_id, str(brief_file)])
+
+    payload = json.loads(result.stdout)
+    assert result.exit_code == 0, result.output
+    assert store.requested_run_ids == [failed_run.run_id]
+    assert captured == {"advertiser_id": "adv_fitness_001"}
+    assert payload["run_metadata"]["run_id"] == retried_response.run_metadata.run_id
+    assert payload["run_metadata"]["run_id"] != failed_run.run_id
+
+
+def test_retry_agent_run_cli_rejects_non_failed_run(monkeypatch, tmp_path) -> None:
+    completed_response = generate_mock_growth_strategy(
+        AdvertiserBrief.model_validate(_brief_payload())
+    )
+    completed_run = _run_detail_from_growth_response(completed_response)
+    store = FakeRunReadStore(completed_run)
+    brief_file = tmp_path / "brief.json"
+    brief_file.write_text(json.dumps({"brief": _brief_payload()}))
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.get_settings",
+        lambda: Settings(run_persistence_backend="postgres"),
+    )
+    monkeypatch.setattr(
+        "ads_growth_agent.cli.build_configured_run_read_store",
+        lambda settings: store,
+    )
+
+    result = CliRunner().invoke(
+        cli_app,
+        ["retry-run", completed_run.run_id, str(brief_file)],
+    )
+
+    assert result.exit_code == 1
+    assert "RUN_NOT_RETRYABLE" in result.stderr
+
+
 def test_plan_cli_accepts_brief_file(tmp_path) -> None:
     brief_file = tmp_path / "brief.json"
     brief_file.write_text(json.dumps(_brief_payload()))

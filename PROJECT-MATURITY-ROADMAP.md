@@ -50,7 +50,7 @@ Completed:
   long-term memory review.
 - Optional PostgreSQL API idempotency for duplicate request replay and conflict detection.
 - Optional LangGraph memory/PostgreSQL checkpointer for durable graph state.
-- Run detail, retry, and resume APIs.
+- Run detail, retry, and resume APIs/CLI.
 - Campaign performance event ingestion and deterministic feedback analysis.
 - Campaign performance event detail/list APIs and CLI for feedback review.
 - Draft-only feedback action plan API and CLI for ranked next-step review.
@@ -175,7 +175,7 @@ Planned work:
 - API idempotency key for strategy generation.
 - Tenant-aware request context.
 - Repository/service layer around persistence.
-- Run detail, retry, and resume APIs.
+- Run detail, retry, and resume APIs/CLI.
 - Campaign performance event persistence and idempotency.
 - Campaign performance event discovery APIs/CLI with advertiser, run, campaign,
   draft, and event-type filters.
@@ -268,7 +268,8 @@ Exit criteria:
   package -> handoff outcome record -> follow-up performance snapshot -> outcome
   report -> performance and handoff outbox memories -> API/CLI reads -> later
   RAG retrieval.
-- Failed runs can be retried and failed/running runs can be resumed with clear semantics.
+- Failed runs can be inspected, retried, and resumed through API or CLI with
+  clear semantics.
 - Strategy generation can be submitted as a pollable job with persisted status.
 - Queued external strategy jobs can be processed in bounded batches through API
   or CLI.

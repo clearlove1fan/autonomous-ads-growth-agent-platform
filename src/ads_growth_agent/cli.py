@@ -13,12 +13,13 @@ from ads_growth_agent.advertiser_memory_store_factory import (
 )
 from ads_growth_agent.brief_intake import parse_advertiser_brief
 from ads_growth_agent.campaign_draft_store_factory import build_configured_campaign_draft_store
-from ads_growth_agent.config import get_settings
+from ads_growth_agent.config import Settings, get_settings
 from ads_growth_agent.contracts import (
     AdvertiserBrief,
     AdvertiserBriefIntakeRequest,
     AdvertiserMemoryListResponse,
     AdvertiserMemoryType,
+    AgentRunDetailResponse,
     CampaignDraftListResponse,
     CampaignFeedbackExecutionDryRunListResponse,
     CampaignFeedbackHandoffPackageResponse,
@@ -87,6 +88,7 @@ from ads_growth_agent.feedback_outcome_report import build_campaign_feedback_out
 from ads_growth_agent.feedback_review_store_factory import build_configured_feedback_review_store
 from ads_growth_agent.handoff_memory import schedule_or_record_handoff_memory
 from ads_growth_agent.logging_config import configure_logging
+from ads_growth_agent.observability import create_run_context
 from ads_growth_agent.ops_summary import build_ops_summary
 from ads_growth_agent.outbox import process_configured_outbox
 from ads_growth_agent.outbox_store_factory import build_configured_outbox_store
@@ -97,6 +99,11 @@ from ads_growth_agent.persistence.advertiser_memory_store import AdvertiserMemor
 from ads_growth_agent.persistence.feedback_execution_store import FeedbackExecutionDryRunStatus
 from ads_growth_agent.persistence.knowledge_seed import seed_default_knowledge
 from ads_growth_agent.persistence.outbox_store import OutboxConflictError
+from ads_growth_agent.run_lifecycle import (
+    RunLifecycleError,
+    resumable_brief_from_run,
+    validate_retry_request_for_run,
+)
 from ads_growth_agent.run_store_factory import build_configured_run_read_store
 from ads_growth_agent.strategy import StrategyGenerationError, generate_growth_strategy
 from ads_growth_agent.strategy_job_store_factory import build_configured_strategy_job_store
@@ -126,6 +133,14 @@ STRATEGY_JOB_ADVERTISER_ID_OPTION = typer.Option(None, "--advertiser-id")
 STRATEGY_JOB_RUN_ID_OPTION = typer.Option(None, "--run-id")
 STRATEGY_JOB_LIST_LIMIT_OPTION = typer.Option(50, "--limit", min=1, max=100)
 STRATEGY_JOB_ID_ARGUMENT = typer.Argument(..., help="Strategy job ID.")
+RUN_ID_ARGUMENT = typer.Argument(..., help="Agent run ID.")
+RUN_RETRY_BRIEF_FILE_ARGUMENT = typer.Argument(
+    ...,
+    exists=True,
+    dir_okay=False,
+    readable=True,
+    help="Path to an advertiser brief JSON file for the retry execution.",
+)
 STRATEGY_JOB_REQUESTED_BY_OPTION = typer.Option(
     "cli",
     "--requested-by",
@@ -278,6 +293,71 @@ def ops_summary(limit: int = OPS_SUMMARY_LIMIT_OPTION) -> None:
         limit=limit,
     )
     typer.echo(OpsSummaryResponse.model_validate(summary).model_dump_json(indent=2))
+
+
+@app.command("get-run")
+def get_run(run_id: str = RUN_ID_ARGUMENT) -> None:
+    """Fetch one persisted agent run by ID."""
+    settings = get_settings()
+    run = _get_persisted_run_or_exit(run_id, settings=settings)
+    typer.echo(run.model_dump_json(indent=2))
+
+
+@app.command("resume-run")
+def resume_run(run_id: str = RUN_ID_ARGUMENT) -> None:
+    """Resume a failed or running persisted run with the same execution ID."""
+    try:
+        settings = get_settings()
+        original_run = _get_persisted_run_or_exit(run_id, settings=settings)
+        brief = resumable_brief_from_run(original_run)
+        run_context = create_run_context(
+            run_id=original_run.run_id,
+            strategy_id=original_run.strategy_id,
+            trace_id=original_run.trace_id,
+            settings=settings,
+        )
+        response = generate_growth_strategy(
+            brief,
+            settings=settings,
+            run_context=run_context,
+        )
+    except RunLifecycleError as exc:
+        typer.echo(json.dumps(exc.detail(), indent=2), err=True)
+        raise typer.Exit(1) from exc
+    except StrategyGenerationError as exc:
+        typer.echo(f"Strategy generation failed: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(response.model_dump_json(indent=2))
+
+
+@app.command("retry-run")
+def retry_run(
+    run_id: str = RUN_ID_ARGUMENT,
+    brief_file: Path = RUN_RETRY_BRIEF_FILE_ARGUMENT,
+) -> None:
+    """Retry a failed persisted run as a fresh execution."""
+    try:
+        settings = get_settings()
+        original_run = _get_persisted_run_or_exit(run_id, settings=settings)
+        payload = json.loads(brief_file.read_text())
+        request = _parse_strategy_request(payload)
+        validate_retry_request_for_run(original_run, request)
+        response = generate_growth_strategy(request.brief, settings=settings)
+    except json.JSONDecodeError as exc:
+        typer.echo(f"Invalid JSON: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    except ValidationError as exc:
+        typer.echo(_validation_errors_json(exc), err=True)
+        raise typer.Exit(2) from exc
+    except RunLifecycleError as exc:
+        typer.echo(json.dumps(exc.detail(), indent=2), err=True)
+        raise typer.Exit(1) from exc
+    except StrategyGenerationError as exc:
+        typer.echo(f"Strategy generation failed: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(response.model_dump_json(indent=2))
 
 
 @app.command()
@@ -1470,6 +1550,19 @@ def _parse_strategy_request(payload: object) -> GrowthStrategyRequest:
     if isinstance(payload, dict) and "brief" in payload:
         return GrowthStrategyRequest.model_validate(payload)
     return GrowthStrategyRequest(brief=AdvertiserBrief.model_validate(payload))
+
+
+def _get_persisted_run_or_exit(
+    run_id: str,
+    *,
+    settings: Settings,
+) -> AgentRunDetailResponse:
+    store = build_configured_run_read_store(settings)
+    run = store.get_run(run_id)
+    if run is None:
+        typer.echo(f"Run not found: {run_id}", err=True)
+        raise typer.Exit(1)
+    return run
 
 
 def _safe_database_url(database_url: str) -> str:

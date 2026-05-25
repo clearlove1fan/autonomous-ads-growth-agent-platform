@@ -12,7 +12,7 @@
 | DRI | TBD |
 | Reviewers | Product, Ads Engineering, ML Platform, Data Engineering, Privacy/Safety, LLMOps |
 | Audience | Product, Engineering, ML/LLMOps, Data, Ads Platform, Leadership |
-| Last Updated | 2026-05-24 |
+| Last Updated | 2026-05-25 |
 
 ### 1.1 Review Protocol
 
@@ -591,15 +591,15 @@ These decisions close a gap in the original RFC: v0.1 had a technical test plan,
 | Capability | Status | Evidence |
 |---|---|---|
 | FastAPI strategy generation | Implemented | `POST /growth-strategies` returns a validated `GrowthStrategyResponse` |
-| CLI demo and eval | Implemented | `ads-growth-agent demo`, `plan`, `plan-text`, `submit-strategy-job`, `submit-strategy-job-text`, `get-strategy-job`, `process-strategy-jobs`, `list-strategy-jobs`, `get-performance-event`, `list-performance-events`, `get-feedback-action-plan`, `get-feedback-optimization-draft`, `get-feedback-loop-summary`, `get-feedback-loop-timeline`, `get-feedback-loop-command-center`, `get-feedback-loop-chain`, `get-feedback-outcome-report`, `submit-feedback-optimization-review`, `get-feedback-optimization-review`, `list-feedback-optimization-reviews`, `get-feedback-optimization-review-lineage`, `list-feedback-optimization-review-lineages`, `get-feedback-optimization-revision-draft`, `submit-feedback-optimization-revision-review`, `get-feedback-execution-plan`, `get-feedback-handoff-package`, `submit-feedback-handoff-record`, `get-feedback-handoff-record`, `list-feedback-handoff-records`, `dry-run-feedback-execution-plan`, `get-feedback-execution-dry-run`, `list-feedback-execution-dry-runs`, `get-advertiser-memory`, `list-advertiser-memories`, `process-outbox`, `list-outbox-events`, `get-outbox-event`, `retry-outbox-event`, `ops-summary`, `analyze-performance`, `health`, `seed-knowledge`, and `eval` commands |
+| CLI demo and eval | Implemented | `ads-growth-agent demo`, `plan`, `plan-text`, `get-run`, `resume-run`, `retry-run`, `submit-strategy-job`, `submit-strategy-job-text`, `get-strategy-job`, `process-strategy-jobs`, `list-strategy-jobs`, `get-performance-event`, `list-performance-events`, `get-feedback-action-plan`, `get-feedback-optimization-draft`, `get-feedback-loop-summary`, `get-feedback-loop-timeline`, `get-feedback-loop-command-center`, `get-feedback-loop-chain`, `get-feedback-outcome-report`, `submit-feedback-optimization-review`, `get-feedback-optimization-review`, `list-feedback-optimization-reviews`, `get-feedback-optimization-review-lineage`, `list-feedback-optimization-review-lineages`, `get-feedback-optimization-revision-draft`, `submit-feedback-optimization-revision-review`, `get-feedback-execution-plan`, `get-feedback-handoff-package`, `submit-feedback-handoff-record`, `get-feedback-handoff-record`, `list-feedback-handoff-records`, `dry-run-feedback-execution-plan`, `get-feedback-execution-dry-run`, `list-feedback-execution-dry-runs`, `get-advertiser-memory`, `list-advertiser-memories`, `process-outbox`, `list-outbox-events`, `get-outbox-event`, `retry-outbox-event`, `ops-summary`, `analyze-performance`, `health`, `seed-knowledge`, and `eval` commands |
 | Deterministic LangGraph workflow | Implemented | Graph nodes run planner, retriever, tool_executor, critic, and finalizer |
 | Internal typed tool registry | Implemented | Unknown tools, invalid params, permission errors, and failures return structured results |
 | LiteLLM gateway | Implemented behind feature flags | Optional LLM planner/critic and structured output fallback route through LiteLLM |
 | RAG and advertiser memory | Implemented as default in-memory plus optional Postgres store | Seeded knowledge, performance and handoff outcome memory writes, memory retrieval, retrieval events, and Postgres adapter exist |
 | Run lifecycle persistence | Implemented as opt-in Postgres backend | `agent_runs` and `agent_run_steps` record running, completed, and failed executions |
-| Run detail API | Implemented | `GET /runs/{run_id}` returns status, strategy/error, metadata, and steps |
-| Retry API | Implemented | Failed runs can be retried as a new execution under the same strategy identity |
-| Resume API | Implemented with honest v0.1 semantics | Failed/running runs reuse the same run ID; Postgres checkpointer enables checkpoint-thread reuse |
+| Run detail API/CLI | Implemented | `GET /runs/{run_id}` and `ads-growth-agent get-run` return status, strategy/error, metadata, and steps |
+| Retry API/CLI | Implemented | Failed runs can be retried as a new execution under the same strategy identity through `POST /runs/{run_id}/retry` or `ads-growth-agent retry-run` |
+| Resume API/CLI | Implemented with honest v0.1 semantics | Failed/running runs reuse the same run ID through `POST /runs/{run_id}/resume` or `ads-growth-agent resume-run`; Postgres checkpointer enables checkpoint-thread reuse |
 | Async strategy job API | Implemented with v0.1 in-process executor and bounded external processing | Jobs are queued through `/growth-strategies/jobs` or `/growth-strategies/jobs/from-text`, executed by FastAPI background tasks by default, pollable through job detail/list APIs, and processable in bounded batches through `/growth-strategies/jobs/process` when external mode is enabled |
 | API idempotency | Implemented as opt-in Postgres backend | Same key/body replays response; same key/different body returns conflict |
 | Campaign draft persistence | Implemented as opt-in Postgres backend | Drafts remain `status=draft`, are queryable through API/CLI for review, and no live spend action is executed |
@@ -894,6 +894,7 @@ The first version should prioritize a complete, traceable, and recoverable end-t
 | 2026-05-22 | Add outbox ops visibility | Operators can inspect, retry, and process durable side-effect events through API/CLI without relying only on direct database inspection | Accepted |
 | 2026-05-24 | Add strategy job process API | External strategy-job execution mode can now claim and process bounded queued jobs through protected API as well as CLI | Accepted |
 | 2026-05-24 | Add local ops summary | Operators can query failed runs, failed strategy jobs, failed outbox events, and feedback attention items through one API/CLI read | Accepted |
+| 2026-05-25 | Add run lifecycle CLI | Operators can inspect persisted runs, resume failed/running runs, and retry failed runs from CLI without going through HTTP | Accepted |
 | 2026-05-20 | Add feedback manual handoff package | Approved reviews can produce read-only manual handoff packages with latest dry-run validation, checklist, and guardrails | Accepted |
 | 2026-05-20 | Add feedback handoff outcome records | Operators can record applied, blocked, or skipped manual handoff results as persisted audit records without live mutation | Accepted |
 | 2026-05-21 | Add handoff outcome memory | Applied, blocked, or skipped manual handoff outcomes can be persisted directly or queued through the outbox as learned advertiser memory | Accepted |
