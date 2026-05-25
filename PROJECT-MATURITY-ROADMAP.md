@@ -8,10 +8,10 @@ This roadmap defines the order in which the Autonomous Ads Growth Agent Platform
 |---|---:|---:|---|
 | Interview-quality technical project | 90-95% | 85-90% | Phase 1 MVP complete for v0.1 |
 | Engineering workflow and quality gates | 80%+ | 75%+ | CI split, lock, release notes, and policy docs added; branch protection blocked by GitHub plan |
-| Production architecture skeleton | 68-72% | 75-80% | In progress |
+| Production architecture skeleton | 80-85% | 75-80% | Phase 2 functionally complete |
 | True production-ready system | 15-20% | 60%+ for this repo | Early |
 
-These numbers are intentionally conservative. The project now has a credible agent-runtime and production-skeleton foundation, including persistence, tenant scoping, retry/resume, checkpointing, async strategy jobs with API/CLI worker processing, event feedback, feedback action plans, feedback optimization drafts, persisted feedback review decisions, revision drafts and second-pass reviews for `needs_revision` reviews, individual and filtered review lineage with execution/dry-run audit, feedback loop summaries, timelines, outcome-aware command centers, chain views, manual handoff packages, handoff outcome records, persisted handoff outcome memory, persisted dry-run execution validation, performance event discovery, advertiser memory write/read surfaces, durable outbox visibility and manual retry surfaces, dependency locking, explicit CI quality gates, a deterministic one-command MVP demo, local agent evals, curated positive/negative demo verifiers, a persisted product loop verifier, and an optional local API key boundary. Phase 1 is complete for the v0.1 MVP, while branch protection remains a GitHub repository setting tracked in Phase 1.5 and is currently blocked for the private repo by GitHub plan limits. The project should still not claim production-grade availability, full security, or distributed-system readiness yet.
+These numbers are intentionally conservative. The project now has a credible agent-runtime and production-skeleton foundation, including persistence, tenant scoping, retry/resume, checkpointing, async strategy jobs with API/CLI worker processing, event feedback, feedback action plans, feedback optimization drafts, persisted feedback review decisions, revision drafts and second-pass reviews for `needs_revision` reviews, individual and filtered review lineage with execution/dry-run audit, feedback loop summaries, timelines, outcome-aware command centers, chain views, manual handoff packages, handoff outcome records, persisted handoff outcome memory, persisted dry-run execution validation, performance event discovery, advertiser memory write/read surfaces, durable outbox visibility and manual retry surfaces, dependency locking, explicit CI quality gates, a deterministic one-command MVP demo, local agent evals, curated positive/negative demo verifiers, a persisted product loop verifier, a Phase 2 MVP acceptance verifier, local ops summary, and an optional local API key boundary. Phase 1 is complete for the v0.1 MVP, and Phase 2 is functionally complete as a local production-architecture skeleton. Branch protection remains a GitHub repository setting tracked in Phase 1.5 and is currently blocked for the private repo by GitHub plan limits. The project should still not claim production-grade availability, full security, or distributed-system readiness yet.
 
 ## Phase 1: Interview-Quality Technical Project
 
@@ -65,6 +65,8 @@ Completed:
 - Feedback loop summary API and CLI for event-rooted operator status review.
 - Local ops summary API and CLI for failed runs, failed jobs, failed outbox
   events, and feedback loops needing attention.
+- Phase 2 MVP acceptance verifier covering the live persisted product loop,
+  external job processing, run lifecycle CLI, and ops summary.
 - Feedback handoff package API and CLI for approved dry-run-validated manual
   action review.
 - Feedback handoff record API and CLI for applied, blocked, or skipped manual
@@ -151,7 +153,7 @@ Completion standard:
 - Retrieval uses a real adapter behind the existing knowledge-store interface.
 - Observability is queryable locally without relying only on stdout.
 
-Planned work:
+Implemented work:
 
 - PostgreSQL schema and Alembic migrations.
 - Partition-aware logical schema design:
@@ -208,6 +210,7 @@ Planned work:
 - Async strategy job discovery by `run_id` from API and CLI.
 - Async strategy job bounded worker processing from API and CLI.
 - Optional local API key authentication boundary for product endpoints.
+- Phase 2 MVP acceptance verifier and PostgreSQL integration gate.
 
 Exit criteria:
 
@@ -278,6 +281,18 @@ Exit criteria:
   attention without reading stdout logs or querying the database directly.
 - Alembic migrations create the local database from scratch.
 - Local Docker Compose can run API, Postgres + pgvector, and LiteLLM together.
+- `python scripts/verify_phase2_mvp.py` can run the Phase 2 acceptance gate
+  against live local PostgreSQL.
+
+Phase 2 completion note, 2026-05-25:
+
+- Phase 2 is functionally complete for the local production-architecture
+  skeleton.
+- The acceptance gate is `python scripts/verify_phase2_mvp.py`, and CI runs it
+  through the PostgreSQL integration job.
+- The next work belongs to Phase 3 production hardening: native partitioning,
+  replica routing, production auth/RBAC, rate limits, external durable queues,
+  DLQ/replay tooling, SLO dashboards, load tests, and chaos/resilience tests.
 
 ## Phase 3: True Production Hardening
 

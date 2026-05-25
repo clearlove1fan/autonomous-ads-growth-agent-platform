@@ -12,6 +12,9 @@
   jobs, failed outbox events, and feedback loops needing operator attention.
 - Added CLI run lifecycle commands to inspect persisted runs, resume failed or
   running runs, and retry failed runs as fresh executions.
+- Added a Phase 2 MVP acceptance verifier that combines the live PostgreSQL
+  product loop with external job processing, run lifecycle CLI, and ops summary
+  checks.
 - Added `run_id` filtering for async strategy job discovery in the API, CLI,
   memory store, and PostgreSQL store.
 - Added natural-language async strategy job submission through

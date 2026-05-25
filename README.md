@@ -6,7 +6,7 @@ The platform turns advertiser goals into structured campaign strategies across a
 
 ## Current Status
 
-v0.1 Phase 1 MVP is complete as of 2026-05-18. Phase 2 is adding the local production-architecture skeleton around that product loop. The current deterministic MVP workflow can:
+v0.1 Phase 1 MVP is complete as of 2026-05-18. Phase 2 is functionally complete as of 2026-05-25, adding a local production-architecture skeleton around that product loop. The current deterministic MVP workflow can:
 
 1. Accept an advertiser growth goal through FastAPI or CLI.
 2. Convert the request into a structured advertiser brief.
@@ -32,7 +32,7 @@ v0.1 Phase 1 MVP is complete as of 2026-05-18. Phase 2 is adding the local produ
 22. Retrieve learned advertiser memory in a later PostgreSQL-backed strategy run.
 23. Inspect a local ops summary for failed runs, failed jobs, failed outbox events, and feedback loops needing attention.
 
-Phase 1 is intentionally a functional MVP, not a production launch claim. A single advertiser can run the core product loop locally through CLI or FastAPI without external model keys. The system still does not execute live ad spend, enforce real authentication, provide production SLO dashboards, or require GitHub branch protection in repository settings.
+Phase 1 and Phase 2 are intentionally a functional local MVP plus production-architecture skeleton, not a production launch claim. A single advertiser can run the core product loop locally through CLI or FastAPI without external model keys. The system still does not execute live ad spend, enforce real authentication, provide production SLO dashboards, or require GitHub branch protection in repository settings.
 
 ## Architecture Direction
 
@@ -140,6 +140,19 @@ execution audit -> feedback loop summary, timeline, command center, and chain ->
 outcome record -> follow-up performance snapshot -> outcome report -> performance
 and handoff outbox memories -> API/CLI reads -> later RAG retrieval of learned
 performance memory.
+
+Run the Phase 2 MVP acceptance verifier for the current closeout gate:
+
+```bash
+docker compose up -d postgres
+RUN_POSTGRES_INTEGRATION=1 \
+  TEST_DATABASE_URL=postgresql+psycopg://ads_growth:ads_growth@localhost:5432/ads_growth \
+  python scripts/verify_phase2_mvp.py
+```
+
+This reuses the live persisted product loop and adds Phase 2 control-plane
+checks for external strategy job processing, run lifecycle CLI
+`get-run`/`resume-run`/`retry-run`, and local ops summary.
 
 The demo executes the complete deterministic product loop:
 
